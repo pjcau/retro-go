@@ -18,14 +18,14 @@
 // is unreliable on this board (board_config.h SD_SPI_FREQ_KHZ, R30-MED-2).
 #define RG_STORAGE_SDSPI_SPEED      SDMMC_FREQ_DEFAULT
 
-// Audio — KNOWN NOT FUNCTIONAL YET (audit R30-HIGH-3): the board has no
-// I2S DAC. Hardware audio is ESP32-S3 PDM sigma-delta on GPIO17 -> C22 ->
-// PAM8403, and retro-go has no PDM TX driver. The ext-DAC standard-I2S
-// path below produces no usable sound (BCK/WS land on unconnected pins —
-// electrically harmless). Fix = a PDM TX audio driver for this target,
-// or the v2 audio coprocessor.
+// Audio — ESP32-S3 PDM sigma-delta on GPIO17 -> C22 DC-block -> PAM8403.
+// The board has no I2S DAC: drivers/audio/pdm.c modulates 16-bit PCM to a
+// 1-bit stream on the data pin alone (same config as the board-validated
+// Phase-1 firmware, software/main/audio.c). Closes audit R30-HIGH-3;
+// bench-validate levels on a proto before calling audio done.
 #define RG_AUDIO_USE_INT_DAC        0   // No internal DAC on ESP32-S3
-#define RG_AUDIO_USE_EXT_DAC        1   // Placeholder path, see note above
+#define RG_AUDIO_USE_EXT_DAC        0   // No external DAC on this board
+#define RG_AUDIO_USE_PDM            1   // drivers/audio/pdm.c (IDF5 PDM TX)
 
 // Video — ST7796S 320x480, 8-bit 8080 parallel (custom driver)
 #define RG_SCREEN_DRIVER            2   // 2 = ST7796S i80 parallel
@@ -74,9 +74,8 @@
 #define RG_GPIO_SDSPI_CLK           GPIO_NUM_38
 #define RG_GPIO_SDSPI_CS            GPIO_NUM_39
 
-// External I2S DAC pins (-> PAM8403 amplifier -> speaker)
-#define RG_GPIO_SND_I2S_BCK         GPIO_NUM_15
-#define RG_GPIO_SND_I2S_WS          GPIO_NUM_16
+// PDM audio data pin (-> C22 -> PAM8403 -> speaker). No BCK/WS: GPIO15/16
+// are unconnected on the board and PDM needs no clock pin.
 #define RG_GPIO_SND_I2S_DATA        GPIO_NUM_17
 
 // Display i80 parallel bus pins (used by st7796s_i80.h driver)
