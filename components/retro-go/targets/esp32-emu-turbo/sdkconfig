@@ -2,6 +2,13 @@
 # ESP32 Emu Turbo — sdkconfig for Retro-Go
 # Based on esp32-s3-devkit target, adapted for N16R8 hardware
 #
+# Symbol names here are ESP-IDF 5.x. The devkit target this was copied from
+# predates IDF 5.0 and still carries IDF4 names (CONFIG_ESP32S3_DEFAULT_CPU_FREQ_*,
+# CONFIG_ESP32S3_SPIRAM_SUPPORT); rg_tool.py passes this file as
+# SDKCONFIG_DEFAULTS, where an unknown symbol is silently DROPPED — the
+# Kconfig default wins with no warning. Verify additions against the IDF 5.x
+# Kconfig, not against upstream targets. See R31-HIGH-3 / R31-MED-1.
+#
 
 #
 # Serial flasher config
@@ -41,8 +48,10 @@ CONFIG_SPI_MASTER_ISR_IN_IRAM=y
 #
 # ESP32-S3 specific
 #
-CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240=y
-CONFIG_ESP32S3_DEFAULT_CPU_FREQ_MHZ=240
+# CPU — 240 MHz. IDF5 names; the IDF4 CONFIG_ESP32S3_DEFAULT_CPU_FREQ_*
+# they replace were dropped silently and left the build at 160 MHz.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
 CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
 CONFIG_ESP_DEBUG_OCDAWARE=n
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
@@ -51,9 +60,19 @@ CONFIG_ESP_TASK_WDT=n
 CONFIG_NEWLIB_NANO_FORMAT=y
 
 #
+# Console — USB Serial/JTAG, never UART0
+#
+# UART0's default pins GPIO43/44 are SD_MISO/SD_MOSI on this board, so the
+# IDF default console would drive the SD data lines. No UART TX/RX GPIOs
+# are routed on the PCB; the USB-C port is the only console path.
+#
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+#
 # SPI RAM config — 8MB Octal PSRAM
 #
-CONFIG_ESP32S3_SPIRAM_SUPPORT=y
+# (IDF4's CONFIG_ESP32S3_SPIRAM_SUPPORT removed — CONFIG_SPIRAM is its IDF5
+# replacement and was already doing the work.)
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_BOOT_INIT=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=y
