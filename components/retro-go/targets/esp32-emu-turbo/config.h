@@ -26,12 +26,22 @@
 #define RG_AUDIO_USE_INT_DAC        0   // No internal DAC on ESP32-S3
 #define RG_AUDIO_USE_EXT_DAC        0   // No external DAC on this board
 #define RG_AUDIO_USE_PDM            1   // drivers/audio/pdm.c (IDF5 PDM TX)
+// Start silent on this board revision: with no PDM reconstruction filter
+// (first-article R38-MED-1) the carrier is a loud hiss whenever the channel
+// runs, so audio is opt-in from the menu until the v2 RC filter / audio
+// coprocessor lands. pdm.c keeps the channel off at volume 0.
+#define RG_AUDIO_DEFAULT_VOLUME     0
 
-// Video — ST7796S 320x480, 8-bit 8080 parallel (custom driver)
-#define RG_SCREEN_DRIVER            2   // 2 = ST7796S i80 parallel
-#define RG_SCREEN_WIDTH             320
-#define RG_SCREEN_HEIGHT            480
-#define RG_SCREEN_ROTATE            0   // Portrait orientation
+// Video — ILI9488 panel (native 320x480 portrait), 8-bit 8080 parallel
+// (custom driver). The panel sits along the long axis of the handheld
+// (D-pad left, ABXY right), so the framebuffer is LANDSCAPE 480x320: the
+// driver sets MADCTL MV to swap the panel's row/column axes (verified on the
+// first article 2026-09-11; the earlier "portrait 320x480, 2x vertical"
+// plan would have shown games rotated by 90 degrees).
+#define RG_SCREEN_DRIVER            2   // 2 = i80 parallel (st7796s_i80.h)
+#define RG_SCREEN_WIDTH             480
+#define RG_SCREEN_HEIGHT            320
+#define RG_SCREEN_ROTATE            0   // Fixed: orientation is baked into MADCTL
 // 0: the panel backlight (LED-A) is hard-wired to +3V3 — always on, no
 // GPIO, no PWM. GPIO45 (the old BCKL guess) is really BTN_L + the
 // VDD_SPI strap (audit R30-CRIT-2).

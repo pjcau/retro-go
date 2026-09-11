@@ -82,6 +82,11 @@
 #define RG_APP_LAUNCHER "launcher"
 #endif
 
+// Volume (0-100) used until the user sets one in the menu
+#ifndef RG_AUDIO_DEFAULT_VOLUME
+#define RG_AUDIO_DEFAULT_VOLUME 50
+#endif
+
 #ifndef RG_APP_FACTORY
 #define RG_APP_FACTORY NULL
 #endif
