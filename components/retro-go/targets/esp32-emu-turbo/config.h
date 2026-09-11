@@ -49,6 +49,9 @@
 
 // Input — 12 buttons, GPIO direct, active-low with external 10k pull-up
 // (board_config.h BTN_* is the source of truth — audit R30-CRIT-1/2/3).
+// RIGHT=GPIO2 / A=GPIO1: module pin 38 is IO2 and pin 39 is IO1 (WROOM-1
+// datasheet); the project pin table had them swapped until the first
+// article showed D-pad RIGHT acting as A (R39-HIGH-1, 2026-09-11).
 // L (GPIO45) is the one exception on pull-up: R14 is DNP by design
 // (external pull-up on the VDD_SPI strap would force 1.8V and kill the
 // Octal PSRAM), so it uses the chip-internal pull-up (.pullup = 1).
@@ -56,8 +59,8 @@
     {RG_KEY_UP,     .num = GPIO_NUM_40, .pullup = 0, .level = 0},\
     {RG_KEY_DOWN,   .num = GPIO_NUM_41, .pullup = 0, .level = 0},\
     {RG_KEY_LEFT,   .num = GPIO_NUM_42, .pullup = 0, .level = 0},\
-    {RG_KEY_RIGHT,  .num = GPIO_NUM_1,  .pullup = 0, .level = 0},\
-    {RG_KEY_A,      .num = GPIO_NUM_2,  .pullup = 0, .level = 0},\
+    {RG_KEY_RIGHT,  .num = GPIO_NUM_2,  .pullup = 0, .level = 0},\
+    {RG_KEY_A,      .num = GPIO_NUM_1,  .pullup = 0, .level = 0},\
     {RG_KEY_B,      .num = GPIO_NUM_48, .pullup = 0, .level = 0},\
     {RG_KEY_X,      .num = GPIO_NUM_47, .pullup = 0, .level = 0},\
     {RG_KEY_Y,      .num = GPIO_NUM_21, .pullup = 0, .level = 0},\

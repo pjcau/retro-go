@@ -293,10 +293,10 @@ static void retro_loop(void)
 
         if (gui.browse)
         {
-            if (joystick == RG_KEY_SELECT) {
+            if (joystick == RG_KEY_SELECT || joystick == RG_KEY_L) {
                 change_tab = -1;
             }
-            else if (joystick == RG_KEY_START) {
+            else if (joystick == RG_KEY_START || joystick == RG_KEY_R) {
                 change_tab = 1;
             }
             else if (joystick == RG_KEY_UP) {
@@ -329,10 +329,10 @@ static void retro_loop(void)
         }
         else
         {
-            if (joystick & (RG_KEY_UP|RG_KEY_LEFT|RG_KEY_SELECT)) {
+            if (joystick & (RG_KEY_UP|RG_KEY_LEFT|RG_KEY_SELECT|RG_KEY_L)) {
                 change_tab = -1;
             }
-            else if (joystick & (RG_KEY_DOWN|RG_KEY_RIGHT|RG_KEY_START)) {
+            else if (joystick & (RG_KEY_DOWN|RG_KEY_RIGHT|RG_KEY_START|RG_KEY_R)) {
                 change_tab = 1;
             }
             else if (joystick == RG_KEY_A) {
