@@ -366,6 +366,16 @@ void snes_main(void)
     rg_system_set_tick_rate(Memory.ROMFramesPerSecond);
     app->frameskip = 3;
 
+    // Samples to mix and submit per emulated frame. AUDIO_BUFFER_LENGTH
+    // (rate/50+1) is only right for PAL: on a 60 fps ROM it hands the sink
+    // 20% more audio than real time, so the sink's pacing caps emulation at
+    // 50 fps and the APU underruns every frame (measured on the first
+    // article: 42-50 fps at 50-70% CPU, crackling audio). The buffer is
+    // allocated at the PAL size, which is the larger of the two.
+    int samplesPerFrame = AUDIO_SAMPLE_RATE / Memory.ROMFramesPerSecond;
+    if (samplesPerFrame > AUDIO_BUFFER_LENGTH)
+        samplesPerFrame = AUDIO_BUFFER_LENGTH;
+
     bool menuCancelled = false;
     bool menuPressed = false;
     int skipFrames = 0;
@@ -412,16 +422,16 @@ void snes_main(void)
 
     #ifndef USE_BLARGG_APU
         if (apu_enabled && lowpass_filter)
-            S9xMixSamplesLowPass((void *)audioBuffer, AUDIO_BUFFER_LENGTH << 1, AUDIO_LOW_PASS_RANGE);
+            S9xMixSamplesLowPass((void *)audioBuffer, samplesPerFrame << 1, AUDIO_LOW_PASS_RANGE);
         else if (apu_enabled)
-            S9xMixSamples((void *)audioBuffer, AUDIO_BUFFER_LENGTH << 1);
+            S9xMixSamples((void *)audioBuffer, samplesPerFrame << 1);
     #endif
 
         rg_system_tick(rg_system_timer() - startTime);
 
     #ifndef USE_BLARGG_APU
         if (apu_enabled)
-            rg_audio_submit(audioBuffer, AUDIO_BUFFER_LENGTH);
+            rg_audio_submit(audioBuffer, samplesPerFrame);
     #endif
 
         if (skipFrames == 0)
