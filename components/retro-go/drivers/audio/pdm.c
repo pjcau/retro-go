@@ -33,12 +33,40 @@ static struct {
     i2s_chan_handle_t chan;
     int volume;
     bool muted;
+    bool enabled;       // channel running (carrier on the pin)
+    int sample_rate;
+    int64_t busy_until; // pacing while the channel is off
 } state;
+
+// The board has no reconstruction filter between the PDM pin and the PAM8403
+// (first-article finding R38-MED-1): an enabled channel emits its 50%-density
+// carrier as a loud hiss even when every sample is zero, so zeroing samples
+// on mute/volume 0 silences nothing. The channel is therefore only enabled
+// while there is something audible to play, and disabled otherwise (pin idle
+// LOW, carrier gone). Submissions while the channel is off are paced in time
+// exactly like the dummy driver so the emulators keep their speed regulation.
+static bool apply_state(void)
+{
+    bool want = state.chan && !state.muted && state.volume > 0;
+    if (want == state.enabled)
+        return true;
+    esp_err_t ret = want ? i2s_channel_enable(state.chan) : i2s_channel_disable(state.chan);
+    if (ret != ESP_OK)
+    {
+        state.last_error = esp_err_to_name(ret);
+        return false;
+    }
+    state.enabled = want;
+    return true;
+}
 
 static bool driver_init(int device, int sample_rate)
 {
     state.last_error = NULL;
     state.chan = NULL;
+    state.enabled = false;
+    state.sample_rate = sample_rate;
+    state.busy_until = 0;
 
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.dma_desc_num = DMA_DESC_NUM;
@@ -56,10 +84,10 @@ static bool driver_init(int device, int sample_rate)
             },
         });
     }
-    if (ret == ESP_OK)
-        ret = i2s_channel_enable(state.chan);
     if (ret != ESP_OK)
         state.last_error = esp_err_to_name(ret);
+    // Not enabled here: rg_audio_init() pushes mute/volume right after init
+    // and apply_state() starts the carrier only if they say so.
     return state.last_error == NULL;
 }
 
@@ -67,9 +95,11 @@ static bool driver_deinit(void)
 {
     if (state.chan)
     {
-        i2s_channel_disable(state.chan);
+        if (state.enabled)
+            i2s_channel_disable(state.chan);
         i2s_del_channel(state.chan);
         state.chan = NULL;
+        state.enabled = false;
     }
     gpio_reset_pin(RG_GPIO_SND_I2S_DATA);
     return true;
@@ -77,7 +107,17 @@ static bool driver_deinit(void)
 
 static bool driver_submit(const rg_audio_frame_t *frames, size_t count)
 {
-    float volume = state.muted ? 0.f : (state.volume * 0.01f);
+    if (!state.enabled)
+    {
+        // Same pacing as drivers/audio/dummy.c: block for the duration this
+        // chunk would have taken to play.
+        if (state.busy_until > rg_system_timer())
+            rg_usleep(state.busy_until - rg_system_timer());
+        state.busy_until = rg_system_timer() + (count * (1000000.f / state.sample_rate));
+        return true;
+    }
+
+    float volume = state.volume * 0.01f;
     int16_t buffer[SUBMIT_CHUNK];
     size_t pos = 0;
 
@@ -103,21 +143,26 @@ static bool driver_set_sample_rates(int sample_rate)
     if (!state.chan)
         return false;
     i2s_pdm_tx_clk_config_t clk_cfg = I2S_PDM_TX_CLK_DEFAULT_CONFIG(sample_rate);
-    return i2s_channel_disable(state.chan) == ESP_OK
-        && i2s_channel_reconfig_pdm_tx_clock(state.chan, &clk_cfg) == ESP_OK
-        && i2s_channel_enable(state.chan) == ESP_OK;
+    bool was_enabled = state.enabled;
+    if (was_enabled && i2s_channel_disable(state.chan) != ESP_OK)
+        return false;
+    state.enabled = false;
+    if (i2s_channel_reconfig_pdm_tx_clock(state.chan, &clk_cfg) != ESP_OK)
+        return false;
+    state.sample_rate = sample_rate;
+    return was_enabled ? apply_state() : true;
 }
 
 static bool driver_set_mute(bool mute)
 {
     state.muted = mute;
-    return true;
+    return apply_state();
 }
 
 static bool driver_set_volume(int volume)
 {
     state.volume = volume;
-    return true;
+    return apply_state();
 }
 
 static const char *driver_get_error(void)

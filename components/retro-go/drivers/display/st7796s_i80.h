@@ -1,6 +1,6 @@
 /*
  * ST7796S display driver — 8-bit 8080 parallel (i80 bus)
- * For ESP32 Emu Turbo: 320x480 portrait, RGB565, 20MHz write clock.
+ * For ESP32 Emu Turbo: ILI9488 driven landscape 480x320, RGB565, 20MHz write clock.
  *
  * Uses ESP-IDF esp_lcd_panel_io_i80 with async DMA and double-buffering.
  * Requires config.h defines: RG_GPIO_LCD_D0..D7, CS, DC, WR, RD, RST, BCKL,
@@ -18,6 +18,7 @@ static esp_lcd_i80_bus_handle_t lcd_bus;
 
 static QueueHandle_t free_bufs;
 static QueueHandle_t pending_bufs;
+static bool window_fresh; // no pixel data sent since the last set_window
 
 #define I80_BUF_COUNT   5
 #define I80_BUF_LENGTH  (LCD_BUFFER_LENGTH * 2)  /* bytes (LCD_BUFFER_LENGTH is pixels) */
@@ -66,6 +67,7 @@ static void lcd_set_window(int left, int top, int width, int height)
 
     st7796_cmd(0x2A, caset, sizeof(caset));  /* CASET */
     st7796_cmd(0x2B, raset, sizeof(raset));  /* RASET */
+    window_fresh = true;
 }
 
 static inline uint16_t *lcd_get_buffer(size_t length)
@@ -80,8 +82,17 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
 {
     if (length > 0)
     {
+        /* rg_display streams one window as several DMA chunks and the i80
+         * IO layer sends a command with every chunk. 0x2C (Memory Write)
+         * resets the write pointer to the window origin, so repeating it
+         * would overwrite the first rows with every chunk and leave the
+         * rest of the window untouched (seen on the first article: half
+         * glyphs, stale rows). Only the first chunk after set_window may
+         * use 0x2C; the rest continue with 0x3C (Memory Write Continue). */
+        int cmd = window_fresh ? 0x2C : 0x3C;
+        window_fresh = false;
         xQueueSend(pending_bufs, &buffer, portMAX_DELAY);
-        esp_lcd_panel_io_tx_color(lcd_io, 0x2C, buffer, length * sizeof(uint16_t));
+        esp_lcd_panel_io_tx_color(lcd_io, cmd, buffer, length * sizeof(uint16_t));
     }
     else
     {
@@ -190,8 +201,11 @@ static void lcd_init(void)
     st7796_cmd(0x11, NULL, 0);       /* Sleep out */
     rg_usleep(120 * 1000);
 
-    /* MADCTL: MX=1, BGR=1 → portrait 320x480 */
-    st7796_cmd(0x36, (uint8_t[]){0x48}, 1);
+    /* MADCTL: MV=1 (row/column swap) + BGR → landscape 480x320 with
+     * "up" toward the board's top edge (D-pad left, ABXY right). 0x28 is
+     * rotation 1 of the usual ILI9488 table (0x48 portrait, 0x28, 0x88,
+     * 0xE8); switch to 0xE8 if the image ever comes out upside-down. */
+    st7796_cmd(0x36, (uint8_t[]){0x28}, 1);
 
     /* COLMOD: RGB565 */
     st7796_cmd(0x3A, (uint8_t[]){0x55}, 1);

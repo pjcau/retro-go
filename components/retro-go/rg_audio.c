@@ -91,7 +91,7 @@ void rg_audio_init(int sampleRate)
         audio.sink = &sinks[1 % RG_COUNT(sinks)];
 
     audio.filter = (int)rg_settings_get_number(NS_GLOBAL, SETTING_FILTER, 0);
-    audio.volume = (int)rg_settings_get_number(NS_GLOBAL, SETTING_VOLUME, 50);
+    audio.volume = (int)rg_settings_get_number(NS_GLOBAL, SETTING_VOLUME, RG_AUDIO_DEFAULT_VOLUME);
     audio.sampleRate = sampleRate;
     audio.driver = audio.sink->driver;
 
