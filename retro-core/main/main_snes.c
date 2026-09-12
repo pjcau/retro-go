@@ -375,13 +375,28 @@ void snes_main(void)
     int samplesPerFrame = AUDIO_SAMPLE_RATE / Memory.ROMFramesPerSecond;
     if (samplesPerFrame > AUDIO_BUFFER_LENGTH)
         samplesPerFrame = AUDIO_BUFFER_LENGTH;
+    RG_LOGI("ROM '%s': region=%d PAL=%d fps=%d -> %d samples/frame @ %d Hz, frameskip=%d\n",
+            Memory.ROMName, Memory.ROMRegion, Settings.PAL, Memory.ROMFramesPerSecond,
+            samplesPerFrame, AUDIO_SAMPLE_RATE, app->frameskip);
 
     bool menuCancelled = false;
     bool menuPressed = false;
     int skipFrames = 0;
 
+#if RG_ENABLE_PROFILING
+    // Per-second breakdown of where the loop's wall time goes. First-article
+    // measurement (Super Mario World, 2026-09-12): a frame without rendering
+    // costs ~8.5 ms, a rendered frame ~40-50 ms — the PPU renderer, not the
+    // CPU/APU emulation, the audio or the display path, is the bottleneck.
+    int64_t prof_t0 = rg_system_timer(), prof_main = 0, prof_disp = 0, prof_mix = 0, prof_audio = 0, prof_loop = 0;
+    int prof_n = 0;
+#endif
+
     while (1)
     {
+#if RG_ENABLE_PROFILING
+        int64_t loopStart = rg_system_timer();
+#endif
         uint32_t joystick = rg_input_read_gamepad();
 
         if (menuPressed && !(joystick & RG_KEY_MENU))
@@ -413,12 +428,18 @@ void snes_main(void)
         GFX.Screen = currentUpdate->data;
 
         S9xMainLoop();
+#if RG_ENABLE_PROFILING
+        int64_t tMain = rg_system_timer();
+#endif
 
         if (drawFrame)
         {
             slowFrame = !rg_display_sync(false);
             rg_display_submit(currentUpdate, 0);
         }
+#if RG_ENABLE_PROFILING
+        int64_t tDisp = rg_system_timer();
+#endif
 
     #ifndef USE_BLARGG_APU
         if (apu_enabled && lowpass_filter)
@@ -426,6 +447,9 @@ void snes_main(void)
         else if (apu_enabled)
             S9xMixSamples((void *)audioBuffer, samplesPerFrame << 1);
     #endif
+#if RG_ENABLE_PROFILING
+        int64_t tMix = rg_system_timer();
+#endif
 
         rg_system_tick(rg_system_timer() - startTime);
 
@@ -433,6 +457,21 @@ void snes_main(void)
         if (apu_enabled)
             rg_audio_submit(audioBuffer, samplesPerFrame);
     #endif
+#if RG_ENABLE_PROFILING
+        int64_t tAudio = rg_system_timer();
+
+        prof_main += tMain - startTime; prof_disp += tDisp - tMain; prof_mix += tMix - tDisp;
+        prof_audio += tAudio - tMix; prof_loop += tAudio - loopStart; prof_n++;
+        if (tAudio - prof_t0 >= 1000000)
+        {
+            int64_t wall = tAudio - prof_t0;
+            RG_LOGI("PROF n=%d wall=%dms: main=%d disp=%d mix=%d audio=%d loop=%d (us/frame) other=%d%%\n",
+                    prof_n, (int)(wall / 1000), (int)(prof_main / prof_n), (int)(prof_disp / prof_n),
+                    (int)(prof_mix / prof_n), (int)(prof_audio / prof_n), (int)(prof_loop / prof_n),
+                    (int)((wall - prof_loop) * 100 / wall));
+            prof_t0 = tAudio; prof_main = prof_disp = prof_mix = prof_audio = prof_loop = 0; prof_n = 0;
+        }
+#endif
 
         if (skipFrames == 0)
         {
