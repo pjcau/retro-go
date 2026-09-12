@@ -75,9 +75,15 @@ static bool driver_init(int device, int sample_rate)
     esp_err_t ret = i2s_new_channel(&chan_cfg, &state.chan, NULL);
     if (ret == ESP_OK)
     {
+        // DAC line mode, not codec line mode: the data pin drives an analog
+        // load (RC + amplifier), and this mode is the one IDF documents for
+        // that — single line, PDM carrier fixed at 128 x 48 kHz (6.1 MHz,
+        // further from the audio band than codec mode's 128 x Fs) and the
+        // sigma-delta/filter scaling Espressif tuned for SNR. The PCM
+        // consumption rate is still sample_rate, so the pacing is unchanged.
         ret = i2s_channel_init_pdm_tx_mode(state.chan, &(i2s_pdm_tx_config_t){
-            .clk_cfg = I2S_PDM_TX_CLK_DEFAULT_CONFIG(sample_rate),
-            .slot_cfg = I2S_PDM_TX_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+            .clk_cfg = I2S_PDM_TX_CLK_DAC_DEFAULT_CONFIG(sample_rate),
+            .slot_cfg = I2S_PDM_TX_SLOT_DAC_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
             .gpio_cfg = {
                 .clk = I2S_GPIO_UNUSED, // not routed; the analog filter needs no clock
                 .dout = RG_GPIO_SND_I2S_DATA,
@@ -142,7 +148,7 @@ static bool driver_set_sample_rates(int sample_rate)
 {
     if (!state.chan)
         return false;
-    i2s_pdm_tx_clk_config_t clk_cfg = I2S_PDM_TX_CLK_DEFAULT_CONFIG(sample_rate);
+    i2s_pdm_tx_clk_config_t clk_cfg = I2S_PDM_TX_CLK_DAC_DEFAULT_CONFIG(sample_rate);
     bool was_enabled = state.enabled;
     if (was_enabled && i2s_channel_disable(state.chan) != ESP_OK)
         return false;
