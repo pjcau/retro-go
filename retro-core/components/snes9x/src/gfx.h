@@ -80,7 +80,7 @@ typedef struct
 
 #define H_FLIP 0x4000
 #define V_FLIP 0x8000
-#define BLANK_TILE 2
+#define BLANK_TILE 0x20 /* tile-cache flag bit: cached at (flag & 0x0f) depth and all-zero */
 
 typedef struct
 {
