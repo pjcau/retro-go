@@ -76,12 +76,14 @@ static rg_audio_sample_t *audioBuffer;
 
 static bool apu_enabled = true;
 static bool lowpass_filter = false;
+static bool transparency = true;
 
 static int keymap_id = 0;
 static keymap_t keymap;
 
 static const char *SETTING_KEYMAP = "keymap";
 static const char *SETTING_APU_EMULATION = "apu";
+static const char *SETTING_TRANSPARENCY = "transp";
 // --- MAIN
 
 static void update_keymap(int id)
@@ -138,6 +140,20 @@ static rg_gui_event_t lowpass_filter_cb(rg_gui_option_t *option, rg_gui_event_t 
         lowpass_filter = !lowpass_filter;
 
     strcpy(option->value, lowpass_filter ? _("On") : _("Off"));
+
+    return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t transparency_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
+    {
+        transparency = !transparency;
+        Settings.NoTransparency = !transparency;
+        rg_settings_set_number(NS_APP, SETTING_TRANSPARENCY, transparency);
+    }
+
+    strcpy(option->value, transparency ? _("On") : _("Off"));
 
     return RG_DIALOG_VOID;
 }
@@ -228,8 +244,12 @@ bool S9xInitDisplay(void)
     GFX.ZPitch = SNES_WIDTH;
     GFX.Screen = currentUpdate->data;
     GFX.SubScreen = malloc(GFX.Pitch * SNES_HEIGHT_EXTENDED);
-    GFX.ZBuffer = malloc(GFX.ZPitch * SNES_HEIGHT_EXTENDED);
-    GFX.SubZBuffer = malloc(GFX.ZPitch * SNES_HEIGHT_EXTENDED);
+    // The z-buffers see a read-modify-write per drawn pixel (tile.c
+    // WRITE_4PIXELS16*); at 61 KB each they were landing in PSRAM through
+    // CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=32768. Ask for internal SRAM;
+    // rg_alloc falls back to PSRAM (with a log warning) if it does not fit.
+    GFX.ZBuffer = rg_alloc(GFX.ZPitch * SNES_HEIGHT_EXTENDED, MEM_FAST);
+    GFX.SubZBuffer = malloc(GFX.ZPitch * SNES_HEIGHT_EXTENDED); // 2nd one does not fit next to the cache upgrade (117 KB free, 56 KB largest block)
     return GFX.Screen && GFX.SubScreen && GFX.ZBuffer && GFX.SubZBuffer;
 }
 
@@ -291,6 +311,7 @@ static void options_handler(rg_gui_option_t *dest)
 {
     *dest++ = (rg_gui_option_t){0, _("Audio enable"), "-", RG_DIALOG_FLAG_NORMAL, &apu_toggle_cb};
     *dest++ = (rg_gui_option_t){0, _("Audio filter"), "-", RG_DIALOG_FLAG_NORMAL, &lowpass_filter_cb};
+    *dest++ = (rg_gui_option_t){0, _("Transparency"), "-", RG_DIALOG_FLAG_NORMAL, &transparency_cb};
     *dest++ = (rg_gui_option_t){0, _("Controls"),     "-", RG_DIALOG_FLAG_NORMAL, &menu_keymap_cb};
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
@@ -308,6 +329,7 @@ void snes_main(void)
     app = rg_system_reinit(AUDIO_SAMPLE_RATE, &handlers, NULL);
 
     apu_enabled = rg_settings_get_number(NS_APP, SETTING_APU_EMULATION, 1);
+    transparency = rg_settings_get_number(NS_APP, SETTING_TRANSPARENCY, 1);
 
     updates[0] = rg_surface_create(SNES_WIDTH, SNES_HEIGHT_EXTENDED, RG_PIXEL_565_LE, 0);
     updates[0]->height = SNES_HEIGHT;
@@ -327,6 +349,7 @@ void snes_main(void)
     Settings.SoundInputRate = AUDIO_SAMPLE_RATE;
     Settings.DisableSoundEcho = false;
     Settings.InterpolatedSound = true;
+    Settings.NoTransparency = !transparency;
 
     if (!S9xInitDisplay())
         RG_PANIC("Display init failed!");

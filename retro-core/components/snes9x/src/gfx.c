@@ -2709,7 +2709,7 @@ void S9xUpdateScreen(void)
       GFX.r2130 |= 2;
    }
 
-   if (!PPU.ForcedBlanking && ADD_OR_SUB_ON_ANYTHING && (GFX.r2130 & 0x30) != 0x30 && !((GFX.r2130 & 0x30) == 0x10 && IPPU.Clip[1].Count[5] == 0))
+   if (!PPU.ForcedBlanking && !Settings.NoTransparency && ADD_OR_SUB_ON_ANYTHING && (GFX.r2130 & 0x30) != 0x30 && !((GFX.r2130 & 0x30) == 0x10 && IPPU.Clip[1].Count[5] == 0))
    {
       ClipData* pClip;
 
