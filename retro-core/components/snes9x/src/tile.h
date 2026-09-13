@@ -3,6 +3,8 @@
 #ifndef _TILE_H_
 #define _TILE_H_
 
+#include "snes_prof.h"
+
 #define TILE_PREAMBLE_VARS() \
     uint32_t l; \
     uint16_t *ScreenColors; \
@@ -11,18 +13,27 @@
     uint32_t TileAddr
 
 #define TILE_PREAMBLE_CODE() \
+    SNES_PROF_INC(tiles); \
     TileAddr = BG.TileAddress + ((Tile & 0x3ff) << BG.TileShift); \
     if ((Tile & 0x1ff) >= 256) \
        TileAddr += BG.NameSelect; \
     TileAddr &= 0xffff; \
     pCache = &BG.Buffer[(TileNumber = (TileAddr >> BG.TileShift)) << 6]; \
-    if (BG.Buffered [TileNumber] != (0x10|BG.Depth)) \
+    /* Cache flag byte: 0 = not cached, 0x10|depth = cached, 0x20|depth = \
+     * cached and blank. Blank tiles used to be stored as a depth-less \
+     * BLANK_TILE that never matched the "cached at this depth" test, so \
+     * every blank tile was re-converted on every draw (~1500 ConvertTile \
+     * per frame in Super Mario World, measured 2026-09-13). */ \
+    if ((BG.Buffered [TileNumber] & 0x0f) != BG.Depth || !(BG.Buffered [TileNumber] & 0x30)) \
     { \
       BG.Buffered[TileAddr >> 4] = BG.Buffered[TileAddr >> 5] = BG.Buffered[TileAddr >> 6] = false; \
       BG.Buffered[TileNumber] = ConvertTile (pCache, TileAddr); \
     } \
-    if (BG.Buffered [TileNumber] == BLANK_TILE) \
+    if (BG.Buffered [TileNumber] & BLANK_TILE) \
+    { \
+       SNES_PROF_INC(tiles_blank); \
        return; \
+    } \
     if (BG.DirectColourMode) \
        ScreenColors = &IPPU.DirectColors [((Tile >> 10) & BG.PaletteMask) << 8]; \
     else \

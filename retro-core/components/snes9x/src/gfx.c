@@ -4,6 +4,11 @@
 
 #include "memmap.h"
 #include "ppu.h"
+#include "snes_prof.h"
+
+#if SNES_PROF
+snes_prof_t snes_prof;
+#endif
 #include "cpuexec.h"
 #include "display.h"
 #include "gfx.h"
@@ -420,6 +425,8 @@ static INLINE void SelectTileRenderer(bool normal)
 
 void S9xSetupOBJ(void)
 {
+   SNES_PROF_INC(obj_setup);
+   SNES_PROF_T0(_pt);
    int32_t Height;
    uint8_t S;
    int32_t SmallWidth, SmallHeight;
@@ -635,9 +642,18 @@ void S9xSetupOBJ(void)
    }
 
    IPPU.OBJChanged = false;
+   SNES_PROF_ACC(t_objsetup, _pt);
 }
 
+static void DrawOBJS_(bool OnMain, uint8_t D);
 static void DrawOBJS(bool OnMain, uint8_t D)
+{
+   SNES_PROF_T0(_pt);
+   DrawOBJS_(OnMain, D);
+   SNES_PROF_ACC(t_obj, _pt);
+}
+
+static void DrawOBJS_(bool OnMain, uint8_t D)
 {
    struct
    {
@@ -1561,7 +1577,15 @@ static void DrawBackgroundMode5(uint32_t bg, uint8_t Z1, uint8_t Z2)
    GFX.PPL = IPPU.DoubleHeightPixels ? GFX.PPLx2 : (GFX.PPLx2 >> 1);
 }
 
+static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2);
 static void DrawBackground(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2)
+{
+   SNES_PROF_T0(_pt);
+   DrawBackground_(BGMode, bg, Z1, Z2);
+   SNES_PROF_ACC(t_bg[bg & 3], _pt);
+}
+
+static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2)
 {
    uint32_t Tile;
    uint16_t* SC0;
@@ -2586,6 +2610,9 @@ void S9xUpdateScreen(void)
 {
    int32_t x2 = 1;
    uint32_t starty, endy, black;
+   SNES_PROF_T0(_pt_update);
+   SNES_PROF_INC(strips);
+   SNES_PROF_INC(mode_hist[PPU.BGMode & 7]);
 
    GFX.S = GFX.Screen;
    GFX.r2131 = Memory.FillRAM [0x2131];
@@ -2612,6 +2639,7 @@ void S9xUpdateScreen(void)
 
    starty = GFX.StartY;
    endy   = GFX.EndY;
+   SNES_PROF_ADDN(strip_lines, endy - starty + 1);
 
    if (PPU.BGMode == 5 || PPU.BGMode == 6 || IPPU.Interlace || IPPU.DoubleHeightPixels)
    {
@@ -2686,6 +2714,7 @@ void S9xUpdateScreen(void)
       ClipData* pClip;
 
       GFX.FixedColour = BUILD_PIXEL(IPPU.XB [PPU.FixedColourRed], IPPU.XB [PPU.FixedColourGreen], IPPU.XB [PPU.FixedColourBlue]);
+      SNES_PROF_T0(_pt);
 
       /* Clear the z-buffer, marking areas 'covered' by the fixed
        * colour as depth 1. */
@@ -2759,10 +2788,14 @@ void S9xUpdateScreen(void)
          }
       }
 
+      SNES_PROF_ACC(t_clear, _pt);
       if (ANYTHING_ON_SUB)
       {
+         SNES_PROF_INC(sub_passes);
+         SNES_PROF_T0(_pt_sub);
          GFX.DB = GFX.SubZBuffer;
          RenderScreen(GFX.SubScreen, true, true, SUB_SCREEN_DEPTH);
+         SNES_PROF_ACC(t_sub, _pt_sub);
       }
 
       if (IPPU.Clip [0].Count [5])
@@ -2786,8 +2819,11 @@ void S9xUpdateScreen(void)
          }
       }
 
+      SNES_PROF_T0(_pt_main);
       GFX.DB = GFX.ZBuffer;
       RenderScreen(GFX.Screen, false, false, MAIN_SCREEN_DEPTH);
+      SNES_PROF_ACC(t_main, _pt_main);
+      SNES_PROF_T0(_pt_comb);
 
       if (SUB_OR_ADD(5))
       {
@@ -3018,6 +3054,7 @@ void S9xUpdateScreen(void)
             }
          }
       }
+      SNES_PROF_ACC(t_combine, _pt_comb);
    } /* force blanking */
    else
    {
@@ -3025,6 +3062,7 @@ void S9xUpdateScreen(void)
        * operation. */
 
       uint32_t back = IPPU.ScreenColors [0] | (IPPU.ScreenColors [0] << 16);
+      SNES_PROF_T0(_pt);
 
       if (PPU.ForcedBlanking)
          back = black;
@@ -3072,9 +3110,14 @@ void S9xUpdateScreen(void)
          uint32_t y;
          for (y = starty; y <= endy; y++)
             memset(GFX.ZBuffer + y * GFX.ZPitch, 0, IPPU.RenderedScreenWidth);
+         SNES_PROF_ACC(t_clear, _pt);
+         SNES_PROF_T0(_pt_main);
          GFX.DB = GFX.ZBuffer;
          RenderScreen(GFX.Screen, false, true, SUB_SCREEN_DEPTH);
+         SNES_PROF_ACC(t_main, _pt_main);
       }
+      else
+         SNES_PROF_ACC(t_clear, _pt);
    }
 
    if (PPU.BGMode != 5 && PPU.BGMode != 6 && IPPU.DoubleWidthPixels)
@@ -3096,4 +3139,5 @@ void S9xUpdateScreen(void)
    FIX_INTERLACE(GFX.Screen, false, GFX.ZBuffer);
 
    IPPU.PreviousLine = IPPU.CurrentLine;
+   SNES_PROF_ACC(t_update, _pt_update);
 }

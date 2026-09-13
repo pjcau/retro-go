@@ -24,7 +24,12 @@
 // is used. Uses the IDF5 channel API — do not mix with the legacy i2s.c
 // driver in the same build (both claim I2S0).
 
-#define DMA_DESC_NUM 4
+// 8 x 256 frames = 64 ms of lead at 32 kHz. With 4 (32 ms) a rendered SNES
+// frame (~36 ms) could not be absorbed by the slack banked on the skipped
+// frames around it, so the emulator was paced to real time on the fast
+// frames and lost the whole overrun of the slow one (measured 2026-09-13:
+// 46 fps at 65-70% busy). The muted path below models the same 64 ms.
+#define DMA_DESC_NUM 8
 #define DMA_FRAME_NUM 256
 #define SUBMIT_CHUNK 256
 
@@ -115,11 +120,18 @@ static bool driver_submit(const rg_audio_frame_t *frames, size_t count)
 {
     if (!state.enabled)
     {
-        // Same pacing as drivers/audio/dummy.c: block for the duration this
-        // chunk would have taken to play.
-        if (state.busy_until > rg_system_timer())
-            rg_usleep(state.busy_until - rg_system_timer());
-        state.busy_until = rg_system_timer() + (count * (1000000.f / state.sample_rate));
+        // Pace like the DMA path would: busy_until is when the audio queued
+        // so far finishes "playing". Block only when the queue holds more
+        // than the DMA lead, so a slow frame can be paid for by the fast
+        // frames before it. (dummy.c-style "sleep the chunk duration from
+        // now" could never bank that credit.)
+        const int64_t max_lead = (int64_t)DMA_DESC_NUM * DMA_FRAME_NUM * 1000000 / state.sample_rate;
+        int64_t now = rg_system_timer();
+        if (state.busy_until < now)
+            state.busy_until = now; // underrun: the queue was empty
+        state.busy_until += (int64_t)(count * (1000000.f / state.sample_rate));
+        if (state.busy_until - now > max_lead)
+            rg_usleep(state.busy_until - now - max_lead);
         return true;
     }
 

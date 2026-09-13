@@ -2,6 +2,9 @@
 
 #include <snes9x.h>
 #include <math.h>
+#if SNES_PROF
+#include "../components/snes9x/src/snes_prof.h"
+#endif
 
 typedef struct
 {
@@ -383,18 +386,24 @@ void snes_main(void)
     bool menuPressed = false;
     int skipFrames = 0;
 
-#if RG_ENABLE_PROFILING
-    // Per-second breakdown of where the loop's wall time goes. First-article
-    // measurement (Super Mario World, 2026-09-12): a frame without rendering
-    // costs ~8.5 ms, a rendered frame ~40-50 ms — the PPU renderer, not the
-    // CPU/APU emulation, the audio or the display path, is the bottleneck.
-    int64_t prof_t0 = rg_system_timer(), prof_main = 0, prof_disp = 0, prof_mix = 0, prof_audio = 0, prof_loop = 0;
-    int prof_n = 0;
+#if SNES_PROF
+    // Per-second breakdown of where the loop's wall time goes (Phase 4 step
+    // 4.0, esp32-emu-turbo). Build with SNES_PROF=1 in the environment: it
+    // adds only these counters, not -finstrument-functions (which is what
+    // RG_ENABLE_PROFILING does, and which inflates every small function).
+    // First-article measurement (Super Mario World, 2026-09-12): a frame
+    // without rendering costs ~8.5 ms, a rendered frame ~40-50 ms — the PPU
+    // renderer, not the CPU/APU emulation, the audio or the display path.
+    int64_t prof_t0 = rg_system_timer();
+    int64_t prof_main_drawn = 0, prof_main_skip = 0, prof_disp = 0, prof_mix = 0, prof_audio = 0, prof_loop = 0;
+    int prof_n = 0, prof_drawn = 0;
+    bool hud_pending = false;
+    char hud_text[192] = "";
 #endif
 
     while (1)
     {
-#if RG_ENABLE_PROFILING
+#if SNES_PROF
         int64_t loopStart = rg_system_timer();
 #endif
         uint32_t joystick = rg_input_read_gamepad();
@@ -428,7 +437,7 @@ void snes_main(void)
         GFX.Screen = currentUpdate->data;
 
         S9xMainLoop();
-#if RG_ENABLE_PROFILING
+#if SNES_PROF
         int64_t tMain = rg_system_timer();
 #endif
 
@@ -437,7 +446,7 @@ void snes_main(void)
             slowFrame = !rg_display_sync(false);
             rg_display_submit(currentUpdate, 0);
         }
-#if RG_ENABLE_PROFILING
+#if SNES_PROF
         int64_t tDisp = rg_system_timer();
 #endif
 
@@ -447,7 +456,7 @@ void snes_main(void)
         else if (apu_enabled)
             S9xMixSamples((void *)audioBuffer, samplesPerFrame << 1);
     #endif
-#if RG_ENABLE_PROFILING
+#if SNES_PROF
         int64_t tMix = rg_system_timer();
 #endif
 
@@ -457,19 +466,57 @@ void snes_main(void)
         if (apu_enabled)
             rg_audio_submit(audioBuffer, samplesPerFrame);
     #endif
-#if RG_ENABLE_PROFILING
+#if SNES_PROF
         int64_t tAudio = rg_system_timer();
 
-        prof_main += tMain - startTime; prof_disp += tDisp - tMain; prof_mix += tMix - tDisp;
+        if (drawFrame) { prof_main_drawn += tMain - startTime; prof_drawn++; }
+        else prof_main_skip += tMain - startTime;
+        prof_disp += tDisp - tMain; prof_mix += tMix - tDisp;
         prof_audio += tAudio - tMix; prof_loop += tAudio - loopStart; prof_n++;
         if (tAudio - prof_t0 >= 1000000)
         {
             int64_t wall = tAudio - prof_t0;
-            RG_LOGI("PROF n=%d wall=%dms: main=%d disp=%d mix=%d audio=%d loop=%d (us/frame) other=%d%%\n",
-                    prof_n, (int)(wall / 1000), (int)(prof_main / prof_n), (int)(prof_disp / prof_n),
+            int skip = prof_n - prof_drawn, d = prof_drawn ? prof_drawn : 1;
+            // R = renderer cost per drawn frame = drawn-frame S9xMainLoop minus a non-drawn one
+            int main_drawn = (int)(prof_main_drawn / d);
+            int main_skip = skip ? (int)(prof_main_skip / skip) : 0;
+            int R = main_drawn - main_skip;
+            rg_stats_t st = rg_system_get_stats();
+            RG_LOGI("PROF n=%d drawn=%d wall=%dms fps=%.0f busy=%.0f%% | us/frame: main(drawn)=%d main(skip)=%d R=%d disp=%d mix=%d audio=%d loop=%d other=%d%%\n",
+                    prof_n, prof_drawn, (int)(wall / 1000), st.totalFPS, st.busyPercent,
+                    main_drawn, main_skip, R, (int)(prof_disp / prof_n),
                     (int)(prof_mix / prof_n), (int)(prof_audio / prof_n), (int)(prof_loop / prof_n),
                     (int)((wall - prof_loop) * 100 / wall));
-            prof_t0 = tAudio; prof_main = prof_disp = prof_mix = prof_audio = prof_loop = 0; prof_n = 0;
+            snes_prof_t *sp = &snes_prof;
+            RG_LOGI("PROF/drawn-frame: strips=%.1f lines=%.0f sub=%.2f tiles=%.0f blank=%.0f conv=%.1f objsetup=%.2f | us: update=%d clear=%d sub=%d main=%d combine=%d obj=%d bg0=%d bg1=%d bg2=%d bg3=%d objsetup=%d | modes 0:%lu 1:%lu 2:%lu 3:%lu 4:%lu 5:%lu 6:%lu 7:%lu\n",
+                    (float)sp->strips / d, (float)sp->strip_lines / d, (float)sp->sub_passes / d,
+                    (float)sp->tiles / d, (float)sp->tiles_blank / d, (float)sp->tile_conv / d, (float)sp->obj_setup / d,
+                    (int)(sp->t_update / d), (int)(sp->t_clear / d), (int)(sp->t_sub / d), (int)(sp->t_main / d),
+                    (int)(sp->t_combine / d), (int)(sp->t_obj / d), (int)(sp->t_bg[0] / d), (int)(sp->t_bg[1] / d),
+                    (int)(sp->t_bg[2] / d), (int)(sp->t_bg[3] / d), (int)(sp->t_objsetup / d),
+                    sp->mode_hist[0], sp->mode_hist[1], sp->mode_hist[2], sp->mode_hist[3],
+                    sp->mode_hist[4], sp->mode_hist[5], sp->mode_hist[6], sp->mode_hist[7]);
+            // On-screen HUD: 7 columns fit the 57 px letterbox bar left of the
+            // 366x320 game viewport, which the display task never rewrites.
+            // Drawn below, outside the timed sections, only when the display
+            // is idle (rg_gui_draw_text blocks until pending updates finish).
+            int mode = 0;
+            for (int i = 1; i < 8; ++i) if (sp->mode_hist[i] > sp->mode_hist[mode]) mode = i;
+            snprintf(hud_text, sizeof(hud_text),
+                     "FPS %3.0f\nDRW %3d\nBSY %3.0f\nR %5.1f\nN %5.1f\nSTR%4.1f\nSUB%4.1f\nTIL%4.0f\nCNV%4.0f\nOBJ%4.1f\nBG %4.1f\nCLR%4.1f\nM%d %3d%%",
+                     st.totalFPS, prof_drawn, st.busyPercent, R / 1000.0f, main_skip / 1000.0f,
+                     (float)sp->strips / d, (float)sp->sub_passes / d, (float)sp->tiles / d, (float)sp->tile_conv / d,
+                     sp->t_obj / 1000.0f / d, (sp->t_bg[0] + sp->t_bg[1] + sp->t_bg[2] + sp->t_bg[3]) / 1000.0f / d,
+                     sp->t_clear / 1000.0f / d, mode, sp->strips ? (int)(sp->mode_hist[mode] * 100 / sp->strips) : 0);
+            hud_pending = true;
+            memset(sp, 0, sizeof(*sp));
+            prof_t0 = tAudio; prof_main_drawn = prof_main_skip = prof_disp = prof_mix = prof_audio = prof_loop = 0;
+            prof_n = prof_drawn = 0;
+        }
+        if (hud_pending && rg_display_sync(false))
+        {
+            rg_gui_draw_text(0, 0, 0, hud_text, C_YELLOW, C_BLACK, RG_TEXT_MONOSPACE | RG_TEXT_MULTILINE);
+            hud_pending = false;
         }
 #endif
 

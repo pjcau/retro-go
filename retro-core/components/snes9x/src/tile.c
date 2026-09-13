@@ -58,6 +58,7 @@ static const uint32_t even[4][16] =
 
 static uint8_t ConvertTile(uint8_t* pCache, uint32_t TileAddr)
 {
+   SNES_PROF_INC(tile_conv);
    uint8_t* tp = &Memory.VRAM[TileAddr];
    uint32_t* p = (uint32_t*) pCache;
    uint32_t non_zero = 0;
@@ -166,7 +167,7 @@ static uint8_t ConvertTile(uint8_t* pCache, uint32_t TileAddr)
       }
       break;
    }
-   return non_zero ? (0x10|BG.Depth) : BLANK_TILE;
+   return non_zero ? (0x10|BG.Depth) : (BLANK_TILE|BG.Depth);
 }
 
 #define PLOT_PIXEL(screen, pixel) (pixel)
