@@ -202,6 +202,7 @@ typedef struct
    bool     InterpolatedSound;
    bool     ThreadSound;
    bool     Mute;
+   bool     NoTransparency; /* esp32-emu-turbo: skip the sub-screen pass and colour-math combine (Phase 4 knob) */
    bool     NextAPUEnabled;
 
    /* Others */

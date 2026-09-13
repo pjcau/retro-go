@@ -160,3 +160,19 @@ CONFIG_I2S_SUPPRESS_DEPRECATE_WARN=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="../partitions.csv"
+
+#
+# Cache (esp32-emu-turbo Phase 4 step 4.1, 2026-09-13). Every snes9x buffer
+# above 32 KB lives in PSRAM (screen, sub-screen, both z-buffers, 512 KB tile
+# cache, VRAM, WRAM) and the core runs from flash with zero IRAM_ATTR: the
+# IDF defaults of 16 KB I-cache / 32 KB D-cache with 32 B lines are undersized
+# for it. Costs 48 KB of internal SRAM (164 KB free under SNES before this).
+# The bootloader applies these, so a change here needs a full reflash
+# (rg_tool.py install), not just the app partition.
+#
+CONFIG_ESP32S3_INSTRUCTION_CACHE_16KB=n
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_32KB=n
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_32B=n
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
