@@ -436,7 +436,6 @@ void snes_main(void)
     int64_t prof_t0 = rg_system_timer();
     int64_t prof_main_drawn = 0, prof_main_skip = 0, prof_disp = 0, prof_mix = 0, prof_audio = 0, prof_loop = 0;
     int prof_n = 0, prof_drawn = 0;
-    bool hud_pending = false;
     char hud_text[192] = "";
 #endif
 
@@ -559,21 +558,18 @@ void snes_main(void)
             // is idle (rg_gui_draw_text blocks until pending updates finish).
             int mode = 0;
             for (int i = 1; i < 8; ++i) if (sp->mode_hist[i] > sp->mode_hist[mode]) mode = i;
+            // Extra lines for the common Debug HUD (rg_system): renderer cost R,
+            // CPU-only frame N, strips, sub passes, tiles, conversions, OBJ/BG/clear ms, mode.
             snprintf(hud_text, sizeof(hud_text),
-                     "FPS %3.0f\nDRW %3d\nBSY %3.0f\nR %5.1f\nN %5.1f\nSTR%4.1f\nSUB%4.1f\nTIL%4.0f\nCNV%4.0f\nOBJ%4.1f\nBG %4.1f\nCLR%4.1f\nM%d %3d%%",
-                     st.totalFPS, prof_drawn, st.busyPercent, R / 1000.0f, main_skip / 1000.0f,
+                     "R %5.1f\nN %5.1f\nSTR%4.1f\nSUB%4.1f\nTIL%4.0f\nCNV%4.0f\nOBJ%4.1f\nBG %4.1f\nCLR%4.1f\nM%d %3d%%",
+                     R / 1000.0f, main_skip / 1000.0f,
                      (float)sp->strips / d, (float)sp->sub_passes / d, (float)sp->tiles / d, (float)sp->tile_conv / d,
                      sp->t_obj / 1000.0f / d, (sp->t_bg[0] + sp->t_bg[1] + sp->t_bg[2] + sp->t_bg[3]) / 1000.0f / d,
                      sp->t_clear / 1000.0f / d, mode, sp->strips ? (int)(sp->mode_hist[mode] * 100 / sp->strips) : 0);
-            hud_pending = true;
+            rg_system_set_hud_text(hud_text);
             memset(sp, 0, sizeof(*sp));
             prof_t0 = tAudio; prof_main_drawn = prof_main_skip = prof_disp = prof_mix = prof_audio = prof_loop = 0;
             prof_n = prof_drawn = 0;
-        }
-        if (hud_pending && rg_display_sync(false))
-        {
-            rg_gui_draw_text(0, 0, 0, hud_text, C_YELLOW, C_BLACK, RG_TEXT_MONOSPACE | RG_TEXT_MULTILINE);
-            hud_pending = false;
         }
 #endif
 

@@ -230,6 +230,12 @@ int rg_system_get_tick_rate(void);
 void rg_system_set_log_level(rg_log_level_t level);
 int  rg_system_get_log_level(void);
 void rg_system_tick(int busyTime);
+// Debug HUD: FPS / drawn / skipped / busy / free heap once a second in the
+// left letterbox bar, plus lines the app supplies (SNES_PROF, GEN_PROF...).
+// Toggled from the in-game options ("Debug HUD"), saved in the global settings.
+void rg_system_set_debug_hud(bool enabled);
+bool rg_system_get_debug_hud(void);
+void rg_system_set_hud_text(const char *text);
 void rg_system_vlog(int level, const char *context, const char *format, va_list va);
 void rg_system_log(int level, const char *context, const char *format, ...) __attribute__((format(printf,3,4)));
 bool rg_system_save_trace(const char *filename, bool append);

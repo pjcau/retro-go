@@ -431,6 +431,10 @@ void app_main(void)
                         (int)(gen_prof.ym / n), (int)(gen_prof.sn / n), (int)(gen_prof.vdp / n),
                         drawn ? (int)(gen_prof.vdp / drawn) : 0,
                         (int)(gen_prof_ym_us / n), gen_prof_ym_calls / n, gen_prof_ym_samples / n);
+                char hud[96];
+                snprintf(hud, sizeof(hud), "68K%5.1f\nZ80%5.1f\nVDP%5.1f\nYM %5.1f", gen_prof.m68k / 1000.0f / n,
+                         gen_prof.z80 / 1000.0f / n, drawn ? gen_prof.vdp / 1000.0f / drawn : 0.0f, gen_prof_ym_us / 1000.0f / n);
+                rg_system_set_hud_text(hud);
                 gen_prof_ym_us = 0; gen_prof_ym_calls = gen_prof_ym_samples = 0;
                 memset(&gen_prof, 0, sizeof(gen_prof));
                 frames = drawn = 0;

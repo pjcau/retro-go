@@ -403,6 +403,12 @@ static void console_exec(char *line)
         console_action_pending = true;
         printf("CTL %s %s %s %s\n", cmd, arg1, arg2, rest);
     }
+    else if (strcmp(cmd, "hud") == 0 && arg1)
+    {
+        // hud on|off : the Debug HUD of the options menu (rg_system)
+        rg_system_set_debug_hud(strcmp(arg1, "on") == 0);
+        printf("CTL hud %s\n", rg_system_get_debug_hud() ? "on" : "off");
+    }
     else if ((strcmp(cmd, "save") == 0 || strcmp(cmd, "load") == 0))
     {
         // save/load [slot] : emulator save-state, executed on the app's main task
@@ -418,7 +424,7 @@ static void console_exec(char *line)
     }
     else
     {
-        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch|resume <part> <app> <path> | save|load [slot] | launcher | reboot\n");
+        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch|resume <part> <app> <path> | save|load [slot] | hud on|off | launcher | reboot\n");
     }
 }
 
