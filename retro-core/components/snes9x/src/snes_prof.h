@@ -41,7 +41,7 @@ typedef struct
    uint32_t m7_runs;       /* Mode 7 spans drawn (clip regions x colour-window runs x lines) */
    uint32_t last_reg;      /* PPU register being written (S9xSetPPU), 0x80 = DMA */
    uint32_t flush_hist[0x40]; /* S9xUpdateScreen calls per triggering register (0x2100 + i) */
-   uint32_t cg_hist[16];   /* CGRAM entries changed mid-strip, by 16-entry group */
+   uint32_t cg_hist[32];   /* CGRAM entries changed mid-strip: 0-15 = entry, 16+ = group of 16 */
    uint32_t cg_zero;       /* of which entry 0 (backdrop) */
    uint32_t subempty_why;  /* OR of: 1 sub active, 2 colour window, 4 pseudo, 8 direct, 16 = fast path taken (sum over strips) */ /* strips: plain, add, add1/2, sub, sub1/2 */
 } snes_prof_t;

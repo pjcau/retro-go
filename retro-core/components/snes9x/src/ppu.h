@@ -33,6 +33,7 @@ typedef struct
 typedef struct
 {
    bool     ColorsChanged;
+   bool PalLineDirty; /* CGRAM entry 1-15 changed mid-frame without a strip (per-line Pal16) */
    uint8_t  HDMA;
    bool     OBJChanged;
    bool     RenderThisFrame;
@@ -435,9 +436,11 @@ static INLINE void REGISTER_2122(uint8_t Byte)
    {
       if ((Byte & 0x7f) != (PPU.CGDATA[PPU.CGADD] >> 8))
       {
-         if (IPPU.PreviousLine != IPPU.CurrentLine) { SNES_PROF_INC(cg_hist[PPU.CGADD >> 4]); if (!PPU.CGADD) SNES_PROF_INC(cg_zero); }
-         if (PPU.CGADD) /* entry 0 is per-line (LineData.Backdrop): HDMA sky gradients need no strip */
+         if (IPPU.PreviousLine != IPPU.CurrentLine) { SNES_PROF_INC(cg_hist[PPU.CGADD < 16 ? PPU.CGADD : 16 + (PPU.CGADD >> 4)]); if (!PPU.CGADD) SNES_PROF_INC(cg_zero); }
+         if (PPU.CGADD >= 16 || PPU.BGMode == 7) /* entries 0-15 are per line (LineData) */
             FLUSH_REDRAW();
+         else if (PPU.CGADD)
+            IPPU.PalLineDirty = true;
          PPU.CGDATA[PPU.CGADD] &= 0x00FF;
          PPU.CGDATA[PPU.CGADD] |= (Byte & 0x7f) << 8;
          IPPU.ColorsChanged = true;
@@ -449,9 +452,11 @@ static INLINE void REGISTER_2122(uint8_t Byte)
    }
    else if (Byte != (uint8_t)(PPU.CGDATA[PPU.CGADD] & 0xff))
    {
-      if (IPPU.PreviousLine != IPPU.CurrentLine) { SNES_PROF_INC(cg_hist[PPU.CGADD >> 4]); if (!PPU.CGADD) SNES_PROF_INC(cg_zero); }
-      if (PPU.CGADD)
+      if (IPPU.PreviousLine != IPPU.CurrentLine) { SNES_PROF_INC(cg_hist[PPU.CGADD < 16 ? PPU.CGADD : 16 + (PPU.CGADD >> 4)]); if (!PPU.CGADD) SNES_PROF_INC(cg_zero); }
+      if (PPU.CGADD >= 16 || PPU.BGMode == 7)
          FLUSH_REDRAW();
+      else if (PPU.CGADD)
+         IPPU.PalLineDirty = true;
       PPU.CGDATA[PPU.CGADD] &= 0x7F00;
       PPU.CGDATA[PPU.CGADD] |= Byte;
       IPPU.ColorsChanged = true;

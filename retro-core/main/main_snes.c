@@ -549,8 +549,8 @@ void snes_main(void)
                     if (sp->flush_hist[i]) n += snprintf(fl + n, sizeof(fl) - n, " %02x:%.1f", 0x00 + i, (float)sp->flush_hist[i] / d);
                 RG_LOGI("PROF/flush (strips per drawn frame by register 0x21xx):%s\n", fl);
                 n = 0; fl[0] = 0;
-                for (int i = 0; i < 16 && n < 180; i++)
-                    if (sp->cg_hist[i]) n += snprintf(fl + n, sizeof(fl) - n, " %d:%.1f", i * 16, (float)sp->cg_hist[i] / d);
+                for (int i = 0; i < 32 && n < 180; i++)
+                    if (sp->cg_hist[i]) n += snprintf(fl + n, sizeof(fl) - n, " %s%d:%.1f", i < 16 ? "e" : "g", i < 16 ? i : (i - 16) * 16, (float)sp->cg_hist[i] / d);
                 RG_LOGI("PROF/cgram (mid-strip palette changes per drawn frame by entry group):%s zero=%.1f\n", fl, (float)sp->cg_zero / d);
             }
             // On-screen HUD: 7 columns fit the 57 px letterbox bar left of the
