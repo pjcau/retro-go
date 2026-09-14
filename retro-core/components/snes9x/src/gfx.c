@@ -1952,8 +1952,6 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
 #define RENDER_BACKGROUND_MODE7(TYPE,FUNC) \
     uint32_t clip; \
     int32_t aa, cc; \
-    int32_t dir; \
-    int32_t startx, endx; \
     uint32_t Left = 0; \
     uint32_t Right = 256; \
     uint32_t ClipCount; \
@@ -1971,7 +1969,9 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
     const uint16_t fixed = GFX.FixedColour; \
     const int repeat = PPU.Mode7Repeat; \
     const bool subcol = GFX.SubColMode; \
+    const bool runs = GFX.MathRuns; /* plain drawer: palette per colour-window run */ \
     const uint16_t* mcolors = GFX.MathColors; \
+    const bool hflip = PPU.Mode7HFlip; \
     (void)colors; (void)delta; (void)ddelta; (void)fixed; (void)subcol; (void)mcolors; \
 \
     if (GFX.r2130 & 1) \
@@ -1994,6 +1994,7 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
     { \
     int32_t yy; \
     int32_t BB,DD; \
+    int32_t xbase; \
 \
     int32_t HOffset = ((int32_t) LineData [Line].BG[0].HOffset << M7) >> M7; \
     int32_t VOffset = ((int32_t) LineData [Line].BG[0].VOffset << M7) >> M7; \
@@ -2010,14 +2011,13 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
 \
     BB = l->MatrixB * yy + (CentreX << 8); \
     DD = l->MatrixD * yy + (CentreY << 8); \
+    xbase = CLIP_10_BIT_SIGNED(HOffset - CentreX); \
+    aa = hflip ? -l->MatrixA : l->MatrixA; \
+    cc = hflip ? -l->MatrixC : l->MatrixC; \
 \
     for (clip = 0; clip < ClipCount; clip++) \
     { \
-       TYPE *p; \
-       uint8_t *d; \
-       const uint8_t *sd; \
-       int32_t xx, AA, CC; \
-       (void)sd; \
+       uint32_t L, R; \
        if (GFX.pCurrentClip->Count [bg]) \
        { \
       Left = GFX.pCurrentClip->Left [clip][bg]; \
@@ -2025,69 +2025,73 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
       if (Right <= Left) \
           continue; \
        } \
-       p = (TYPE *) Screen + Left; \
-       d = Depth + Left; \
-       sd = subcol ? GFX.SubCol + Left : d + ddelta; \
-\
-       if (PPU.Mode7HFlip) \
+       /* Split the span into runs of constant sub z (colour window) so the \
+        * plain drawer can use one palette per run (gfx.c SubColMode). */ \
+       for (L = Left; L < Right; L = R) \
        { \
-      startx = Right - 1; \
-      endx = Left - 1; \
-      dir = -1; \
-      aa = -l->MatrixA; \
-      cc = -l->MatrixC; \
-       } \
-       else \
-       { \
-      startx = Left; \
-      endx = Right; \
-      dir = 1; \
-      aa = l->MatrixA; \
-      cc = l->MatrixC; \
-       } \
-\
-   xx = startx + CLIP_10_BIT_SIGNED(HOffset - CentreX); \
-       AA = l->MatrixA * xx + BB; \
-       CC = l->MatrixC * xx + DD; \
-\
-       if (!repeat) \
-       { \
-      int32_t x; \
-      for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++, sd++) \
+      TYPE *p; \
+      SNES_PROF_INC(m7_runs); \
+      uint8_t *d; \
+      const uint8_t *sd; \
+      const uint16_t *pal = colors; \
+      int32_t AA, CC, x; \
+      uint32_t n; \
+      (void)sd; (void)pal; \
+      R = Right; \
+      if (runs) \
       { \
-          uint32_t X = (AA >> 8) & 0x3ff; \
-          uint32_t Y = (CC >> 8) & 0x3ff; \
-          uint32_t b = M7_FETCH_BX(X, Y); \
-          M7_PLOT(b, FUNC) \
+          uint8_t v = GFX.SubCol [L]; \
+          for (R = L + 1; R < Right && GFX.SubCol [R] == v; R++) ; \
+          if (v) \
+         pal = mcolors; \
       } \
-       } \
-       else if (repeat == 3) \
-       { \
-      int32_t x; \
-      const uint32_t ty = ((yy + CentreY) & 7) << 4; \
-      for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++, sd++) \
+      p = (TYPE *) Screen + L; \
+      d = Depth + L; \
+      sd = subcol ? GFX.SubCol + L : d + ddelta; \
+      /* Screen is written left to right; the sample walks backwards when \
+       * flipped (aa/cc negated), starting from the run's right edge. */ \
+      x = (hflip ? (int32_t) R - 1 : (int32_t) L); \
+      AA = l->MatrixA * (x + xbase) + BB; \
+      CC = l->MatrixC * (x + xbase) + DD; \
+      n = R - L; \
+\
+      if (!repeat) \
       { \
-          int32_t X = AA >> 8; \
-          int32_t Y = CC >> 8; \
-          uint32_t b; \
-          if (((X | Y) & ~0x3ff) == 0) \
-         b = M7_FETCH_BX(X, Y); \
-          else \
-         b = vram[1 + ty + (((x + HOffset) & 7) << 1)]; \
-          M7_PLOT(b, FUNC) \
-      } \
-       } \
-       else \
-       { \
-      int32_t x; \
-      for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++, sd++) \
-      { \
-          int32_t X = AA >> 8; \
-          int32_t Y = CC >> 8; \
-          if (((X | Y) & ~0x3ff) == 0) \
+          for (; n; n--, AA += aa, CC += cc, p++, d++, sd++) \
           { \
+         uint32_t X = (AA >> 8) & 0x3ff; \
+         uint32_t Y = (CC >> 8) & 0x3ff; \
          uint32_t b = M7_FETCH_BX(X, Y); \
          M7_PLOT(b, FUNC) \
+          } \
+      } \
+      else if (repeat == 3) \
+      { \
+          const uint32_t ty = ((yy + CentreY) & 7) << 4; \
+          const int32_t dir = hflip ? -1 : 1; \
+          for (; n; n--, x += dir, AA += aa, CC += cc, p++, d++, sd++) \
+          { \
+         int32_t X = AA >> 8; \
+         int32_t Y = CC >> 8; \
+         uint32_t b; \
+         if (((X | Y) & ~0x3ff) == 0) \
+             b = M7_FETCH_BX(X, Y); \
+         else \
+             b = vram[1 + ty + (((x + HOffset) & 7) << 1)]; \
+         M7_PLOT(b, FUNC) \
+          } \
+      } \
+      else \
+      { \
+          for (; n; n--, AA += aa, CC += cc, p++, d++, sd++) \
+          { \
+         int32_t X = AA >> 8; \
+         int32_t Y = CC >> 8; \
+         if (((X | Y) & ~0x3ff) == 0) \
+         { \
+             uint32_t b = M7_FETCH_BX(X, Y); \
+             M7_PLOT(b, FUNC) \
+         } \
           } \
       } \
        } \
@@ -2101,7 +2105,7 @@ static void DrawBGMode7Background(uint8_t* Screen, int32_t bg)
 
 static void DrawBGMode7Background16(uint8_t* Screen, int32_t bg)
 {
-   RENDER_BACKGROUND_MODE7(uint16_t, colors [b & m7mask]);
+   RENDER_BACKGROUND_MODE7(uint16_t, pal [b & m7mask]);
 }
 
 static void DrawBGMode7Background16Add(uint8_t * Screen, int32_t bg)
@@ -2660,8 +2664,11 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
             }
             else if (GFX.SubEmpty)
             {
-               /* Nothing on the sub screen: the Add/Sub drawers would add or
-                * subtract the fixed colour to every pixel - do it via the palette. */
+               /* Nothing on the sub screen and no colour window: the Add/Sub
+                * drawers would add or subtract the fixed colour to every
+                * pixel - do it via the palette. (With a colour window the
+                * per-run plain drawer measured slower than the Add drawer
+                * with SubCol on Mario Kart: 14.5 vs 12.5 ms - kept off.) */
                SNES_PROF_INC(m7_variant[0]);
                BuildMathPalette(false);
                GFX.UseMathPalette = true;

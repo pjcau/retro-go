@@ -535,14 +535,14 @@ void snes_main(void)
                     (int)(sp->t_bg[2] / d), (int)(sp->t_bg[3] / d), (int)(sp->t_objsetup / d),
                     sp->mode_hist[0], sp->mode_hist[1], sp->mode_hist[2], sp->mode_hist[3],
                     sp->mode_hist[4], sp->mode_hist[5], sp->mode_hist[6], sp->mode_hist[7]);
-            RG_LOGI("PROF/layers: bg0 %.0f/%.0f/%.0f bg1 %.0f/%.0f/%.0f bg2 %.0f/%.0f/%.0f bg3 %.0f/%.0f/%.0f obj %.0f/%.0f/%.0f (tiles/clipped/lines per drawn frame) m7lines=%.0f m7us=%d m7var=%lu/%lu/%lu/%lu/%lu subempty_why=%lu\n",
+            RG_LOGI("PROF/layers: bg0 %.0f/%.0f/%.0f bg1 %.0f/%.0f/%.0f bg2 %.0f/%.0f/%.0f bg3 %.0f/%.0f/%.0f obj %.0f/%.0f/%.0f (tiles/clipped/lines per drawn frame) m7lines=%.0f m7us=%d m7var=%lu/%lu/%lu/%lu/%lu subempty_why=%lu m7runs=%.0f\n",
                     (float)sp->l_tiles[0] / d, (float)sp->l_clipped[0] / d, (float)sp->l_lines[0] / d,
                     (float)sp->l_tiles[1] / d, (float)sp->l_clipped[1] / d, (float)sp->l_lines[1] / d,
                     (float)sp->l_tiles[2] / d, (float)sp->l_clipped[2] / d, (float)sp->l_lines[2] / d,
                     (float)sp->l_tiles[3] / d, (float)sp->l_clipped[3] / d, (float)sp->l_lines[3] / d,
                     (float)sp->l_tiles[4] / d, (float)sp->l_clipped[4] / d, (float)sp->l_lines[4] / d,
                     (float)sp->m7_lines / d, (int)(sp->t_m7 / d),
-                    sp->m7_variant[0], sp->m7_variant[1], sp->m7_variant[2], sp->m7_variant[3], sp->m7_variant[4], sp->subempty_why);
+                    sp->m7_variant[0], sp->m7_variant[1], sp->m7_variant[2], sp->m7_variant[3], sp->m7_variant[4], sp->subempty_why, (float)sp->m7_runs / d);
             // On-screen HUD: 7 columns fit the 57 px letterbox bar left of the
             // 366x320 game viewport, which the display task never rewrites.
             // Drawn below, outside the timed sections, only when the display
