@@ -34,10 +34,12 @@
        SNES_PROF_INC(tiles_blank); \
        return; \
     } \
+    SNES_PROF_INC(l_tiles[snes_prof.cur_layer]); \
+    SNES_PROF_ADDN(l_lines[snes_prof.cur_layer], LineCount); \
     if (BG.DirectColourMode) \
        ScreenColors = &IPPU.DirectColors [((Tile >> 10) & BG.PaletteMask) << 8]; \
     else \
-       ScreenColors = &IPPU.ScreenColors [(((Tile >> 10) & BG.PaletteMask) << BG.PaletteShift) + BG.StartPalette]
+       ScreenColors = (GFX.UseMathPalette ? GFX.MathColors : IPPU.ScreenColors) + ((((Tile >> 10) & BG.PaletteMask) << BG.PaletteShift) + BG.StartPalette)
 
 #define RENDER_TILE(NORMAL, FLIPPED, N) \
     switch (Tile & (V_FLIP | H_FLIP)) \
@@ -83,6 +85,7 @@
     uint32_t d2
 
 #define TILE_CLIP_PREAMBLE_CODE() \
+    SNES_PROF_INC(l_clipped[snes_prof.cur_layer]); \
     if (StartPixel < 4) \
     { \
        d1 = HeadMask [StartPixel]; \

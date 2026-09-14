@@ -360,8 +360,52 @@ void S9xEndScreenRefresh(void)
       CPU.SRAMModified = false;
 }
 
+/* MathColors = IPPU.ScreenColors (op) GFX.FixedColour for the current
+ * colour-math operation. `halve` selects the 1/2 variants used by the
+ * DrawTile16Fixed*1_2 writers; the Mode 7 drawers never halve the fixed
+ * colour. Rebuilt only when the key changes or a new strip starts. */
+static void BuildMathPalette(bool halve)
+{
+   uint32_t key = (GFX.r2131 & 0xC0) | (halve << 8) | 0x10000;
+   const uint16_t *src = IPPU.ScreenColors;
+   uint16_t *dst = GFX.MathColors;
+   uint16_t fixed = GFX.FixedColour;
+   int i;
+   if (GFX.MathKey == key)
+      return;
+   GFX.MathKey = key;
+   if (GFX.r2131 & 0x80)
+   {
+      if (halve)
+         for (i = 0; i < 256; i++) dst[i] = COLOR_SUB1_2(src[i], fixed);
+      else
+         for (i = 0; i < 256; i++) dst[i] = COLOR_SUB(src[i], fixed);
+   }
+   else
+   {
+      if (halve)
+         for (i = 0; i < 256; i++) dst[i] = COLOR_ADD1_2(src[i], fixed);
+      else
+         for (i = 0; i < 256; i++) dst[i] = COLOR_ADD(src[i], fixed);
+   }
+}
+
 static INLINE void SelectTileRenderer(bool normal)
 {
+   GFX.UseMathPalette = false;
+   if (!normal && GFX.SubColMode)
+   {
+      /* Fixed-colour halving only for the 0x40 / 0xC0 selections without
+       * the "add sub screen" bit (the DrawTile16Fixed*1_2 writers). */
+      BuildMathPalette((GFX.r2131 & 0x40) && !(GFX.r2130 & 2));
+      if (GFX.SubEmpty)
+      {
+         /* Sub z-buffer is 1 everywhere: plain writers through MathColors. */
+         GFX.UseMathPalette = true;
+         normal = true;
+      }
+      /* else: the Add/Sub writers read GFX.SubCol and MathColors (tile.c) */
+   }
    if (normal)
    {
       if (IPPU.HalfWidthPixels)
@@ -649,6 +693,7 @@ static void DrawOBJS_(bool OnMain, uint8_t D);
 static void DrawOBJS(bool OnMain, uint8_t D)
 {
    SNES_PROF_T0(_pt);
+   SNES_PROF_SET(cur_layer, 4);
    DrawOBJS_(OnMain, D);
    SNES_PROF_ACC(t_obj, _pt);
 }
@@ -1581,6 +1626,7 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
 static void DrawBackground(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2)
 {
    SNES_PROF_T0(_pt);
+   SNES_PROF_SET(cur_layer, bg & 3);
    DrawBackground_(BGMode, bg, Z1, Z2);
    SNES_PROF_ACC(t_bg[bg & 3], _pt);
 }
@@ -1880,6 +1926,29 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
    }
 }
 
+/* Mode 7 background, rewritten for the ESP32-S3 (esp32-emu-turbo, 2026-09-14).
+ * The original macro read GFX.Mode7Mask, GFX.Mode7PriorityMask, Mode7Depths,
+ * PPU.Mode7Repeat, GFX.Delta, GFX.DepthDelta and wrote GFX.Z1 for every
+ * pixel; since *p and *d are stores through plain pointers the compiler
+ * reloaded all of them each iteration (~50 instructions, ~90 cycles per
+ * pixel: Super Metroid Ceres 19 ms per frame for 193 lines). Every
+ * invariant is now a local, the repeat mode is decided once per line and
+ * FUNC sees the locals `colors`, `m7mask`, `delta`, `ddelta`, `fixed`.
+ * Semantics are unchanged, including Mode7Repeat == 3 (tile 0 fill),
+ * the H/V flips and the clip windows. */
+#define M7_FETCH_BX(X, Y) \
+    (vram[1 + (vram[(((Y) & ~7) << 5) + (((X) >> 2) & ~1)] << 7) + (((Y) & 7) << 4) + (((X) & 7) << 1)])
+
+#define M7_PLOT(b, FUNC) \
+    { \
+        uint8_t z1 = (b & prmask) ? z_hi : z_lo; \
+        if (z1 > *d && (b & m7mask)) \
+        { \
+            *p = (FUNC); \
+            *d = z1; \
+        } \
+    }
+
 #define RENDER_BACKGROUND_MODE7(TYPE,FUNC) \
     uint32_t clip; \
     int32_t aa, cc; \
@@ -1888,18 +1957,29 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
     uint32_t Left = 0; \
     uint32_t Right = 256; \
     uint32_t ClipCount; \
-    uint16_t* ScreenColors; \
-    uint8_t* VRAM1; \
+    const uint16_t* colors; \
+    const uint8_t* vram = Memory.VRAM; \
     uint32_t Line; \
     uint8_t* Depth; \
     SLineMatrixData* l; \
-    (void)ScreenColors; \
+    const uint32_t m7mask = GFX.Mode7Mask; \
+    const uint32_t prmask = GFX.Mode7PriorityMask; \
+    const uint8_t z_lo = Mode7Depths [0]; \
+    const uint8_t z_hi = Mode7Depths [1]; \
+    const int32_t delta = GFX.Delta; \
+    const int32_t ddelta = GFX.DepthDelta; \
+    const uint16_t fixed = GFX.FixedColour; \
+    const int repeat = PPU.Mode7Repeat; \
+    const bool subcol = GFX.SubColMode; \
+    const uint16_t* mcolors = GFX.MathColors; \
+    (void)colors; (void)delta; (void)ddelta; (void)fixed; (void)subcol; (void)mcolors; \
 \
-    VRAM1 = Memory.VRAM + 1; \
     if (GFX.r2130 & 1) \
-        ScreenColors = IPPU.DirectColors; \
+        colors = IPPU.DirectColors; \
+    else if (GFX.UseMathPalette) \
+        colors = GFX.MathColors; \
     else \
-        ScreenColors = IPPU.ScreenColors; \
+        colors = IPPU.ScreenColors; \
 \
     ClipCount = GFX.pCurrentClip->Count [bg]; \
 \
@@ -1935,7 +2015,9 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
     { \
        TYPE *p; \
        uint8_t *d; \
+       const uint8_t *sd; \
        int32_t xx, AA, CC; \
+       (void)sd; \
        if (GFX.pCurrentClip->Count [bg]) \
        { \
       Left = GFX.pCurrentClip->Left [clip][bg]; \
@@ -1945,6 +2027,7 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
        } \
        p = (TYPE *) Screen + Left; \
        d = Depth + Left; \
+       sd = subcol ? GFX.SubCol + Left : d + ddelta; \
 \
        if (PPU.Mode7HFlip) \
        { \
@@ -1964,60 +2047,47 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
        } \
 \
    xx = startx + CLIP_10_BIT_SIGNED(HOffset - CentreX); \
-       AA = l->MatrixA * xx; \
-       CC = l->MatrixC * xx; \
+       AA = l->MatrixA * xx + BB; \
+       CC = l->MatrixC * xx + DD; \
 \
-       if (!PPU.Mode7Repeat) \
+       if (!repeat) \
        { \
       int32_t x; \
-      for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++) \
+      for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++, sd++) \
       { \
-          int32_t X = ((AA + BB) >> 8) & 0x3ff; \
-          int32_t Y = ((CC + DD) >> 8) & 0x3ff; \
-          uint8_t *TileData = VRAM1 + (Memory.VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7); \
-          uint32_t b = TileData[((Y & 7) << 4) + ((X & 7) << 1)]; \
-          GFX.Z1 = Mode7Depths [(b & GFX.Mode7PriorityMask) >> 7]; \
-          if (GFX.Z1 > *d && (b & GFX.Mode7Mask) ) \
-          { \
-         *p = (FUNC); \
-         *d = GFX.Z1; \
-          } \
+          uint32_t X = (AA >> 8) & 0x3ff; \
+          uint32_t Y = (CC >> 8) & 0x3ff; \
+          uint32_t b = M7_FETCH_BX(X, Y); \
+          M7_PLOT(b, FUNC) \
+      } \
+       } \
+       else if (repeat == 3) \
+       { \
+      int32_t x; \
+      const uint32_t ty = ((yy + CentreY) & 7) << 4; \
+      for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++, sd++) \
+      { \
+          int32_t X = AA >> 8; \
+          int32_t Y = CC >> 8; \
+          uint32_t b; \
+          if (((X | Y) & ~0x3ff) == 0) \
+         b = M7_FETCH_BX(X, Y); \
+          else \
+         b = vram[1 + ty + (((x + HOffset) & 7) << 1)]; \
+          M7_PLOT(b, FUNC) \
       } \
        } \
        else \
        { \
       int32_t x; \
-      for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++) \
+      for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++, sd++) \
       { \
-          int32_t X = ((AA + BB) >> 8); \
-          int32_t Y = ((CC + DD) >> 8); \
-\
+          int32_t X = AA >> 8; \
+          int32_t Y = CC >> 8; \
           if (((X | Y) & ~0x3ff) == 0) \
           { \
-         uint8_t *TileData = VRAM1 + (Memory.VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7); \
-         uint32_t b = TileData[((Y & 7) << 4) + ((X & 7) << 1)]; \
-         GFX.Z1 = Mode7Depths [(b & GFX.Mode7PriorityMask) >> 7]; \
-         if (GFX.Z1 > *d && (b & GFX.Mode7Mask) ) \
-         { \
-             *p = (FUNC); \
-             *d = GFX.Z1; \
-         } \
-          } \
-          else \
-          { \
-         if (PPU.Mode7Repeat == 3) \
-         { \
-             uint32_t b; \
-             X = (x + HOffset) & 7; \
-             Y = (yy + CentreY) & 7; \
-             b = VRAM1[((Y & 7) << 4) + ((X & 7) << 1)]; \
-             GFX.Z1 = Mode7Depths [(b & GFX.Mode7PriorityMask) >> 7]; \
-             if (GFX.Z1 > *d && (b & GFX.Mode7Mask) ) \
-             { \
-            *p = (FUNC); \
-            *d = GFX.Z1; \
-             } \
-         } \
+         uint32_t b = M7_FETCH_BX(X, Y); \
+         M7_PLOT(b, FUNC) \
           } \
       } \
        } \
@@ -2026,32 +2096,32 @@ static void DrawBackground_(uint32_t BGMode, uint32_t bg, uint8_t Z1, uint8_t Z2
 
 static void DrawBGMode7Background(uint8_t* Screen, int32_t bg)
 {
-   RENDER_BACKGROUND_MODE7(uint8_t, (uint8_t) (b & GFX.Mode7Mask))
+   RENDER_BACKGROUND_MODE7(uint8_t, (uint8_t) (b & m7mask))
 }
 
 static void DrawBGMode7Background16(uint8_t* Screen, int32_t bg)
 {
-   RENDER_BACKGROUND_MODE7(uint16_t, ScreenColors [b & GFX.Mode7Mask]);
+   RENDER_BACKGROUND_MODE7(uint16_t, colors [b & m7mask]);
 }
 
 static void DrawBGMode7Background16Add(uint8_t * Screen, int32_t bg)
 {
-   RENDER_BACKGROUND_MODE7(uint16_t, *(d + GFX.DepthDelta) ? (*(d + GFX.DepthDelta) != 1 ? COLOR_ADD(ScreenColors[b & GFX.Mode7Mask], p[GFX.Delta]) : COLOR_ADD(ScreenColors[b & GFX.Mode7Mask], GFX.FixedColour)) : ScreenColors[b & GFX.Mode7Mask]);
+   RENDER_BACKGROUND_MODE7(uint16_t, *sd ? (*sd != 1 ? COLOR_ADD(colors[b & m7mask], p[delta]) : (subcol ? mcolors[b & m7mask] : COLOR_ADD(colors[b & m7mask], fixed))) : colors[b & m7mask]);
 }
 
 static void DrawBGMode7Background16Add1_2(uint8_t * Screen, int32_t bg)
 {
-   RENDER_BACKGROUND_MODE7(uint16_t, *(d + GFX.DepthDelta) ? (*(d + GFX.DepthDelta) != 1 ? COLOR_ADD1_2(ScreenColors[b & GFX.Mode7Mask], p[GFX.Delta]) : COLOR_ADD(ScreenColors[b & GFX.Mode7Mask], GFX.FixedColour)) : ScreenColors[b & GFX.Mode7Mask]);
+   RENDER_BACKGROUND_MODE7(uint16_t, *sd ? (*sd != 1 ? COLOR_ADD1_2(colors[b & m7mask], p[delta]) : (subcol ? mcolors[b & m7mask] : COLOR_ADD(colors[b & m7mask], fixed))) : colors[b & m7mask]);
 }
 
 static void DrawBGMode7Background16Sub(uint8_t * Screen, int32_t bg)
 {
-   RENDER_BACKGROUND_MODE7(uint16_t, *(d + GFX.DepthDelta) ? (*(d + GFX.DepthDelta) != 1 ? COLOR_SUB(ScreenColors[b & GFX.Mode7Mask], p[GFX.Delta]) : COLOR_SUB(ScreenColors[b & GFX.Mode7Mask], GFX.FixedColour)) : ScreenColors[b & GFX.Mode7Mask]);
+   RENDER_BACKGROUND_MODE7(uint16_t, *sd ? (*sd != 1 ? COLOR_SUB(colors[b & m7mask], p[delta]) : (subcol ? mcolors[b & m7mask] : COLOR_SUB(colors[b & m7mask], fixed))) : colors[b & m7mask]);
 }
 
 static void DrawBGMode7Background16Sub1_2(uint8_t * Screen, int32_t bg)
 {
-   RENDER_BACKGROUND_MODE7(uint16_t, *(d + GFX.DepthDelta) ? (*(d + GFX.DepthDelta) != 1 ? COLOR_SUB1_2(ScreenColors[b & GFX.Mode7Mask], p[GFX.Delta]) : COLOR_SUB(ScreenColors[b & GFX.Mode7Mask], GFX.FixedColour)) : ScreenColors[b & GFX.Mode7Mask]);
+   RENDER_BACKGROUND_MODE7(uint16_t, *sd ? (*sd != 1 ? COLOR_SUB1_2(colors[b & m7mask], p[delta]) : (subcol ? mcolors[b & m7mask] : COLOR_SUB(colors[b & m7mask], fixed))) : colors[b & m7mask]);
 }
 
 #define RENDER_BACKGROUND_MODE7_i(TYPE,FUNC,COLORFUNC) \
@@ -2580,25 +2650,56 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
                Mode7Depths [1] = 5 + D;
                bg = 0;
             }
+            SNES_PROF_T0(_pt7);
+            SNES_PROF_ADDN(m7_lines, GFX.EndY - GFX.StartY + 1);
             if (sub || !SUB_OR_ADD(0))
+            {
+               SNES_PROF_INC(m7_variant[0]);
+               GFX.UseMathPalette = false;
                DrawBGMode7Background16(Screen, bg);
+            }
+            else if (GFX.SubEmpty)
+            {
+               /* Nothing on the sub screen: the Add/Sub drawers would add or
+                * subtract the fixed colour to every pixel - do it via the palette. */
+               SNES_PROF_INC(m7_variant[0]);
+               BuildMathPalette(false);
+               GFX.UseMathPalette = true;
+               DrawBGMode7Background16(Screen, bg);
+               GFX.UseMathPalette = false;
+            }
             else
             {
+               if (GFX.SubColMode)
+                  BuildMathPalette(false); /* drawers read GFX.SubCol + MathColors */
                if (GFX.r2131 & 0x80)
                {
                   if (GFX.r2131 & 0x40)
+                  {
+                     SNES_PROF_INC(m7_variant[4]);
                      DrawBGMode7Background16Sub1_2(Screen, bg);
+                  }
                   else
+                  {
+                     SNES_PROF_INC(m7_variant[3]);
                      DrawBGMode7Background16Sub(Screen, bg);
+                  }
                }
                else
                {
                   if (GFX.r2131 & 0x40)
+                  {
+                     SNES_PROF_INC(m7_variant[2]);
                      DrawBGMode7Background16Add1_2(Screen, bg);
+                  }
                   else
+                  {
+                     SNES_PROF_INC(m7_variant[1]);
                      DrawBGMode7Background16Add(Screen, bg);
+                  }
                }
             }
+            SNES_PROF_ACC(t_m7, _pt7);
          }
          break;
       default:
@@ -2620,6 +2721,10 @@ void S9xUpdateScreen(void)
    GFX.r212d = Memory.FillRAM [0x212d];
    GFX.r2130 = Memory.FillRAM [0x2130];
    GFX.Pseudo = Memory.FillRAM [0x2133] & 8;
+   GFX.SubEmpty = false;
+   GFX.SubColMode = false;
+   GFX.UseMathPalette = false;
+   GFX.MathKey = 0; /* palette may have changed since the last strip */
 
    if (IPPU.OBJChanged)
       S9xSetupOBJ();
@@ -2714,6 +2819,23 @@ void S9xUpdateScreen(void)
       ClipData* pClip;
 
       GFX.FixedColour = BUILD_PIXEL(IPPU.XB [PPU.FixedColourRed], IPPU.XB [PPU.FixedColourGreen], IPPU.XB [PPU.FixedColourBlue]);
+      /* Sub z-buffer is memset to 1 below when no colour window is set;
+       * with nothing rendered on the sub screen it stays that way. */
+      GFX.SubColMode = !ANYTHING_ON_SUB && !GFX.Pseudo && !(GFX.r2130 & 1) && GFX.PPL == 256;
+      GFX.SubEmpty = GFX.SubColMode && !IPPU.Clip [1].Count [5];
+      if (GFX.SubColMode && !GFX.SubEmpty)
+      {
+         /* Same values the sub z-buffer clear below writes, but by column. */
+         ClipData* wClip = &IPPU.Clip [1];
+         uint32_t c;
+         memset(GFX.SubCol, 0, 256);
+         for (c = 0; c < wClip->Count [5]; c++)
+            if (wClip->Right [c][5] > wClip->Left [c][5])
+               memset(GFX.SubCol + wClip->Left [c][5], 1, wClip->Right [c][5] - wClip->Left [c][5]);
+      }
+      else if (GFX.SubColMode)
+         memset(GFX.SubCol, 1, 256);
+      SNES_PROF_ADDN(subempty_why, (ANYTHING_ON_SUB ? 1 : 0) | (IPPU.Clip [1].Count [5] ? 2 : 0) | (GFX.Pseudo ? 4 : 0) | ((GFX.r2130 & 1) ? 8 : 0) | (GFX.SubEmpty ? 16 : 0) | (GFX.SubColMode ? 32 : 0));
       SNES_PROF_T0(_pt);
 
       /* Clear the z-buffer, marking areas 'covered' by the fixed

@@ -13,6 +13,15 @@
 #include <rg_system.h>
 #endif
 
+/* Hot renderer code lives in flash behind a 32 KB cache on the ESP32-S3;
+ * S9X_IRAM pins it in instruction RAM (Phase 4.2, esp32-emu-turbo). */
+#ifdef ESP_PLATFORM
+#include "esp_attr.h"
+#define S9X_IRAM IRAM_ATTR
+#else
+#define S9X_IRAM
+#endif
+
 #ifndef INLINE
 #define INLINE inline
 #endif

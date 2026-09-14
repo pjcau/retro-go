@@ -31,11 +31,20 @@ typedef struct
    int64_t t_obj;         /* DrawOBJS (main + sub) */
    int64_t t_bg[4];       /* DrawBackground per BG (main + sub) */
    int64_t t_objsetup;    /* S9xSetupOBJ */
+   uint32_t cur_layer;    /* 0-3 = BG being drawn, 4 = OBJ (set by the callers) */
+   uint32_t l_tiles[5];   /* non-blank tile draws per layer */
+   uint32_t l_clipped[5]; /* of which through DrawClippedTile* (edge / window) */
+   uint32_t l_lines[5];   /* sum of LineCount: 8 per full-height tile band */
+   uint32_t m7_lines;     /* Mode 7 scanlines rendered */
+   int64_t t_m7;          /* Mode 7 background drawers */
+   uint32_t m7_variant[5];
+   uint32_t subempty_why;  /* OR of: 1 sub active, 2 colour window, 4 pseudo, 8 direct, 16 = fast path taken (sum over strips) */ /* strips: plain, add, add1/2, sub, sub1/2 */
 } snes_prof_t;
 
 extern snes_prof_t snes_prof;
 
 #define SNES_PROF_INC(field)      (snes_prof.field++)
+#define SNES_PROF_SET(field, v)   (snes_prof.field = (v))
 #define SNES_PROF_ADDN(field, n)  (snes_prof.field += (n))
 #define SNES_PROF_T0(var)         int64_t var = rg_system_timer()
 #define SNES_PROF_ACC(field, var) (snes_prof.field += rg_system_timer() - (var))
@@ -43,6 +52,7 @@ extern snes_prof_t snes_prof;
 #else
 
 #define SNES_PROF_INC(field)      ((void)0)
+#define SNES_PROF_SET(field, v)   ((void)0)
 #define SNES_PROF_ADDN(field, n)  ((void)0)
 #define SNES_PROF_T0(var)         ((void)0)
 #define SNES_PROF_ACC(field, var) ((void)0)
