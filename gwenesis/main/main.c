@@ -5,6 +5,17 @@
 #include <gwenesis.h>
 
 #define AUDIO_SAMPLE_RATE (53267)
+
+// GEN_PROF=1 env var at build (gwenesis/CMakeLists.txt): per-second cost split
+// of the frame loop, one timer read per section per scanline.
+#if GEN_PROF
+static struct { int64_t frame, m68k, z80, ym, sn, vdp; } gen_prof;
+#define GEN_PROF_T0(v)      int64_t v = rg_system_timer()
+#define GEN_PROF_ACC(f, v)  do { int64_t _n = rg_system_timer(); gen_prof.f += _n - (v); (v) = _n; } while (0)
+#else
+#define GEN_PROF_T0(v)      ((void)0)
+#define GEN_PROF_ACC(f, v)  ((void)0)
+#endif
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
 
 extern unsigned char* VRAM;
@@ -163,6 +174,7 @@ static bool save_state_handler(const char *filename)
 
 static bool load_state_handler(const char *filename)
 {
+    ym2612_worker_flush();
     if ((savestate_fp = fopen(filename, "rb")))
     {
         savestate_errors = 0;
@@ -250,6 +262,7 @@ void app_main(void)
 
     RG_LOGI("reset_emulation()\n");
     reset_emulation();
+    ym2612_worker_start(); /* FM synthesis on core 1 (components/gwenesis/src/sound/ym2612.c) */
 
     if (app->bootFlags & RG_BOOT_RESUME)
     {
@@ -311,8 +324,7 @@ void app_main(void)
         system_clock = 0;
         zclk = z80_enabled ? 0 : 0x1000000;
 
-        ym2612_clock = yfm_enabled ? 0 : 0x1000000;
-        ym2612_index = 0;
+        /* ym2612_clock / ym2612_index belong to the core-1 worker now */
 
         sn76489_clock = sn76489_enabled ? 0 : 0x1000000;
         sn76489_index = 0;
@@ -321,8 +333,11 @@ void app_main(void)
 
         while (scan_line < lines_per_frame)
         {
+            GEN_PROF_T0(t0);
             m68k_run(system_clock + VDP_CYCLES_PER_LINE);
+            GEN_PROF_ACC(m68k, t0);
             z80_run(system_clock + VDP_CYCLES_PER_LINE);
+            GEN_PROF_ACC(z80, t0);
 
             /* Audio */
             /*  GWENESIS_AUDIO_ACCURATE:
@@ -331,12 +346,15 @@ void app_main(void)
             */
             if (GWENESIS_AUDIO_ACCURATE == 0) {
                 gwenesis_SN76489_run(system_clock + VDP_CYCLES_PER_LINE);
+                GEN_PROF_ACC(sn, t0);
                 ym2612_run(system_clock + VDP_CYCLES_PER_LINE);
+                GEN_PROF_ACC(ym, t0);
             }
 
             /* Video */
             if (drawFrame && scan_line < screen_height)
                 gwenesis_vdp_render_line(scan_line); /* render scan_line */
+            GEN_PROF_ACC(vdp, t0);
 
             // On these lines, the line counter interrupt is reloaded
             if ((scan_line == 0) || (scan_line > screen_height)) {
@@ -378,9 +396,10 @@ void app_main(void)
         * synchronize YM2612 and SN76489 to system_clock
         * it completes the missing audio sample for accurate audio mode
         */
+        int16_t *ym_frame = NULL;
         if (GWENESIS_AUDIO_ACCURATE == 1) {
             gwenesis_SN76489_run(system_clock);
-            ym2612_run(system_clock);
+            ym_frame = ym2612_frame_end(system_clock, yfm_enabled); /* previous frame's audio */
         }
 
         // reset m68k cycles to the begin of next frame cycle
@@ -397,10 +416,32 @@ void app_main(void)
         }
 
         rg_system_tick(rg_system_timer() - startTime);
+#if GEN_PROF
+        {
+            static int64_t last_print = 0;
+            static int frames = 0, drawn = 0;
+            frames++; drawn += drawFrame;
+            gen_prof.frame += rg_system_timer() - startTime;
+            if (rg_system_timer() - last_print >= 1000000)
+            {
+                int n = frames ? frames : 1;
+                extern int64_t gen_prof_ym_us; extern int gen_prof_ym_calls, gen_prof_ym_samples;
+                RG_LOGI("GENPROF n=%d drawn=%d | us/frame: frame=%d m68k=%d z80=%d ym2612=%d sn76489=%d vdp=%d (vdp per drawn=%d) | YM2612Update inside CPUs: %d us, %d calls, %d samples per frame\n",
+                        frames, drawn, (int)(gen_prof.frame / n), (int)(gen_prof.m68k / n), (int)(gen_prof.z80 / n),
+                        (int)(gen_prof.ym / n), (int)(gen_prof.sn / n), (int)(gen_prof.vdp / n),
+                        drawn ? (int)(gen_prof.vdp / drawn) : 0,
+                        (int)(gen_prof_ym_us / n), gen_prof_ym_calls / n, gen_prof_ym_samples / n);
+                gen_prof_ym_us = 0; gen_prof_ym_calls = gen_prof_ym_samples = 0;
+                memset(&gen_prof, 0, sizeof(gen_prof));
+                frames = drawn = 0;
+                last_print = rg_system_timer();
+            }
+        }
+#endif
 
         if (yfm_enabled || z80_enabled) {
             // TODO: Mix in gwenesis_sn76489_buffer
-            rg_audio_submit((void *)gwenesis_ym2612_buffer, AUDIO_BUFFER_LENGTH >> 1);
+            rg_audio_submit((void *)(ym_frame ? ym_frame : gwenesis_ym2612_buffer), AUDIO_BUFFER_LENGTH >> 1);
         }
 
         if (skipFrames == 0)
