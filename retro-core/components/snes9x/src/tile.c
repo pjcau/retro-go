@@ -577,587 +577,99 @@ void DrawLargePixel16HalfWidth(uint32_t Tile, int32_t Offset, uint32_t StartPixe
    RENDER_TILE_LARGE_HALFWIDTH(ScreenColors [pixel], PLOT_PIXEL);
 }
 
-static void WRITE_4PIXELS16_ADD(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
+/* Colour-math writers (esp32-emu-turbo, 2026-09-14). Same idea as
+ * write4_fast: restrict pointers, depths and the fixed colour in registers.
+ * Sub z-buffer value per pixel: 0 = no sub pixel (plain colour), 1 = fixed
+ * colour (OPFIX, or the precomputed MC palette in gfx.c SubColMode),
+ * >= 2 = sub screen pixel (OPSUB). The Fixed*1_2 writers never add the sub
+ * screen (OPSUB = M_PLAIN). */
+#define M_PLAIN(c, s) (c)
 
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[N]))
-      {
-         switch (SubDepth [N])
-         {
-         case 0:
-            Screen [N] = ScreenColors [Pixel];
-            break;
-         case 1:
-            Screen [N] = (GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD(ScreenColors [Pixel], GFX.FixedColour));
-            break;
-         default:
-            Screen [N] = COLOR_ADD(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-            break;
-         }
-         Depth [N] = GFX.Z2;
-      }
-   }
+#define DEFINE_WRITE4_MATH(NAME, OPSUB, OPFIX, P0, P1, P2, P3) \
+static INLINE void NAME(uint16_t *restrict Screen, uint8_t *restrict Depth, const uint8_t *restrict Pixels, \
+                        const uint16_t *restrict Colors, const uint8_t *restrict SubDepth, \
+                        const uint16_t *restrict SubScreen, const uint16_t *restrict MC, \
+                        uint32_t Z1, uint32_t Z2, uint32_t Fixed) \
+{ \
+   uint32_t p, sd; \
+   if (Z1 > Depth[0] && (p = Pixels[P0])) { sd = SubDepth[0]; Screen[0] = sd == 0 ? Colors[p] : sd == 1 ? (MC ? MC[p] : OPFIX(Colors[p], Fixed)) : OPSUB(Colors[p], SubScreen[0]); Depth[0] = Z2; } \
+   if (Z1 > Depth[1] && (p = Pixels[P1])) { sd = SubDepth[1]; Screen[1] = sd == 0 ? Colors[p] : sd == 1 ? (MC ? MC[p] : OPFIX(Colors[p], Fixed)) : OPSUB(Colors[p], SubScreen[1]); Depth[1] = Z2; } \
+   if (Z1 > Depth[2] && (p = Pixels[P2])) { sd = SubDepth[2]; Screen[2] = sd == 0 ? Colors[p] : sd == 1 ? (MC ? MC[p] : OPFIX(Colors[p], Fixed)) : OPSUB(Colors[p], SubScreen[2]); Depth[2] = Z2; } \
+   if (Z1 > Depth[3] && (p = Pixels[P3])) { sd = SubDepth[3]; Screen[3] = sd == 0 ? Colors[p] : sd == 1 ? (MC ? MC[p] : OPFIX(Colors[p], Fixed)) : OPSUB(Colors[p], SubScreen[3]); Depth[3] = Z2; } \
 }
 
-static void WRITE_4PIXELS16_FLIPPED_ADD(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
+DEFINE_WRITE4_MATH(write4_add,       COLOR_ADD,    COLOR_ADD,    0, 1, 2, 3)
+DEFINE_WRITE4_MATH(write4_add_f,     COLOR_ADD,    COLOR_ADD,    3, 2, 1, 0)
+DEFINE_WRITE4_MATH(write4_add1_2,    COLOR_ADD1_2, COLOR_ADD,    0, 1, 2, 3)
+DEFINE_WRITE4_MATH(write4_add1_2_f,  COLOR_ADD1_2, COLOR_ADD,    3, 2, 1, 0)
+DEFINE_WRITE4_MATH(write4_sub,       COLOR_SUB,    COLOR_SUB,    0, 1, 2, 3)
+DEFINE_WRITE4_MATH(write4_sub_f,     COLOR_SUB,    COLOR_SUB,    3, 2, 1, 0)
+DEFINE_WRITE4_MATH(write4_sub1_2,    COLOR_SUB1_2, COLOR_SUB,    0, 1, 2, 3)
+DEFINE_WRITE4_MATH(write4_sub1_2_f,  COLOR_SUB1_2, COLOR_SUB,    3, 2, 1, 0)
+DEFINE_WRITE4_MATH(write4_addf1_2,   M_PLAIN,      COLOR_ADD1_2, 0, 1, 2, 3)
+DEFINE_WRITE4_MATH(write4_addf1_2_f, M_PLAIN,      COLOR_ADD1_2, 3, 2, 1, 0)
+DEFINE_WRITE4_MATH(write4_subf1_2,   M_PLAIN,      COLOR_SUB1_2, 0, 1, 2, 3)
+DEFINE_WRITE4_MATH(write4_subf1_2_f, M_PLAIN,      COLOR_SUB1_2, 3, 2, 1, 0)
 
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[3 - N]))
-      {
-         switch (SubDepth [N])
-         {
-         case 0:
-            Screen [N] = ScreenColors [Pixel];
-            break;
-         case 1:
-            Screen [N] = (GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD(ScreenColors [Pixel], GFX.FixedColour));
-            break;
-         default:
-            Screen [N] = COLOR_ADD(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-            break;
-         }
-         Depth [N] = GFX.Z2;
-      }
-   }
+/* Colour math always targets the main screen / main z-buffer. In SubColMode
+ * the sub z-buffer is the per-column GFX.SubCol table (index = x). */
+#define TILE_MATH_VARS() \
+   uint16_t *const S = (uint16_t *) GFX.S; \
+   uint8_t *const DB = GFX.ZBuffer; \
+   const uint32_t Z1 = GFX.Z1, Z2 = GFX.Z2, Fixed = GFX.FixedColour; \
+   const int32_t Delta = GFX.Delta; \
+   const uint8_t *const SD = GFX.SubColMode ? GFX.SubCol : GFX.SubZBuffer; \
+   const uint32_t SubMask = GFX.SubColMode ? 0xff : 0xffffffffu; \
+   const uint16_t *const MC = GFX.SubColMode ? GFX.MathColors + (ScreenColors - IPPU.ScreenColors) : NULL
+#define W4_MATH(FN, Offset, Pixels, Colors) \
+   FN(S + (Offset), DB + (Offset), Pixels, Colors, SD + ((Offset) & SubMask), S + Delta + (Offset), MC, Z1, Z2, Fixed)
+#define W4_ADD(O, P, C)         W4_MATH(write4_add, O, P, C)
+#define W4_ADD_F(O, P, C)       W4_MATH(write4_add_f, O, P, C)
+#define W4_ADD1_2(O, P, C)      W4_MATH(write4_add1_2, O, P, C)
+#define W4_ADD1_2_F(O, P, C)    W4_MATH(write4_add1_2_f, O, P, C)
+#define W4_SUB(O, P, C)         W4_MATH(write4_sub, O, P, C)
+#define W4_SUB_F(O, P, C)       W4_MATH(write4_sub_f, O, P, C)
+#define W4_SUB1_2(O, P, C)      W4_MATH(write4_sub1_2, O, P, C)
+#define W4_SUB1_2_F(O, P, C)    W4_MATH(write4_sub1_2_f, O, P, C)
+#define W4_ADDF1_2(O, P, C)     W4_MATH(write4_addf1_2, O, P, C)
+#define W4_ADDF1_2_F(O, P, C)   W4_MATH(write4_addf1_2_f, O, P, C)
+#define W4_SUBF1_2(O, P, C)     W4_MATH(write4_subf1_2, O, P, C)
+#define W4_SUBF1_2_F(O, P, C)   W4_MATH(write4_subf1_2_f, O, P, C)
+
+#define DEFINE_MATH_TILE(NAME, NORMAL, FLIPPED) \
+void NAME(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount) \
+{ \
+   uint8_t* bp; \
+   TILE_PREAMBLE_VARS(); \
+   TILE_PREAMBLE_CODE(); \
+   TILE_MATH_VARS(); \
+   RENDER_TILE(NORMAL, FLIPPED, 4); \
+}
+#define DEFINE_MATH_CLIPPED_TILE(NAME, NORMAL, FLIPPED) \
+void NAME(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount) \
+{ \
+   uint8_t* bp; \
+   TILE_PREAMBLE_VARS(); \
+   TILE_CLIP_PREAMBLE_VARS(); \
+   RENDER_CLIPPED_TILE_VARS(); \
+   TILE_PREAMBLE_CODE(); \
+   TILE_CLIP_PREAMBLE_CODE(); \
+   TILE_MATH_VARS(); \
+   RENDER_CLIPPED_TILE_CODE(NORMAL, FLIPPED, 4); \
 }
 
-static void WRITE_4PIXELS16_ADD1_2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[N]))
-      {
-         switch (SubDepth [N])
-         {
-         case 0:
-            Screen [N] = ScreenColors [Pixel];
-            break;
-         case 1:
-            Screen [N] = (GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD(ScreenColors [Pixel], GFX.FixedColour));
-            break;
-         default:
-            Screen [N] = (uint16_t)(COLOR_ADD1_2(ScreenColors [Pixel], Screen [GFX.Delta + N]));
-            break;
-         }
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-static void WRITE_4PIXELS16_FLIPPED_ADD1_2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[3 - N]))
-      {
-         switch (SubDepth [N])
-         {
-         case 0:
-            Screen [N] = ScreenColors [Pixel];
-            break;
-         case 1:
-            Screen [N] = (GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD(ScreenColors [Pixel], GFX.FixedColour));
-            break;
-         default:
-            Screen [N] = (uint16_t)(COLOR_ADD1_2(ScreenColors [Pixel], Screen [GFX.Delta + N]));
-            break;
-         }
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-static void WRITE_4PIXELS16_SUB(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[N]))
-      {
-         switch (SubDepth [N])
-         {
-         case 0:
-            Screen [N] = ScreenColors [Pixel];
-            break;
-         case 1:
-            Screen [N] = (uint16_t) (GFX.SubColMode ? MathColors [Pixel] : COLOR_SUB(ScreenColors [Pixel], GFX.FixedColour));
-            break;
-         default:
-            Screen [N] = (uint16_t) COLOR_SUB(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-            break;
-         }
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-static void WRITE_4PIXELS16_FLIPPED_SUB(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[3 - N]))
-      {
-         switch (SubDepth [N])
-         {
-         case 0:
-            Screen [N] = ScreenColors [Pixel];
-            break;
-         case 1:
-            Screen [N] = (uint16_t) (GFX.SubColMode ? MathColors [Pixel] : COLOR_SUB(ScreenColors [Pixel], GFX.FixedColour));
-            break;
-         default:
-            Screen [N] = (uint16_t) COLOR_SUB(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-            break;
-         }
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-static void WRITE_4PIXELS16_SUB1_2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[N]))
-      {
-         switch (SubDepth [N])
-         {
-         case 0:
-            Screen [N] = ScreenColors [Pixel];
-            break;
-         case 1:
-            Screen [N] = (uint16_t) (GFX.SubColMode ? MathColors [Pixel] : COLOR_SUB(ScreenColors [Pixel], GFX.FixedColour));
-            break;
-         default:
-            Screen [N] = (uint16_t) COLOR_SUB1_2(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-            break;
-         }
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-static void WRITE_4PIXELS16_FLIPPED_SUB1_2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[3 - N]))
-      {
-         switch (SubDepth [N])
-         {
-         case 0:
-            Screen [N] = ScreenColors [Pixel];
-            break;
-         case 1:
-            Screen [N] = (uint16_t) (GFX.SubColMode ? MathColors [Pixel] : COLOR_SUB(ScreenColors [Pixel], GFX.FixedColour));
-            break;
-         default:
-            Screen [N] = (uint16_t) COLOR_SUB1_2(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-            break;
-         }
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-
-void DrawTile16Add(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   uint8_t Pixel;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t* Depth = GFX.ZBuffer + Offset;
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const int32_t SubStride = GFX.SubColMode ? 0 : GFX.PPL; /* SubCol is one line, indexed by x */
-   TILE_PREAMBLE_VARS();
-   TILE_PREAMBLE_CODE();
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   switch (Tile & (V_FLIP | H_FLIP))
-   {
-   case 0:
-      bp = pCache + StartLine;
-      for (l = LineCount; l != 0; l--, bp += 8, Screen += GFX.PPL, Depth += GFX.PPL, SubDepth += SubStride)
-      {
-         uint8_t N;
-         for (N = 0; N < 8; N++)
-         {
-            if (GFX.Z1 > Depth [N] && (Pixel = bp[N]))
-            {
-               switch (SubDepth [N])
-               {
-               case 0:
-                  Screen [N] = ScreenColors [Pixel];
-                  break;
-               case 1:
-                  Screen [N] = (GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD(ScreenColors [Pixel], GFX.FixedColour));
-                  break;
-               default:
-                  Screen [N] = COLOR_ADD(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-                  break;
-               }
-               Depth [N] = GFX.Z2;
-            }
-         }
-      }
-      break;
-   case H_FLIP:
-      bp = pCache + StartLine;
-      for (l = LineCount; l != 0; l--, bp += 8, Screen += GFX.PPL, Depth += GFX.PPL, SubDepth += SubStride)
-      {
-         uint8_t N;
-         for (N = 0; N < 8; N++)
-         {
-            if (GFX.Z1 > Depth [N] && (Pixel = bp[7 - N]))
-            {
-               switch (SubDepth [N])
-               {
-               case 0:
-                  Screen [N] = ScreenColors [Pixel];
-                  break;
-               case 1:
-                  Screen [N] = (GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD(ScreenColors [Pixel], GFX.FixedColour));
-                  break;
-               default:
-                  Screen [N] = COLOR_ADD(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-                  break;
-               }
-               Depth [N] = GFX.Z2;
-            }
-         }
-      }
-      break;
-   case H_FLIP | V_FLIP:
-      bp = pCache + 56 - StartLine;
-      for (l = LineCount; l != 0; l--, bp -= 8, Screen += GFX.PPL, Depth += GFX.PPL, SubDepth += SubStride)
-      {
-         uint8_t N;
-         for (N = 0; N < 8; N++)
-         {
-            if (GFX.Z1 > Depth [N] && (Pixel = bp[7 - N]))
-            {
-               switch (SubDepth [N])
-               {
-               case 0:
-                  Screen [N] = ScreenColors [Pixel];
-                  break;
-               case 1:
-                  Screen [N] = (GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD(ScreenColors [Pixel], GFX.FixedColour));
-                  break;
-               default:
-                  Screen [N] = COLOR_ADD(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-                  break;
-               }
-               Depth [N] = GFX.Z2;
-            }
-         }
-      }
-      break;
-   case V_FLIP:
-      bp = pCache + 56 - StartLine;
-      for (l = LineCount; l != 0; l--, bp -= 8, Screen += GFX.PPL, Depth += GFX.PPL, SubDepth += SubStride)
-      {
-         uint8_t N;
-         for (N = 0; N < 8; N++)
-         {
-            if (GFX.Z1 > Depth [N] && (Pixel = bp[N]))
-            {
-               switch (SubDepth [N])
-               {
-               case 0:
-                  Screen [N] = ScreenColors [Pixel];
-                  break;
-               case 1:
-                  Screen [N] = (GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD(ScreenColors [Pixel], GFX.FixedColour));
-                  break;
-               default:
-                  Screen [N] = COLOR_ADD(ScreenColors [Pixel], Screen [GFX.Delta + N]);
-                  break;
-               }
-               Depth [N] = GFX.Z2;
-            }
-         }
-      }
-      break;
-   default:
-      break;
-   }
-}
-
-void DrawClippedTile16Add(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_CLIP_PREAMBLE_VARS();
-   RENDER_CLIPPED_TILE_VARS();
-   TILE_PREAMBLE_CODE();
-   TILE_CLIP_PREAMBLE_CODE();
-   RENDER_CLIPPED_TILE_CODE(WRITE_4PIXELS16_ADD, WRITE_4PIXELS16_FLIPPED_ADD, 4);
-}
-
-void DrawTile16Add1_2(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_PREAMBLE_CODE();
-   RENDER_TILE(WRITE_4PIXELS16_ADD1_2, WRITE_4PIXELS16_FLIPPED_ADD1_2, 4);
-}
-
-void DrawClippedTile16Add1_2(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_CLIP_PREAMBLE_VARS();
-   RENDER_CLIPPED_TILE_VARS();
-   TILE_PREAMBLE_CODE();
-   TILE_CLIP_PREAMBLE_CODE();
-   RENDER_CLIPPED_TILE_CODE(WRITE_4PIXELS16_ADD1_2, WRITE_4PIXELS16_FLIPPED_ADD1_2, 4);
-}
-
-void DrawTile16Sub(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_PREAMBLE_CODE();
-   RENDER_TILE(WRITE_4PIXELS16_SUB, WRITE_4PIXELS16_FLIPPED_SUB, 4);
-}
-
-void DrawClippedTile16Sub(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width,  uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_CLIP_PREAMBLE_VARS();
-   RENDER_CLIPPED_TILE_VARS();
-   TILE_PREAMBLE_CODE();
-   TILE_CLIP_PREAMBLE_CODE();
-   RENDER_CLIPPED_TILE_CODE(WRITE_4PIXELS16_SUB, WRITE_4PIXELS16_FLIPPED_SUB, 4);
-}
-
-void DrawTile16Sub1_2(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_PREAMBLE_CODE();
-   RENDER_TILE(WRITE_4PIXELS16_SUB1_2, WRITE_4PIXELS16_FLIPPED_SUB1_2, 4);
-}
-
-void DrawClippedTile16Sub1_2(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_CLIP_PREAMBLE_VARS();
-   RENDER_CLIPPED_TILE_VARS();
-   TILE_PREAMBLE_CODE();
-   TILE_CLIP_PREAMBLE_CODE();
-   RENDER_CLIPPED_TILE_CODE(WRITE_4PIXELS16_SUB1_2, WRITE_4PIXELS16_FLIPPED_SUB1_2, 4);
-}
-
-static void WRITE_4PIXELS16_ADDF1_2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[N]))
-      {
-         if (SubDepth [N] == 1)
-            Screen [N] = (uint16_t)((GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD1_2(ScreenColors [Pixel], GFX.FixedColour)));
-         else
-            Screen [N] = ScreenColors [Pixel];
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-static void WRITE_4PIXELS16_FLIPPED_ADDF1_2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[3 - N]))
-      {
-         if (SubDepth [N] == 1)
-            Screen [N] = (uint16_t)((GFX.SubColMode ? MathColors [Pixel] : COLOR_ADD1_2(ScreenColors [Pixel], GFX.FixedColour)));
-         else
-            Screen [N] = ScreenColors [Pixel];
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-static void WRITE_4PIXELS16_SUBF1_2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[N]))
-      {
-         if (SubDepth [N] == 1)
-            Screen [N] = (uint16_t) (GFX.SubColMode ? MathColors [Pixel] : COLOR_SUB1_2(ScreenColors [Pixel], GFX.FixedColour));
-         else
-            Screen [N] = ScreenColors [Pixel];
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-static void WRITE_4PIXELS16_FLIPPED_SUBF1_2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
-{
-   uint8_t  Pixel, N;
-   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
-   uint8_t*  Depth = GFX.ZBuffer + Offset;
-   /* Sub-screen-empty fast path (gfx.c SubColMode): the sub z-buffer is a
-    * per-column 0/1 table in internal RAM and the fixed-colour result comes
-    * from the precomputed MathColors palette (no PSRAM read, no arithmetic). */
-   const uint8_t* SubDepth = GFX.SubColMode ? GFX.SubCol + (Offset & 0xff) : GFX.SubZBuffer + Offset;
-   const uint16_t* MathColors = GFX.MathColors + (ScreenColors - IPPU.ScreenColors);
-
-   for (N = 0; N < 4; N++)
-   {
-      if (GFX.Z1 > Depth [N] && (Pixel = Pixels[3 - N]))
-      {
-         if (SubDepth [N] == 1)
-            Screen [N] = (uint16_t) (GFX.SubColMode ? MathColors [Pixel] : COLOR_SUB1_2(ScreenColors [Pixel], GFX.FixedColour));
-         else
-            Screen [N] = ScreenColors [Pixel];
-         Depth [N] = GFX.Z2;
-      }
-   }
-}
-
-void DrawTile16FixedAdd1_2(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_PREAMBLE_CODE();
-   RENDER_TILE(WRITE_4PIXELS16_ADDF1_2, WRITE_4PIXELS16_FLIPPED_ADDF1_2, 4);
-}
-
-void DrawClippedTile16FixedAdd1_2(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width,  uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_CLIP_PREAMBLE_VARS();
-   RENDER_CLIPPED_TILE_VARS();
-   TILE_PREAMBLE_CODE();
-   TILE_CLIP_PREAMBLE_CODE();
-   RENDER_CLIPPED_TILE_CODE(WRITE_4PIXELS16_ADDF1_2, WRITE_4PIXELS16_FLIPPED_ADDF1_2, 4);
-}
-
-void DrawTile16FixedSub1_2(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_PREAMBLE_CODE();
-   RENDER_TILE(WRITE_4PIXELS16_SUBF1_2, WRITE_4PIXELS16_FLIPPED_SUBF1_2, 4);
-}
-
-void DrawClippedTile16FixedSub1_2(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount)
-{
-   uint8_t* bp;
-   TILE_PREAMBLE_VARS();
-   TILE_CLIP_PREAMBLE_VARS();
-   RENDER_CLIPPED_TILE_VARS();
-   TILE_PREAMBLE_CODE();
-   TILE_CLIP_PREAMBLE_CODE();
-   RENDER_CLIPPED_TILE_CODE(WRITE_4PIXELS16_SUBF1_2, WRITE_4PIXELS16_FLIPPED_SUBF1_2, 4);
-}
+DEFINE_MATH_TILE(DrawTile16Add,                  W4_ADD,      W4_ADD_F)
+DEFINE_MATH_CLIPPED_TILE(DrawClippedTile16Add,   W4_ADD,      W4_ADD_F)
+DEFINE_MATH_TILE(DrawTile16Add1_2,               W4_ADD1_2,   W4_ADD1_2_F)
+DEFINE_MATH_CLIPPED_TILE(DrawClippedTile16Add1_2, W4_ADD1_2,  W4_ADD1_2_F)
+DEFINE_MATH_TILE(DrawTile16Sub,                  W4_SUB,      W4_SUB_F)
+DEFINE_MATH_CLIPPED_TILE(DrawClippedTile16Sub,   W4_SUB,      W4_SUB_F)
+DEFINE_MATH_TILE(DrawTile16Sub1_2,               W4_SUB1_2,   W4_SUB1_2_F)
+DEFINE_MATH_CLIPPED_TILE(DrawClippedTile16Sub1_2, W4_SUB1_2,  W4_SUB1_2_F)
+DEFINE_MATH_TILE(DrawTile16FixedAdd1_2,          W4_ADDF1_2,  W4_ADDF1_2_F)
+DEFINE_MATH_CLIPPED_TILE(DrawClippedTile16FixedAdd1_2, W4_ADDF1_2, W4_ADDF1_2_F)
+DEFINE_MATH_TILE(DrawTile16FixedSub1_2,          W4_SUBF1_2,  W4_SUBF1_2_F)
+DEFINE_MATH_CLIPPED_TILE(DrawClippedTile16FixedSub1_2, W4_SUBF1_2, W4_SUBF1_2_F)
 
 void DrawLargePixel16Add(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Pixels, uint32_t StartLine, uint32_t LineCount)
 {

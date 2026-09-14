@@ -395,10 +395,10 @@ static void console_exec(char *line)
         snprintf(path, sizeof(path), "%s%s%s%s%s", arg1, arg2 ? " " : "", arg2 ? arg2 : "", rest ? " " : "", rest ? rest : "");
         printf("CTL rm %s %s\n", rg_storage_delete(path) ? "done" : "failed", path);
     }
-    else if ((strcmp(cmd, "launch") == 0 || strcmp(cmd, "resume") == 0) && arg1 && arg2 && rest)
+    else if ((strcmp(cmd, "launch") == 0 || strncmp(cmd, "resume", 6) == 0) && arg1 && arg2 && rest)
     {
         // launch <partition> <app> <rom path> : e.g. launch retro-core snes /sd/roms/snes/x.sfc
-        // resume ...                          : same, then load save-state slot 0
+        // resume[N] ...                       : same, then load save-state slot N (default 0)
         snprintf(console_action, sizeof(console_action), "%s %s %s %s", cmd, arg1, arg2, rest);
         console_action_pending = true;
         printf("CTL %s %s %s %s\n", cmd, arg1, arg2, rest);
@@ -637,8 +637,8 @@ void rg_input_console_tick(void)
         fflush(stdout);
         if (strcmp(cmd, "launch") == 0 && part && app && path)
             rg_system_switch_app(part, app, path, 0);
-        else if (strcmp(cmd, "resume") == 0 && part && app && path)
-            rg_system_switch_app(part, app, path, RG_BOOT_RESUME | RG_BOOT_SLOT0);
+        else if (strncmp(cmd, "resume", 6) == 0 && part && app && path)
+            rg_system_switch_app(part, app, path, RG_BOOT_RESUME | ((atoi(cmd + 6) << 4) & RG_BOOT_SLOT_MASK));
         else if (strcmp(cmd, "save") == 0 && part)
             printf("CTL save %s slot %d\n", rg_emu_save_state(atoi(part)) ? "done" : "failed", atoi(part));
         else if (strcmp(cmd, "load") == 0 && part)
