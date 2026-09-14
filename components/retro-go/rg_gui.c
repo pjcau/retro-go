@@ -1587,6 +1587,14 @@ static rg_gui_event_t overclock_cb(rg_gui_option_t *option, rg_gui_event_t event
     return RG_DIALOG_VOID;
 }
 
+static rg_gui_event_t debug_hud_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
+        rg_system_set_debug_hud(!rg_system_get_debug_hud());
+    strcpy(option->value, rg_system_get_debug_hud() ? _("On") : _("Off"));
+    return RG_DIALOG_VOID;
+}
+
 static rg_gui_event_t speedup_update_cb(rg_gui_option_t *option, rg_gui_event_t event)
 {
     if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
@@ -2043,6 +2051,7 @@ void rg_gui_options_menu(void)
         {0, _("Filter"),        "-", RG_DIALOG_FLAG_NORMAL, &filter_update_cb},
         {0, _("Border"),        "-", RG_DIALOG_FLAG_NORMAL, &border_update_cb},
         {0, _("Speed"),         "-", RG_DIALOG_FLAG_NORMAL, &speedup_update_cb},
+        {0, _("Debug HUD"),     "-", RG_DIALOG_FLAG_NORMAL, &debug_hud_cb},
         // {0, _("Misc options"),  NULL, RG_DIALOG_FLAG_NORMAL, &misc_options_cb},
         #if CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S3 // && !RG_BUILD_RELEASE
         {0, _("Overclock"),     "-", RG_DIALOG_FLAG_NORMAL, &overclock_cb},

@@ -99,6 +99,10 @@ static const char *SETTING_BOOT_ARGS = "BootArgs";
 static const char *SETTING_BOOT_FLAGS = "BootFlags";
 static const char *SETTING_TIMEZONE = "Timezone";
 static const char *SETTING_INDICATOR_MASK = "Indicators";
+static const char *SETTING_DEBUG_HUD = "DebugHUD";
+static bool hud_enabled = false;
+static int64_t hud_next = 0;
+static char hud_extra[160] = "";
 
 #define logbuf_putc(buf, c) (buf)->console[(buf)->cursor++] = c, (buf)->cursor %= RG_LOGBUF_SIZE;
 #define logbuf_puts(buf, str) for (const char *ptr = str; *ptr; ptr++) logbuf_putc(buf, *ptr);
@@ -503,6 +507,8 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
     app.lowMemoryMode = statistics.totalMemoryExt == 0;
 
     app.indicatorsMask = rg_settings_get_number(NS_GLOBAL, SETTING_INDICATOR_MASK, app.indicatorsMask);
+
+    hud_enabled = rg_settings_get_number(NS_GLOBAL, SETTING_DEBUG_HUD, 0);
     app.saveSlot = (app.bootFlags & RG_BOOT_SLOT_MASK) >> 4;
     app.romPath = app.bootArgs ?: ""; // For whatever reason some of our code isn't NULL-aware, sigh..
 
@@ -830,12 +836,48 @@ int rg_system_get_tick_rate(void)
     return app.tickRate;
 }
 
+void rg_system_set_debug_hud(bool enabled)
+{
+    hud_enabled = enabled;
+    hud_next = 0;
+    rg_settings_set_number(NS_GLOBAL, SETTING_DEBUG_HUD, enabled);
+    if (!enabled)
+        rg_display_force_redraw(); // repaints the bars over the old text
+}
+
+bool rg_system_get_debug_hud(void)
+{
+    return hud_enabled;
+}
+
+void rg_system_set_hud_text(const char *text)
+{
+    strncpy(hud_extra, text ? text : "", sizeof(hud_extra) - 1);
+}
+
+static void draw_debug_hud(void)
+{
+    // Drawn from the app's main task between frames, only when the display task is idle
+    // (rg_gui_draw_text blocks on pending updates). The text goes in the left letterbox
+    // bar, which the display task never rewrites; with a narrow bar it overlaps the game.
+    if (rg_system_timer() < hud_next || !rg_display_sync(false))
+        return;
+    hud_next = rg_system_timer() + 1000000;
+    char text[256];
+    snprintf(text, sizeof(text), "FPS %3.0f\nDRW %3.0f\nSKP %3.0f\nBSY %3.0f\nMEM %3d\n%s",
+             statistics.totalFPS, statistics.fullFPS + statistics.partialFPS, statistics.skippedFPS,
+             statistics.busyPercent, statistics.freeMemoryInt / 1024, hud_extra);
+    rg_gui_draw_text(0, 0, 0, text, C_YELLOW, C_BLACK, RG_TEXT_MONOSPACE | RG_TEXT_MULTILINE);
+}
+
 void rg_system_tick(int busyTime)
 {
     rg_input_console_tick(); // bench console actions run here, at the frame boundary
     statistics.lastTick = rg_system_timer();
     statistics.busyTime += busyTime;
     statistics.ticks++;
+    if (hud_enabled && !app.isLauncher)
+        draw_debug_hud();
     // WDT_RELOAD(WDT_TIMEOUT);
 }
 
