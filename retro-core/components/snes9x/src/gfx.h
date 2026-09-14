@@ -64,6 +64,19 @@ typedef struct
    uint8_t     r2130;
    uint8_t     r2131;
    bool        Pseudo;
+   /* Sub-screen-empty colour-math fast path (esp32-emu-turbo, 2026-09-14):
+    * when nothing is on the sub screen and no colour window is active the
+    * sub z-buffer is 1 everywhere, so every Add/Sub tile writer and the
+    * Mode 7 Add/Sub drawers reduce to "palette entry op fixed colour".
+    * That is precomputed into MathColors once per strip and the plain
+    * writers are used instead (the Add/Sub ones read the sub z-buffer and
+    * sub screen from PSRAM per pixel: Zelda 20 ms, Metroid 19 ms per frame). */
+   bool        SubEmpty;        /* conditions above hold for this strip */
+   bool        SubColMode;      /* sub z-buffer is 0/1 by column only (SubCol) */
+   uint8_t     SubCol[256];     /* 1 inside the sub colour window, 0 outside */
+   bool        UseMathPalette;  /* current layer draws through MathColors */
+   uint32_t    MathKey;         /* what MathColors holds: op | halve<<8, 0 = stale */
+   uint16_t    MathColors[256];
 } SGFX;
 
 /* External port interface which must be implemented or initialised for each port. */

@@ -140,6 +140,9 @@ bool S9xInitMemory(void)
    Memory.RAM   = (uint8_t*)malloc(RAM_SIZE);
    Memory.SRAM  = (uint8_t*)malloc(SRAM_SIZE);
    Memory.VRAM  = (uint8_t*)malloc(VRAM_SIZE);
+   // (Tried in internal SRAM on 2026-09-14: no measurable gain - the Mode 7
+   // and tile loops are instruction-bound, not VRAM-latency-bound - and a
+   // heap-layout-dependent corruption appeared with SMW/Kart. Left in PSRAM.)
    Memory.FillRAM = (uint8_t*)malloc(0x8000);
 
    Memory.Map = (uint8_t**)calloc(MEMMAP_NUM_BLOCKS, sizeof(uint8_t*));
