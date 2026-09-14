@@ -24,6 +24,7 @@ PROJECT_APPS = {
   'prboom-go':    [0, 16, 786432],
   'gwenesis':     [0, 16, 1048576],
   'fmsx':         [0, 16, 589824],
+  'duke3d-go':    [0, 16, 1048576],
 }
 # PROJECT_APPS = {}
 # for t in glob.glob("*/CMakeLists.txt"):
