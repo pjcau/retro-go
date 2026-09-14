@@ -17,4 +17,3 @@ void sms_main();
 void gw_main();
 void lynx_main();
 void snes_main();
-void ngp_main();
