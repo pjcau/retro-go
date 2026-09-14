@@ -832,6 +832,7 @@ int rg_system_get_tick_rate(void)
 
 void rg_system_tick(int busyTime)
 {
+    rg_input_console_tick(); // bench console actions run here, at the frame boundary
     statistics.lastTick = rg_system_timer();
     statistics.busyTime += busyTime;
     statistics.ticks++;

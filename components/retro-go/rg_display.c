@@ -609,6 +609,12 @@ void rg_display_clear_except(int left, int top, int width, int height, uint16_t 
 
 void rg_display_clear(uint16_t color_le)
 {
+    // Same rule as rg_display_write_rect: never open a window while the display task is
+    // still streaming a frame (shutdown_cleanup clears the screen right after a submit;
+    // interleaving the two i80 streams hung the panel driver on the first article).
+    // Not in rg_display_clear_rect: the display task itself calls that one for the OSD.
+    if (display_task_queue) // rg_display_init clears before the task exists
+        rg_display_sync(true);
     // We ignore margins here, we want to fill the entire screen
     rg_display_clear_rect(-display.screen.margins.left, -display.screen.margins.top, display.screen.real_width,
                           display.screen.real_height, color_le);
