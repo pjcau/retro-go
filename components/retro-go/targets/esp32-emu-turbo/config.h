@@ -77,6 +77,12 @@
     {RG_KEY_MENU,   .src = RG_KEY_START | RG_KEY_SELECT},\
 }
 
+// Bench remote control over the USB console (rg_input.c): "key a 100",
+// "launch retro-core snes /sd/roms/snes/x.sfc", "ls", "reboot"... Lets a
+// host script drive the board without touching the buttons. Costs one
+// non-blocking stdin read per input-task tick; nothing without a host.
+#define RG_GAMEPAD_CONSOLE          1
+
 // Battery — no driver: the board's IP5306 variant has no I2C routed
 // (and GPIO33/34 are module-internal Octal PSRAM lines — never drive them).
 #define RG_BATTERY_DRIVER           0
