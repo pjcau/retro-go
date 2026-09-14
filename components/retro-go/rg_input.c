@@ -38,6 +38,19 @@ static rg_keymap_serial_t keymap_serial[] = RG_GAMEPAD_SERIAL_MAP;
 #ifdef RG_GAMEPAD_VIRT_MAP
 static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
 #endif
+#ifdef RG_GAMEPAD_CONSOLE
+// Bench remote control: gamepad keys, app launch and a few queries over the
+// serial console (stdin). Lines are "<cmd> [args]", replies are "CTL ..."
+// lines so a host script can sync on them. See console_exec() for the list.
+#include <fcntl.h>
+#include <unistd.h>
+#include "rg_storage.h"
+static uint32_t console_held = 0;     // keys held until "release"
+static uint32_t console_tap = 0;      // keys held until console_tap_until
+static int64_t console_tap_until = 0;
+static char console_line[192];
+static size_t console_line_len = 0;
+#endif
 static bool input_task_running = false;
 static uint32_t gamepad_state = -1; // _Atomic
 static uint32_t gamepad_mapped = 0;
@@ -207,10 +220,133 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
     }
 #endif
 
+#if defined(RG_GAMEPAD_CONSOLE)
+    state |= console_held | console_tap;
+#endif
+
     if (out)
         *out = state;
     return true;
 }
+
+#if defined(RG_GAMEPAD_CONSOLE)
+static uint32_t console_parse_keys(const char *names)
+{
+    static const struct { const char *name; rg_key_t key; } table[] = {
+        {"up", RG_KEY_UP}, {"down", RG_KEY_DOWN}, {"left", RG_KEY_LEFT}, {"right", RG_KEY_RIGHT},
+        {"a", RG_KEY_A}, {"b", RG_KEY_B}, {"x", RG_KEY_X}, {"y", RG_KEY_Y},
+        {"start", RG_KEY_START}, {"select", RG_KEY_SELECT}, {"menu", RG_KEY_MENU},
+        {"option", RG_KEY_OPTION}, {"l", RG_KEY_L}, {"r", RG_KEY_R}, {"all", RG_KEY_ALL},
+    };
+    uint32_t mask = 0;
+    char buf[64];
+    strncpy(buf, names, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = 0;
+    for (char *tok = strtok(buf, "+,"); tok; tok = strtok(NULL, "+,"))
+    {
+        bool found = false;
+        for (size_t i = 0; i < RG_COUNT(table); ++i)
+        {
+            if (strcasecmp(tok, table[i].name) == 0)
+                mask |= table[i].key, found = true;
+        }
+        if (!found)
+            printf("CTL err unknown key '%s'\n", tok);
+    }
+    return mask;
+}
+
+static int console_ls_cb(const rg_scandir_t *file, void *arg)
+{
+    printf("CTL ls %c %8d %s\n", file->is_dir ? 'd' : 'f', (int)file->size, file->basename);
+    return RG_SCANDIR_CONTINUE;
+}
+
+static void console_exec(char *line)
+{
+    char *cmd = strtok(line, " ");
+    if (!cmd)
+        return;
+    char *arg1 = strtok(NULL, " ");
+    char *arg2 = strtok(NULL, " ");
+    char *rest = strtok(NULL, "");   // remainder, may contain spaces (rom paths)
+
+    if (strcmp(cmd, "ping") == 0)
+    {
+        printf("CTL pong app=%s\n", rg_system_get_app()->name);
+    }
+    else if (strcmp(cmd, "key") == 0 && arg1)
+    {
+        // key <names> [ms] : press for ms (default 100) then release
+        int ms = arg2 ? atoi(arg2) : 100;
+        console_tap = console_parse_keys(arg1);
+        console_tap_until = rg_system_timer() + (int64_t)ms * 1000;
+        printf("CTL key 0x%04x %dms\n", (unsigned)console_tap, ms);
+    }
+    else if (strcmp(cmd, "hold") == 0 && arg1)
+    {
+        console_held |= console_parse_keys(arg1);
+        printf("CTL hold 0x%04x\n", (unsigned)console_held);
+    }
+    else if (strcmp(cmd, "release") == 0)
+    {
+        console_held &= arg1 ? ~console_parse_keys(arg1) : 0;
+        console_tap = 0;
+        printf("CTL hold 0x%04x\n", (unsigned)console_held);
+    }
+    else if (strcmp(cmd, "ls") == 0)
+    {
+        const char *path = arg1 ? arg1 : RG_STORAGE_ROOT;
+        bool ok = rg_storage_scandir(path, console_ls_cb, NULL, RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_STAT);
+        printf("CTL ls %s %s\n", ok ? "done" : "failed", path);
+    }
+    else if (strcmp(cmd, "launch") == 0 && arg1 && arg2 && rest)
+    {
+        // launch <partition> <app> <rom path> : e.g. launch retro-core snes /sd/roms/snes/x.sfc
+        printf("CTL launch %s %s %s\n", arg1, arg2, rest);
+        fflush(stdout);
+        rg_system_switch_app(arg1, arg2, rest, 0);
+    }
+    else if (strcmp(cmd, "launcher") == 0)
+    {
+        printf("CTL launcher\n");
+        fflush(stdout);
+        rg_system_switch_app(RG_APP_LAUNCHER, RG_APP_LAUNCHER, NULL, 0);
+    }
+    else if (strcmp(cmd, "reboot") == 0)
+    {
+        printf("CTL reboot\n");
+        fflush(stdout);
+        rg_system_restart();
+    }
+    else
+    {
+        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | launch <part> <app> <path> | launcher | reboot\n");
+    }
+}
+
+static void console_poll(void)
+{
+    if (console_tap && rg_system_timer() >= console_tap_until)
+        console_tap = 0;
+
+    char c;
+    while (read(STDIN_FILENO, &c, 1) == 1)
+    {
+        if (c == '\n' || c == '\r')
+        {
+            if (console_line_len)
+            {
+                console_line[console_line_len] = 0;
+                console_line_len = 0;
+                console_exec(console_line);
+            }
+        }
+        else if (console_line_len < sizeof(console_line) - 1)
+            console_line[console_line_len++] = c;
+    }
+}
+#endif
 
 static void input_task(void *arg)
 {
@@ -243,6 +379,10 @@ static void input_task(void *arg)
             }
             gamepad_state = local_gamepad_state;
         }
+
+#if defined(RG_GAMEPAD_CONSOLE)
+        console_poll();
+#endif
 
         if (rg_system_timer() >= next_battery_update)
         {
@@ -358,7 +498,13 @@ void rg_input_init(void)
     rg_input_read_gamepad_raw(NULL);
 
     // Start background polling
+#if defined(RG_GAMEPAD_CONSOLE)
+    RG_LOGI("Console gamepad control enabled (stdin)");
+    fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK);
+    rg_task_create("rg_input", &input_task, NULL, 5 * 1024, RG_TASK_PRIORITY_6, 1);
+#else
     rg_task_create("rg_input", &input_task, NULL, 3 * 1024, RG_TASK_PRIORITY_6, 1);
+#endif
     while (gamepad_state == -1)
         rg_task_yield();
     RG_LOGI("Input ready. state=" PRINTF_BINARY_16 "\n", PRINTF_BINVAL_16(gamepad_state));
