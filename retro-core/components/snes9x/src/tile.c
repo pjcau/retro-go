@@ -636,6 +636,53 @@ DEFINE_WRITE4_MATH(write4_subf1_2_f, M_PLAIN,      COLOR_SUB1_2, 3, 2, 1, 0)
 #define W4_SUBF1_2(O, P, C)     W4_MATH(write4_subf1_2, O, P, C)
 #define W4_SUBF1_2_F(O, P, C)   W4_MATH(write4_subf1_2_f, O, P, C)
 
+/* SubColMode with a colour window: the sub z is 0/1 by column and the
+ * colour-math result for 1 is the MC palette, so a pixel is a palette
+ * select. One pair covers every operation (the op lives in MC). */
+#define DEFINE_WRITE4_SUBCOL(NAME, P0, P1, P2, P3) \
+static INLINE void NAME(uint16_t *restrict Screen, uint8_t *restrict Depth, const uint8_t *restrict Pixels, \
+                        const uint16_t *restrict Colors, const uint16_t *restrict MC, \
+                        const uint8_t *restrict SubCol, uint32_t Z1, uint32_t Z2) \
+{ \
+   uint32_t p; \
+   if (Z1 > Depth[0] && (p = Pixels[P0])) { Screen[0] = (SubCol[0] ? MC : Colors)[p]; Depth[0] = Z2; } \
+   if (Z1 > Depth[1] && (p = Pixels[P1])) { Screen[1] = (SubCol[1] ? MC : Colors)[p]; Depth[1] = Z2; } \
+   if (Z1 > Depth[2] && (p = Pixels[P2])) { Screen[2] = (SubCol[2] ? MC : Colors)[p]; Depth[2] = Z2; } \
+   if (Z1 > Depth[3] && (p = Pixels[P3])) { Screen[3] = (SubCol[3] ? MC : Colors)[p]; Depth[3] = Z2; } \
+}
+DEFINE_WRITE4_SUBCOL(write4_subcol,   0, 1, 2, 3)
+DEFINE_WRITE4_SUBCOL(write4_subcol_f, 3, 2, 1, 0)
+
+#define TILE_SUBCOL_VARS() \
+   uint16_t *const S = (uint16_t *) GFX.S; \
+   uint8_t *const DB = GFX.ZBuffer; \
+   const uint32_t Z1 = GFX.Z1, Z2 = GFX.Z2; \
+   const uint8_t *const SC = GFX.SubCol; \
+   const uint16_t *const MC = GFX.MathColors + (ScreenColors - IPPU.ScreenColors)
+#define W4_SUBCOL(O, P, C)   write4_subcol(S + (O), DB + (O), P, C, MC, SC + ((O) & 0xff), Z1, Z2)
+#define W4_SUBCOL_F(O, P, C) write4_subcol_f(S + (O), DB + (O), P, C, MC, SC + ((O) & 0xff), Z1, Z2)
+
+void DrawTile16SubCol(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
+{
+   uint8_t* bp;
+   TILE_PREAMBLE_VARS();
+   TILE_PREAMBLE_CODE();
+   TILE_SUBCOL_VARS();
+   RENDER_TILE(W4_SUBCOL, W4_SUBCOL_F, 4);
+}
+
+void DrawClippedTile16SubCol(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount)
+{
+   uint8_t* bp;
+   TILE_PREAMBLE_VARS();
+   TILE_CLIP_PREAMBLE_VARS();
+   RENDER_CLIPPED_TILE_VARS();
+   TILE_PREAMBLE_CODE();
+   TILE_CLIP_PREAMBLE_CODE();
+   TILE_SUBCOL_VARS();
+   RENDER_CLIPPED_TILE_CODE(W4_SUBCOL, W4_SUBCOL_F, 4);
+}
+
 #define DEFINE_MATH_TILE(NAME, NORMAL, FLIPPED) \
 void NAME(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount) \
 { \

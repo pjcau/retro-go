@@ -72,7 +72,12 @@ bool S9xLoadState(const char *filename)
    chunks += fread(Memory.FillRAM, FILLRAM_SIZE, 1, fp);
    chunks += fread(&APU, sizeof(APU), 1, fp);
    chunks += fread(&IAPU, sizeof(IAPU), 1, fp);
-   chunks += fread(IAPU.RAM, 0x10000, 1, fp);
+   // IAPU.RAM was just overwritten with the pointer the *saving* process had:
+   // reading through it wrote 64 KB wherever the APU RAM used to be, which is
+   // only harmless when the heap layout is identical (same build, same ROM).
+   // First article, 2026-09-14: heap corruption / TLSF crash right after
+   // "Loaded chunks" whenever the binary or the allocations had changed.
+   chunks += fread(IAPU_RAM, 0x10000, 1, fp);
    chunks += fread(&SoundData, sizeof(SoundData), 1, fp);
 
    printf("Loaded chunks = %d\n", chunks);
