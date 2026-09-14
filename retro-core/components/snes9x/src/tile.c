@@ -442,12 +442,46 @@ static void WRITE_4PIXELS16_FLIPPEDx2x2(int32_t Offset, uint8_t* Pixels, uint16_
    }
 }
 
+/* Plain 16-bit writers with every invariant in registers (esp32-emu-turbo,
+ * 2026-09-14). WRITE_4PIXELS16 above reads GFX.S / GFX.DB / GFX.Z1 / GFX.Z2
+ * per call and, because Depth[] is a uint8_t store that may alias anything,
+ * the compiler reloads them and the tile bytes after every pixel. Here the
+ * pointers are restrict (tile cache, z-buffer, screen and palette never
+ * overlap) and the depths are plain values hoisted by TILE_FAST_VARS(). */
+static INLINE void write4_fast(uint16_t *restrict Screen, uint8_t *restrict Depth, const uint8_t *restrict Pixels,
+                               const uint16_t *restrict Colors, uint32_t Z1, uint32_t Z2)
+{
+   uint32_t p;
+   if (Z1 > Depth[0] && (p = Pixels[0])) { Screen[0] = Colors[p]; Depth[0] = Z2; }
+   if (Z1 > Depth[1] && (p = Pixels[1])) { Screen[1] = Colors[p]; Depth[1] = Z2; }
+   if (Z1 > Depth[2] && (p = Pixels[2])) { Screen[2] = Colors[p]; Depth[2] = Z2; }
+   if (Z1 > Depth[3] && (p = Pixels[3])) { Screen[3] = Colors[p]; Depth[3] = Z2; }
+}
+
+static INLINE void write4_fast_flipped(uint16_t *restrict Screen, uint8_t *restrict Depth, const uint8_t *restrict Pixels,
+                                       const uint16_t *restrict Colors, uint32_t Z1, uint32_t Z2)
+{
+   uint32_t p;
+   if (Z1 > Depth[0] && (p = Pixels[3])) { Screen[0] = Colors[p]; Depth[0] = Z2; }
+   if (Z1 > Depth[1] && (p = Pixels[2])) { Screen[1] = Colors[p]; Depth[1] = Z2; }
+   if (Z1 > Depth[2] && (p = Pixels[1])) { Screen[2] = Colors[p]; Depth[2] = Z2; }
+   if (Z1 > Depth[3] && (p = Pixels[0])) { Screen[3] = Colors[p]; Depth[3] = Z2; }
+}
+
+#define TILE_FAST_VARS() \
+   uint16_t *const S = (uint16_t *) GFX.S; \
+   uint8_t *const DB = GFX.DB; \
+   const uint32_t Z1 = GFX.Z1, Z2 = GFX.Z2
+#define W4_FAST(Offset, Pixels, Colors)         write4_fast(S + (Offset), DB + (Offset), Pixels, Colors, Z1, Z2)
+#define W4_FAST_FLIPPED(Offset, Pixels, Colors) write4_fast_flipped(S + (Offset), DB + (Offset), Pixels, Colors, Z1, Z2)
+
 void DrawTile16(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
 {
    uint8_t* bp;
    TILE_PREAMBLE_VARS();
    TILE_PREAMBLE_CODE();
-   RENDER_TILE(WRITE_4PIXELS16, WRITE_4PIXELS16_FLIPPED, 4);
+   TILE_FAST_VARS();
+   RENDER_TILE(W4_FAST, W4_FAST_FLIPPED, 4);
 }
 
 void DrawClippedTile16(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount)
@@ -458,7 +492,8 @@ void DrawClippedTile16(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint3
    RENDER_CLIPPED_TILE_VARS();
    TILE_PREAMBLE_CODE();
    TILE_CLIP_PREAMBLE_CODE();
-   RENDER_CLIPPED_TILE_CODE(WRITE_4PIXELS16, WRITE_4PIXELS16_FLIPPED, 4);
+   TILE_FAST_VARS();
+   RENDER_CLIPPED_TILE_CODE(W4_FAST, W4_FAST_FLIPPED, 4);
 }
 
 void DrawTile16HalfWidth(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
