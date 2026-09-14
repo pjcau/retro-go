@@ -50,6 +50,12 @@ static uint32_t console_tap = 0;      // keys held until console_tap_until
 static int64_t console_tap_until = 0;
 static char console_line[192];
 static size_t console_line_len = 0;
+// App switches must run on the app's main task: rg_system_restart() waits
+// for the input task (all keys released) and touches the display, so calling
+// it from the input task deadlocks. The command only queues the request;
+// rg_input_read_gamepad() (called every frame by every app) executes it.
+static char console_action[RG_PATH_MAX + 64];
+static volatile bool console_action_pending = false;
 #endif
 static bool input_task_running = false;
 static uint32_t gamepad_state = -1; // _Atomic
@@ -262,6 +268,83 @@ static int console_ls_cb(const rg_scandir_t *file, void *arg)
     return RG_SCANDIR_CONTINUE;
 }
 
+static int console_b64_val(char c)
+{
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1; // '=' padding and anything else
+}
+
+// put <size> <path> : the host then streams base64 text (any line length,
+// whitespace ignored) until `size` decoded bytes were written to <path>.
+// Runs inline in the input task: only use it from the launcher, not while an
+// emulator is reading the card.
+static void console_put(const char *path, size_t size)
+{
+    FILE *fp = fopen(path, "wb");
+    if (!fp)
+    {
+        printf("CTL put failed open %s\n", path);
+        return;
+    }
+    uint8_t *out = malloc(3072);
+    char in[1024];
+    size_t written = 0, next_report = 0;
+    uint32_t acc = 0;
+    int bits = 0, n;
+    int64_t start = rg_system_timer(), last = start;
+    printf("CTL put ready %s %u\n", path, (unsigned)size);
+    fflush(stdout);
+    while (written < size)
+    {
+        if ((n = read(STDIN_FILENO, in, sizeof(in))) <= 0)
+        {
+            if (rg_system_timer() - last > 5000000)
+            {
+                printf("CTL put failed timeout at %u\n", (unsigned)written);
+                break;
+            }
+            rg_usleep(200);
+            continue;
+        }
+        last = rg_system_timer();
+        size_t o = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            int v = console_b64_val(in[i]);
+            if (v < 0)
+                continue;
+            acc = (acc << 6) | v;
+            bits += 6;
+            if (bits >= 8)
+            {
+                bits -= 8;
+                out[o++] = (acc >> bits) & 0xFF;
+            }
+        }
+        if (o > size - written)
+            o = size - written;
+        if (o && fwrite(out, 1, o, fp) != o)
+        {
+            printf("CTL put failed write at %u\n", (unsigned)written);
+            break;
+        }
+        written += o;
+        if (written >= next_report)
+        {
+            printf("CTL put %u\n", (unsigned)written);
+            next_report = written + 262144;
+        }
+    }
+    fclose(fp);
+    free(out);
+    printf("CTL put %s %u bytes %d ms\n", written == size ? "done" : "short", (unsigned)written,
+           (int)((rg_system_timer() - start) / 1000));
+}
+
 static void console_exec(char *line)
 {
     char *cmd = strtok(line, " ");
@@ -300,28 +383,34 @@ static void console_exec(char *line)
         bool ok = rg_storage_scandir(path, console_ls_cb, NULL, RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_STAT);
         printf("CTL ls %s %s\n", ok ? "done" : "failed", path);
     }
+    else if (strcmp(cmd, "put") == 0 && arg1 && arg2)
+    {
+        char path[RG_PATH_MAX + 1];
+        snprintf(path, sizeof(path), "%s%s%s", arg2, rest ? " " : "", rest ? rest : "");
+        console_put(path, (size_t)atoi(arg1));
+    }
+    else if (strcmp(cmd, "rm") == 0 && arg1)
+    {
+        char path[RG_PATH_MAX + 1];
+        snprintf(path, sizeof(path), "%s%s%s%s%s", arg1, arg2 ? " " : "", arg2 ? arg2 : "", rest ? " " : "", rest ? rest : "");
+        printf("CTL rm %s %s\n", rg_storage_delete(path) ? "done" : "failed", path);
+    }
     else if (strcmp(cmd, "launch") == 0 && arg1 && arg2 && rest)
     {
         // launch <partition> <app> <rom path> : e.g. launch retro-core snes /sd/roms/snes/x.sfc
+        snprintf(console_action, sizeof(console_action), "launch %s %s %s", arg1, arg2, rest);
+        console_action_pending = true;
         printf("CTL launch %s %s %s\n", arg1, arg2, rest);
-        fflush(stdout);
-        rg_system_switch_app(arg1, arg2, rest, 0);
     }
-    else if (strcmp(cmd, "launcher") == 0)
+    else if (strcmp(cmd, "launcher") == 0 || strcmp(cmd, "reboot") == 0)
     {
-        printf("CTL launcher\n");
-        fflush(stdout);
-        rg_system_switch_app(RG_APP_LAUNCHER, RG_APP_LAUNCHER, NULL, 0);
-    }
-    else if (strcmp(cmd, "reboot") == 0)
-    {
-        printf("CTL reboot\n");
-        fflush(stdout);
-        rg_system_restart();
+        snprintf(console_action, sizeof(console_action), "%s", cmd);
+        console_action_pending = true;
+        printf("CTL %s\n", cmd);
     }
     else
     {
-        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | launch <part> <app> <path> | launcher | reboot\n");
+        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch <part> <app> <path> | launcher | reboot\n");
     }
 }
 
@@ -527,6 +616,23 @@ uint32_t rg_input_read_gamepad(void)
 {
 #ifdef RG_TARGET_SDL2
     SDL_PumpEvents();
+#endif
+#ifdef RG_GAMEPAD_CONSOLE
+    if (console_action_pending)
+    {
+        console_action_pending = false;
+        char *cmd = strtok(console_action, " ");
+        char *part = strtok(NULL, " ");
+        char *app = strtok(NULL, " ");
+        char *path = strtok(NULL, "");
+        fflush(stdout);
+        if (strcmp(cmd, "launch") == 0 && part && app && path)
+            rg_system_switch_app(part, app, path, 0);
+        else if (strcmp(cmd, "launcher") == 0)
+            rg_system_switch_app(RG_APP_LAUNCHER, RG_APP_LAUNCHER, NULL, 0);
+        else
+            rg_system_restart();
+    }
 #endif
     return gamepad_state;
 }
