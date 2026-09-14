@@ -3,6 +3,7 @@
 #include "snes9x.h"
 #include "memmap.h"
 #include "ppu.h"
+#include "snes_prof.h"
 #include "cpuexec.h"
 #include "apu.h"
 #include "dma.h"
@@ -101,6 +102,7 @@ void S9xFixColourBrightness()
 /******************************************************************************/
 void S9xSetPPU(uint8_t Byte, uint16_t Address)
 {
+   SNES_PROF_SET(last_reg, Address - 0x2100);
    if (Address <= 0x2183)
    {
       switch (Address)

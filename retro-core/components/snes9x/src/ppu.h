@@ -240,10 +240,14 @@ extern InternalPPU IPPU;
 void JustifierButtons(uint32_t*);
 bool JustifierOffscreen(void);
 
+#include "snes_prof.h"
 static INLINE void FLUSH_REDRAW(void)
 {
    if (IPPU.PreviousLine != IPPU.CurrentLine)
+   {
+      SNES_PROF_INC(flush_hist[snes_prof.last_reg & 0x3f]);
       S9xUpdateScreen();
+   }
 }
 
 static INLINE void REGISTER_2104(uint8_t byte)
@@ -431,7 +435,9 @@ static INLINE void REGISTER_2122(uint8_t Byte)
    {
       if ((Byte & 0x7f) != (PPU.CGDATA[PPU.CGADD] >> 8))
       {
-         FLUSH_REDRAW();
+         if (IPPU.PreviousLine != IPPU.CurrentLine) { SNES_PROF_INC(cg_hist[PPU.CGADD >> 4]); if (!PPU.CGADD) SNES_PROF_INC(cg_zero); }
+         if (PPU.CGADD) /* entry 0 is per-line (LineData.Backdrop): HDMA sky gradients need no strip */
+            FLUSH_REDRAW();
          PPU.CGDATA[PPU.CGADD] &= 0x00FF;
          PPU.CGDATA[PPU.CGADD] |= (Byte & 0x7f) << 8;
          IPPU.ColorsChanged = true;
@@ -443,7 +449,9 @@ static INLINE void REGISTER_2122(uint8_t Byte)
    }
    else if (Byte != (uint8_t)(PPU.CGDATA[PPU.CGADD] & 0xff))
    {
-      FLUSH_REDRAW();
+      if (IPPU.PreviousLine != IPPU.CurrentLine) { SNES_PROF_INC(cg_hist[PPU.CGADD >> 4]); if (!PPU.CGADD) SNES_PROF_INC(cg_zero); }
+      if (PPU.CGADD)
+         FLUSH_REDRAW();
       PPU.CGDATA[PPU.CGADD] &= 0x7F00;
       PPU.CGDATA[PPU.CGADD] |= Byte;
       IPPU.ColorsChanged = true;

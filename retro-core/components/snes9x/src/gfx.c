@@ -135,6 +135,8 @@ static struct {
 void ComputeClipWindows(void);
 
 void DrawTile16(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount);
+void DrawTile16SubCol(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount);
+void DrawClippedTile16SubCol(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount);
 void DrawClippedTile16(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount);
 void DrawTile16HalfWidth(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount);
 void DrawClippedTile16HalfWidth(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount);
@@ -296,6 +298,7 @@ void S9xStartScreenRefresh(void)
 
 void RenderLine(uint8_t C)
 {
+   LineData[C].Backdrop = IPPU.ScreenColors [0];
    if (IPPU.RenderThisFrame)
    {
       LineData[C].BG[0].VOffset = PPU.BG[0].VOffset + 1;
@@ -404,7 +407,21 @@ static INLINE void SelectTileRenderer(bool normal)
          GFX.UseMathPalette = true;
          normal = true;
       }
-      /* else: the Add/Sub writers read GFX.SubCol and MathColors (tile.c) */
+      else if (!IPPU.HalfWidthPixels)
+      {
+         /* Colour window: per-column palette select (tile.c). The large
+          * pixel writer keeps the generic Add/Sub path below. */
+         DrawTilePtr = DrawTile16SubCol;
+         DrawClippedTilePtr = DrawClippedTile16SubCol;
+         switch (GFX.r2131 & 0xC0)
+         {
+            case 0x00: DrawLargePixelPtr = DrawLargePixel16Add; break;
+            case 0x40: DrawLargePixelPtr = DrawLargePixel16Add1_2; break;
+            case 0x80: DrawLargePixelPtr = DrawLargePixel16Sub; break;
+            default:   DrawLargePixelPtr = DrawLargePixel16Sub1_2; break;
+         }
+         return;
+      }
    }
    if (normal)
    {
@@ -2966,6 +2983,7 @@ void S9xUpdateScreen(void)
          for (y = starty; y <= endy; y++)
          {
             uint32_t b;
+            back = LineData[y].Backdrop;
             if (!(Count = pClip->Count [5]))
             {
                Left = 0;
@@ -3145,6 +3163,8 @@ void S9xUpdateScreen(void)
          {
             for (y = starty; y <= endy; y++)
             {
+            if (!PPU.ForcedBlanking) back = LineData[y].Backdrop | (LineData[y].Backdrop << 16);
+               back = LineData[y].Backdrop | (LineData[y].Backdrop << 16);
                uint32_t b;
                for (b = 0; b < pClip->Count [5]; b++)
                {
@@ -3169,6 +3189,8 @@ void S9xUpdateScreen(void)
          {
             for (y = starty; y <= endy; y++)
             {
+            if (!PPU.ForcedBlanking) back = LineData[y].Backdrop | (LineData[y].Backdrop << 16);
+               back = LineData[y].Backdrop | (LineData[y].Backdrop << 16);
                uint16_t* p = (uint16_t*)(GFX.Screen + y * GFX.Pitch2);
                uint8_t* d = GFX.ZBuffer + y * GFX.ZPitch;
                uint8_t* e = d + 256 * x2;

@@ -543,6 +543,16 @@ void snes_main(void)
                     (float)sp->l_tiles[4] / d, (float)sp->l_clipped[4] / d, (float)sp->l_lines[4] / d,
                     (float)sp->m7_lines / d, (int)(sp->t_m7 / d),
                     sp->m7_variant[0], sp->m7_variant[1], sp->m7_variant[2], sp->m7_variant[3], sp->m7_variant[4], sp->subempty_why, (float)sp->m7_runs / d);
+            {
+                char fl[200] = ""; int n = 0;
+                for (int i = 0; i < 0x40 && n < 180; i++)
+                    if (sp->flush_hist[i]) n += snprintf(fl + n, sizeof(fl) - n, " %02x:%.1f", 0x00 + i, (float)sp->flush_hist[i] / d);
+                RG_LOGI("PROF/flush (strips per drawn frame by register 0x21xx):%s\n", fl);
+                n = 0; fl[0] = 0;
+                for (int i = 0; i < 16 && n < 180; i++)
+                    if (sp->cg_hist[i]) n += snprintf(fl + n, sizeof(fl) - n, " %d:%.1f", i * 16, (float)sp->cg_hist[i] / d);
+                RG_LOGI("PROF/cgram (mid-strip palette changes per drawn frame by entry group):%s zero=%.1f\n", fl, (float)sp->cg_zero / d);
+            }
             // On-screen HUD: 7 columns fit the 57 px letterbox bar left of the
             // 366x320 game viewport, which the display task never rewrites.
             // Drawn below, outside the timed sections, only when the display

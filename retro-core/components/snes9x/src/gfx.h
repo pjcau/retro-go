@@ -90,6 +90,8 @@ typedef struct
       uint16_t VOffset;
       uint16_t HOffset;
    } BG [4];
+   uint16_t Backdrop; /* CGRAM entry 0 at this line: only the backdrop fill uses it,
+                         so mid-frame writes to it need no strip (see REGISTER_2122) */
 } SLineData;
 
 #define H_FLIP 0x4000
