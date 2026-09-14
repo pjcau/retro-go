@@ -395,12 +395,20 @@ static void console_exec(char *line)
         snprintf(path, sizeof(path), "%s%s%s%s%s", arg1, arg2 ? " " : "", arg2 ? arg2 : "", rest ? " " : "", rest ? rest : "");
         printf("CTL rm %s %s\n", rg_storage_delete(path) ? "done" : "failed", path);
     }
-    else if (strcmp(cmd, "launch") == 0 && arg1 && arg2 && rest)
+    else if ((strcmp(cmd, "launch") == 0 || strcmp(cmd, "resume") == 0) && arg1 && arg2 && rest)
     {
         // launch <partition> <app> <rom path> : e.g. launch retro-core snes /sd/roms/snes/x.sfc
-        snprintf(console_action, sizeof(console_action), "launch %s %s %s", arg1, arg2, rest);
+        // resume ...                          : same, then load save-state slot 0
+        snprintf(console_action, sizeof(console_action), "%s %s %s %s", cmd, arg1, arg2, rest);
         console_action_pending = true;
-        printf("CTL launch %s %s %s\n", arg1, arg2, rest);
+        printf("CTL %s %s %s %s\n", cmd, arg1, arg2, rest);
+    }
+    else if ((strcmp(cmd, "save") == 0 || strcmp(cmd, "load") == 0))
+    {
+        // save/load [slot] : emulator save-state, executed on the app's main task
+        snprintf(console_action, sizeof(console_action), "%s %d", cmd, arg1 ? atoi(arg1) : 0);
+        console_action_pending = true;
+        printf("CTL %s queued\n", cmd);
     }
     else if (strcmp(cmd, "launcher") == 0 || strcmp(cmd, "reboot") == 0)
     {
@@ -410,7 +418,7 @@ static void console_exec(char *line)
     }
     else
     {
-        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch <part> <app> <path> | launcher | reboot\n");
+        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch|resume <part> <app> <path> | save|load [slot] | launcher | reboot\n");
     }
 }
 
@@ -612,11 +620,12 @@ bool rg_input_key_is_present(rg_key_t mask)
     return (gamepad_mapped & mask) == mask;
 }
 
-uint32_t rg_input_read_gamepad(void)
+// Runs queued console actions (launch/resume/save/load/reboot) at a frame
+// boundary. Called from rg_system_tick(); NOT from rg_input_read_gamepad(),
+// which snes9x calls from inside the emulated frame (S9xReadJoypad) — a
+// save-state taken there is mid-instruction and unusable.
+void rg_input_console_tick(void)
 {
-#ifdef RG_TARGET_SDL2
-    SDL_PumpEvents();
-#endif
 #ifdef RG_GAMEPAD_CONSOLE
     if (console_action_pending)
     {
@@ -628,11 +637,24 @@ uint32_t rg_input_read_gamepad(void)
         fflush(stdout);
         if (strcmp(cmd, "launch") == 0 && part && app && path)
             rg_system_switch_app(part, app, path, 0);
+        else if (strcmp(cmd, "resume") == 0 && part && app && path)
+            rg_system_switch_app(part, app, path, RG_BOOT_RESUME | RG_BOOT_SLOT0);
+        else if (strcmp(cmd, "save") == 0 && part)
+            printf("CTL save %s slot %d\n", rg_emu_save_state(atoi(part)) ? "done" : "failed", atoi(part));
+        else if (strcmp(cmd, "load") == 0 && part)
+            printf("CTL load %s slot %d\n", rg_emu_load_state(atoi(part)) ? "done" : "failed", atoi(part));
         else if (strcmp(cmd, "launcher") == 0)
             rg_system_switch_app(RG_APP_LAUNCHER, RG_APP_LAUNCHER, NULL, 0);
         else
             rg_system_restart();
     }
+#endif
+}
+
+uint32_t rg_input_read_gamepad(void)
+{
+#ifdef RG_TARGET_SDL2
+    SDL_PumpEvents();
 #endif
     return gamepad_state;
 }
