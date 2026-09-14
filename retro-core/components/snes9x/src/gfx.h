@@ -75,6 +75,7 @@ typedef struct
    bool        SubColMode;      /* sub z-buffer is 0/1 by column only (SubCol) */
    uint8_t     SubCol[256];     /* 1 inside the sub colour window, 0 outside */
    bool        UseMathPalette;  /* current layer draws through MathColors */
+   bool        MathRuns;        /* Mode 7 plain drawer: palette per SubCol run */
    uint32_t    MathKey;         /* what MathColors holds: op | halve<<8, 0 = stale */
    uint16_t    MathColors[256];
 } SGFX;
