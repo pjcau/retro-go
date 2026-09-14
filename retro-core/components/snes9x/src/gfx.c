@@ -136,6 +136,8 @@ void ComputeClipWindows(void);
 
 void DrawTile16(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount);
 void DrawTile16SubCol(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount);
+void DrawTile16PalLine(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount);
+void DrawClippedTile16PalLine(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount);
 void DrawClippedTile16SubCol(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount);
 void DrawClippedTile16(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount);
 void DrawTile16HalfWidth(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount);
@@ -166,6 +168,7 @@ void DrawLargePixel16Sub1_2(uint32_t Tile, int32_t Offset, uint32_t StartPixel, 
 bool S9xInitGFX(void)
 {
    LocalState = calloc(1, sizeof(*LocalState));
+   GFX.LineDataBase = LineData; /* macro: LocalState->LineData */
    if (!LocalState)
       return false;
 
@@ -246,6 +249,7 @@ void S9xStartScreenRefresh(void)
    if (IPPU.RenderThisFrame)
    {
       IPPU.PreviousLine = IPPU.CurrentLine = 0;
+      IPPU.PalLineDirty = false;
 
       if (PPU.BGMode == 5 || PPU.BGMode == 6)
          IPPU.Interlace = (Memory.FillRAM[0x2133] & 1);
@@ -299,6 +303,7 @@ void S9xStartScreenRefresh(void)
 void RenderLine(uint8_t C)
 {
    LineData[C].Backdrop = IPPU.ScreenColors [0];
+   memcpy(LineData[C].Pal16, IPPU.ScreenColors, sizeof(LineData[C].Pal16));
    if (IPPU.RenderThisFrame)
    {
       LineData[C].BG[0].VOffset = PPU.BG[0].VOffset + 1;
@@ -430,6 +435,12 @@ static INLINE void SelectTileRenderer(bool normal)
          DrawTilePtr = DrawTile16HalfWidth;
          DrawClippedTilePtr = DrawClippedTile16HalfWidth;
          DrawLargePixelPtr = DrawLargePixel16HalfWidth;
+      }
+      else if (IPPU.PalLineDirty && !GFX.UseMathPalette)
+      {
+         DrawTilePtr = DrawTile16PalLine;
+         DrawClippedTilePtr = DrawClippedTile16PalLine;
+         DrawLargePixelPtr = DrawLargePixel16;
       }
       else
       {

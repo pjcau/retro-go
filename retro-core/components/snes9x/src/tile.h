@@ -41,6 +41,23 @@
     else \
        ScreenColors = (GFX.UseMathPalette ? GFX.MathColors : IPPU.ScreenColors) + ((((Tile >> 10) & BG.PaletteMask) << BG.PaletteShift) + BG.StartPalette)
 
+/* Per-line palette writers only (DrawTile16PalLine): tiles on CGRAM entries
+ * 0-15 fetch their palette from LineData per line. */
+#define TILE_PALLINE_VARS() \
+    int32_t plpal = -1
+#define TILE_PALLINE_CODE() \
+    if (!BG.DirectColourMode && BG.BitShift != 8 && !GFX.UseMathPalette) \
+    { \
+       int32_t palidx = ScreenColors - IPPU.ScreenColors; \
+       if (palidx < 16) \
+          plpal = palidx; \
+    }
+
+/* Per-line palette (see TILE_PREAMBLE_CODE): only the plain writers pass a
+ * palette index; the colour-math writers keep the strip palette. */
+#define PAL_LINE_STEP() \
+    if (plpal >= 0) ScreenColors = ((SLineData *) GFX.LineDataBase)[Offset / GFX.PPL].Pal16 + plpal
+
 #define RENDER_TILE(NORMAL, FLIPPED, N) \
     switch (Tile & (V_FLIP | H_FLIP)) \
     { \
@@ -72,6 +89,49 @@
        bp = pCache + 56 - StartLine; \
        for (l = LineCount; l != 0; l--, bp -= 8, Offset += GFX.PPL) \
        { \
+          NORMAL (Offset, bp, ScreenColors); \
+          NORMAL (Offset + N, bp + 4, ScreenColors); \
+       } \
+       break; \
+    default: \
+       break; \
+    }
+
+#define RENDER_TILE_PL(NORMAL, FLIPPED, N) \
+    switch (Tile & (V_FLIP | H_FLIP)) \
+    { \
+    case 0: \
+       bp = pCache + StartLine; \
+       for (l = LineCount; l != 0; l--, bp += 8, Offset += GFX.PPL) \
+       { \
+          PAL_LINE_STEP(); \
+          NORMAL (Offset, bp, ScreenColors); \
+          NORMAL (Offset + N, bp + 4, ScreenColors); \
+       } \
+       break; \
+    case H_FLIP: \
+       bp = pCache + StartLine; \
+       for (l = LineCount; l != 0; l--, bp += 8, Offset += GFX.PPL) \
+       { \
+          PAL_LINE_STEP(); \
+          FLIPPED (Offset, bp + 4, ScreenColors); \
+          FLIPPED (Offset + N, bp, ScreenColors); \
+       } \
+       break; \
+    case H_FLIP | V_FLIP: \
+       bp = pCache + 56 - StartLine; \
+       for (l = LineCount; l != 0; l--, bp -= 8, Offset += GFX.PPL) \
+       { \
+          PAL_LINE_STEP(); \
+          FLIPPED (Offset, bp + 4, ScreenColors); \
+          FLIPPED (Offset + N, bp, ScreenColors); \
+       } \
+       break; \
+    case V_FLIP: \
+       bp = pCache + 56 - StartLine; \
+       for (l = LineCount; l != 0; l--, bp -= 8, Offset += GFX.PPL) \
+       { \
+          PAL_LINE_STEP(); \
           NORMAL (Offset, bp, ScreenColors); \
           NORMAL (Offset + N, bp + 4, ScreenColors); \
        } \
@@ -152,6 +212,64 @@
        bp = pCache + 56 - StartLine; \
        for (l = LineCount; l != 0; l--, bp -= 8, Offset += GFX.PPL) \
        { \
+          if ((dd = (*(uint32_t *) bp) & d1)) \
+             NORMAL (Offset, (uint8_t *) &dd, ScreenColors); \
+          if ((dd = (*(uint32_t *) (bp + 4)) & d2)) \
+             NORMAL (Offset + N, (uint8_t *) &dd, ScreenColors); \
+       } \
+       break; \
+    default: \
+       break; \
+    }
+
+#define RENDER_CLIPPED_TILE_CODE_PL(NORMAL, FLIPPED, N) \
+    switch (Tile & (V_FLIP | H_FLIP)) \
+    { \
+    case 0: \
+       bp = pCache + StartLine; \
+       for (l = LineCount; l != 0; l--, bp += 8, Offset += GFX.PPL) \
+       { \
+          PAL_LINE_STEP(); \
+          /* This is perfectly OK, regardless of endianness. The tiles are \
+           * cached in leftmost-endian order (when not horiz flipped) by \
+           * the ConvertTile function. */ \
+          if ((dd = (*(uint32_t *) bp) & d1)) \
+             NORMAL (Offset, (uint8_t *) &dd, ScreenColors); \
+          if ((dd = (*(uint32_t *) (bp + 4)) & d2)) \
+             NORMAL (Offset + N, (uint8_t *) &dd, ScreenColors); \
+       } \
+       break; \
+    case H_FLIP: \
+       bp = pCache + StartLine; \
+       SWAP_DWORD (d1); \
+       SWAP_DWORD (d2); \
+       for (l = LineCount; l != 0; l--, bp += 8, Offset += GFX.PPL) \
+       { \
+          PAL_LINE_STEP(); \
+          if ((dd = *(uint32_t *) (bp + 4) & d1)) \
+             FLIPPED (Offset, (uint8_t *) &dd, ScreenColors); \
+          if ((dd = *(uint32_t *) bp & d2)) \
+             FLIPPED (Offset + N, (uint8_t *) &dd, ScreenColors); \
+       } \
+       break; \
+    case H_FLIP | V_FLIP: \
+       bp = pCache + 56 - StartLine; \
+       SWAP_DWORD (d1); \
+       SWAP_DWORD (d2); \
+       for (l = LineCount; l != 0; l--, bp -= 8, Offset += GFX.PPL) \
+       { \
+          PAL_LINE_STEP(); \
+          if ((dd = *(uint32_t *) (bp + 4) & d1)) \
+             FLIPPED (Offset, (uint8_t *) &dd, ScreenColors); \
+          if ((dd = *(uint32_t *) bp & d2)) \
+             FLIPPED (Offset + N, (uint8_t *) &dd, ScreenColors); \
+       } \
+       break; \
+    case V_FLIP: \
+       bp = pCache + 56 - StartLine; \
+       for (l = LineCount; l != 0; l--, bp -= 8, Offset += GFX.PPL) \
+       { \
+          PAL_LINE_STEP(); \
           if ((dd = (*(uint32_t *) bp) & d1)) \
              NORMAL (Offset, (uint8_t *) &dd, ScreenColors); \
           if ((dd = (*(uint32_t *) (bp + 4)) & d2)) \

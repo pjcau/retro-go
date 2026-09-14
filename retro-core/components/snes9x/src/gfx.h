@@ -76,6 +76,7 @@ typedef struct
    uint8_t     SubCol[256];     /* 1 inside the sub colour window, 0 outside */
    bool        UseMathPalette;  /* current layer draws through MathColors */
    bool        MathRuns;        /* Mode 7 plain drawer: palette per SubCol run */
+   void*       LineDataBase;    /* gfx.c LocalState->LineData (SLineData[]), for tile.h */
    uint32_t    MathKey;         /* what MathColors holds: op | halve<<8, 0 = stale */
    uint16_t    MathColors[256];
 } SGFX;
@@ -92,6 +93,9 @@ typedef struct
    } BG [4];
    uint16_t Backdrop; /* CGRAM entry 0 at this line: only the backdrop fill uses it,
                          so mid-frame writes to it need no strip (see REGISTER_2122) */
+   uint16_t Pal16[16]; /* CGRAM entries 0-15 at this line: tiles whose palette starts
+                          below 16 read them per line when GFX.PalLineDirty (DKC's
+                          per-line sky gradient on colour 1 forced 27 strips/frame) */
 } SLineData;
 
 #define H_FLIP 0x4000

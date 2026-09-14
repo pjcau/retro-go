@@ -496,6 +496,33 @@ void DrawClippedTile16(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint3
    RENDER_CLIPPED_TILE_CODE(W4_FAST, W4_FAST_FLIPPED, 4);
 }
 
+/* Same writers, palette fetched per line for tiles on CGRAM entries 0-15
+ * (selected by SelectTileRenderer only while IPPU.PalLineDirty). */
+void DrawTile16PalLine(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
+{
+   uint8_t* bp;
+   TILE_PREAMBLE_VARS();
+   TILE_PALLINE_VARS();
+   TILE_PREAMBLE_CODE();
+   TILE_PALLINE_CODE();
+   TILE_FAST_VARS();
+   RENDER_TILE_PL(W4_FAST, W4_FAST_FLIPPED, 4);
+}
+
+void DrawClippedTile16PalLine(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Width, uint32_t StartLine, uint32_t LineCount)
+{
+   uint8_t* bp;
+   TILE_PREAMBLE_VARS();
+   TILE_CLIP_PREAMBLE_VARS();
+   RENDER_CLIPPED_TILE_VARS();
+   TILE_PALLINE_VARS();
+   TILE_PREAMBLE_CODE();
+   TILE_PALLINE_CODE();
+   TILE_CLIP_PREAMBLE_CODE();
+   TILE_FAST_VARS();
+   RENDER_CLIPPED_TILE_CODE_PL(W4_FAST, W4_FAST_FLIPPED, 4);
+}
+
 void DrawTile16HalfWidth(uint32_t Tile, int32_t Offset, uint32_t StartLine, uint32_t LineCount)
 {
    uint8_t* bp;
