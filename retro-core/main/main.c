@@ -19,6 +19,8 @@ void app_main(void)
         sms_main();
     else if (strcmp(app->configNs, "col") == 0)
         sms_main();
+    else if (strcmp(app->configNs, "sg1") == 0)
+        sms_main();   // SG-1000: main_sms picks console 5 from the .sg extension
     else if (strcmp(app->configNs, "gw") == 0)
         gw_main();
     else if (strcmp(app->configNs, "snes") == 0)
