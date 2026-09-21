@@ -201,11 +201,13 @@ static void lcd_init(void)
     st7796_cmd(0x11, NULL, 0);       /* Sleep out */
     rg_usleep(120 * 1000);
 
-    /* MADCTL: MV=1 (row/column swap) + BGR → landscape 480x320 with
-     * "up" toward the board's top edge (D-pad left, ABXY right). 0x28 is
-     * rotation 1 of the usual ILI9488 table (0x48 portrait, 0x28, 0x88,
-     * 0xE8); switch to 0xE8 if the image ever comes out upside-down. */
-    st7796_cmd(0x36, (uint8_t[]){0x28}, 1);
+    /* MADCTL: MY|MX|MV + BGR → landscape 480x320, rotated 180° relative
+     * to the first-article value (0x28, rotation 1 of the usual ILI9488
+     * table 0x48 / 0x28 / 0x88 / 0xE8). Since the FPC crossover cable
+     * (2026-09-21) the panel is mounted tail-LEFT, so "up" toward the
+     * board's top edge (D-pad left, ABXY right) is now 0xE8. Go back to
+     * 0x28 for a tail-RIGHT panel. */
+    st7796_cmd(0x36, (uint8_t[]){0xE8}, 1);
 
     /* COLMOD: RGB565 */
     st7796_cmd(0x3A, (uint8_t[]){0x55}, 1);
