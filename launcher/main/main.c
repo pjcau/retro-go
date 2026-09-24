@@ -15,6 +15,7 @@
 #include "gui.h"
 #include "webui.h"
 #include "updater.h"
+#include "splash.h"
 
 static rg_app_t *app;
 
@@ -449,6 +450,10 @@ void app_main(void)
     app = rg_system_init(32000, &handlers, NULL);
     app->configNs = "launcher";
     app->isLauncher = true;
+
+    // Boot splash on power-on only; returning from an emulator is a software reset
+    if (app->isColdBoot)
+        splash_play();
 
     if (!rg_storage_ready())
     {
