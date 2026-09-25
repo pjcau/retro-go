@@ -17,8 +17,12 @@ extern const uint32_t splash_palette[16];
 // Render frame `frame` into `out` (SPLASH_WIDTH * SPLASH_HEIGHT palette indices).
 void splash_render(uint8_t *out, int frame);
 
-// Mono sample (-1..1) at sample index `n` of the jingle (SPLASH_RATE Hz).
-float splash_sample(int n);
+#define SPLASH_ECHO_LEN (SPLASH_RATE * 3 / 10) // echo delay line, 0.3 s
+
+// Jingle: reset the synth (`delay` = SPLASH_ECHO_LEN floats of scratch), then pull
+// mono samples (-1..1) at SPLASH_RATE Hz in order.
+void splash_audio_init(float *delay);
+float splash_audio_next(void);
 
 // Play the splash on the display + speaker; returns early if a button is pressed.
 void splash_play(void);

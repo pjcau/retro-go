@@ -1,6 +1,7 @@
 #include "splash.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -38,15 +39,20 @@ static const uint8_t bayer4[4][4] = {
     {15, 7, 13, 5},
 };
 
-// Darken colour `c` by `level` steps (fractional part dithered).
-static uint8_t dim(uint8_t c, float level, int x, int y)
+// Darken colour `c` by `level16` / 16 steps (fractional part dithered). Integer-only: it runs per pixel.
+static inline uint8_t dim16(uint8_t c, int level16, int x, int y)
 {
-    if (level <= 0.f)
+    if (level16 <= 0 || !c)
         return c;
-    int k = (int)(level + bayer4[y & 3][x & 3] / 16.f);
+    int k = (level16 + bayer4[y & 3][x & 3]) >> 4;
     while (k-- > 0 && c)
         c = darker[c];
     return c;
+}
+
+static inline uint8_t dim(uint8_t c, float level, int x, int y)
+{
+    return dim16(c, (int)(level * 16.f), x, y);
 }
 
 // ---------------------------------------------------------------------------- fonts
@@ -136,6 +142,32 @@ static int title_row(int x, int y)
     return -1;
 }
 
+// Title layer, built once: 0 = empty, 1 = drop shadow, 2 = outline, 3 + glyph row = letter.
+#define TMASK_Y0 (TITLE_Y - 1)
+#define TMASK_H (TITLE_GH * TITLE_SCALE + 3)
+static uint8_t *title_mask;
+
+static uint8_t *get_title_mask(void)
+{
+    if (title_mask || !(title_mask = malloc(TMASK_H * W)))
+        return title_mask;
+    for (int my = 0; my < TMASK_H; my++)
+        for (int x = 0; x < W; x++)
+        {
+            int y = TMASK_Y0 + my, row = title_row(x, y);
+            uint8_t k = 0;
+            if (row >= 0)
+                k = 3 + row;
+            else if (title_row(x - 2, y - 2) >= 0)
+                k = 1;
+            else if (title_row(x - 1, y) >= 0 || title_row(x + 1, y) >= 0 ||
+                     title_row(x, y - 1) >= 0 || title_row(x, y + 1) >= 0)
+                k = 2;
+            title_mask[my * W + x] = k;
+        }
+    return title_mask;
+}
+
 static void draw_small_text(uint8_t *out, const char *s, int y, uint8_t color)
 {
     int x = (W - text_width(small_font, SMALL_COUNT, s, 1)) / 2;
@@ -181,16 +213,16 @@ static const uint8_t ring_ramp[] = {7, 15, 14, 8, 2, 1, 1};
 
 static void draw_tunnel(uint8_t *out, int f)
 {
-    float pos = f * 4.f;                              // constant inward drift
-    float fade_in = clampf(3.f - f * 0.5f, 0.f, 6.f); // first 6 frames rise out of black
-    float radius = 280.f - clampf((f - 6) / (T_FLASH - 6.f), 0.f, 1.f) * 280.f;
+    int pos = f * 4;                                                 // constant inward drift
+    int fade16 = 48 - f * 8 > 0 ? 48 - f * 8 : 0;                    // first 6 frames rise out of black
+    int radius = 280 - 280 * (f < 6 ? 0 : f > T_FLASH ? T_FLASH - 6 : f - 6) / (T_FLASH - 6);
     for (int y = 0; y < H; y++)
         for (int x = 0; x < W; x++)
         {
             int d = ring_dist(x, y);
-            uint8_t c = ((int)(d + pos) % 40 < 5) ? ring_ramp[d / 40] : 0;
-            float level = fade_in + clampf((d - radius) / 16.f, 0.f, 6.f);
-            out[y * W + x] = dim(c, level, x, y);
+            uint8_t c = ((d + pos) % 40 < 5) ? ring_ramp[d / 40] : 0;
+            int edge = d - radius;
+            out[y * W + x] = dim16(c, fade16 + (edge < 0 ? 0 : edge > 96 ? 96 : edge), x, y);
         }
 }
 
@@ -218,32 +250,34 @@ static const uint8_t title_rows[TITLE_GH] = {7, 10, 10, 9, 9, 8, 8};
 
 static void draw_title(uint8_t *out, int f, int reveal)
 {
+    const uint8_t *mask = get_title_mask();
+    if (!mask)
+        return;
+
     int shine = -1000;
     if (f >= T_SHINE1 && f < T_SHINE1 + 18)
         shine = (f - T_SHINE1) * 14 - 40;
     else if (f >= T_SHINE2 && f < T_SHINE2 + 18)
         shine = (f - T_SHINE2) * 14 - 40;
 
-    int y0 = TITLE_Y - 2, y1 = TITLE_Y + TITLE_GH * TITLE_SCALE + 3;
     int mid = (TITLE_Y * 2 + TITLE_GH * TITLE_SCALE) / 2;
-    for (int y = y0; y < y1; y++)
+    for (int my = 0; my < TMASK_H; my++)
     {
+        int y = TMASK_Y0 + my;
         if (y - mid > reveal || mid - y > reveal + 1)
             continue;
+        const uint8_t *m = mask + my * W;
+        uint8_t *p = out + y * W;
         for (int x = 0; x < W; x++)
         {
-            int row = title_row(x, y);
-            uint8_t *p = &out[y * W + x];
-            if (row >= 0)
+            uint8_t k = m[x];
+            if (k >= 3)
             {
                 int s = x + y - shine - 60;
-                *p = (s >= 0 && s < 4) ? 7 : (s >= 4 && s < 7) ? 15 : title_rows[row];
+                p[x] = (s >= 0 && s < 4) ? 7 : (s >= 4 && s < 7) ? 15 : title_rows[k - 3];
             }
-            else if (title_row(x - 2, y - 2) >= 0)
-                *p = 1; // drop shadow
-            else if (title_row(x - 1, y) >= 0 || title_row(x + 1, y) >= 0 ||
-                     title_row(x, y - 1) >= 0 || title_row(x, y + 1) >= 0)
-                *p = 2; // outline
+            else if (k)
+                p[x] = k; // 1 = shadow (dark blue), 2 = outline (dark purple)
         }
     }
 }
@@ -275,12 +309,12 @@ void splash_render(uint8_t *out, int f)
     if (f < T_HOLD)
     {
         float radius = (f - T_FLASH + 1) * 110.f; // fills the screen in 3 frames
-        float level = (f - T_FLASH - 2) / 1.6f;    // then dithers white -> black
+        int level16 = (int)((f - T_FLASH - 2) / 1.6f * 16.f); // then dithers white -> black
         for (int y = 0; y < H; y++)
             for (int x = 0; x < W; x++)
                 if (ring_dist(x, y) < radius)
                 {
-                    uint8_t c = dim(7, level, x, y);
+                    uint8_t c = dim16(7, level16, x, y);
                     if (c)
                         out[y * W + x] = c;
                 }
@@ -289,79 +323,131 @@ void splash_render(uint8_t *out, int f)
     // Close into the centre
     if (f >= T_CLOSE)
     {
-        float radius = 260.f - (f - T_CLOSE) / (float)(T_BLACK - T_CLOSE) * 260.f;
-        float global = (f - T_CLOSE) / 6.f;
+        int radius = 260 - 260 * (f - T_CLOSE) / (T_BLACK - T_CLOSE);
+        int global16 = (f - T_CLOSE) * 4 / 3;
         for (int y = 0; y < H; y++)
             for (int x = 0; x < W; x++)
             {
-                float level = global * 0.5f + clampf((ring_dist(x, y) - radius) / 12.f, 0.f, 6.f);
-                out[y * W + x] = dim(out[y * W + x], level, x, y);
+                uint8_t *p = &out[y * W + x];
+                if (!*p)
+                    continue;
+                int edge = (ring_dist(x, y) - radius) * 4 / 3;
+                *p = dim16(*p, global16 + (edge < 0 ? 0 : edge > 96 ? 96 : edge), x, y);
             }
     }
 }
 
 // ---------------------------------------------------------------------------- audio
 
-static float square(float phase, float duty)
+// A small stateful synth: phase accumulators and multiplicative envelopes, so a sample costs a
+// handful of multiply-adds. (Evaluating every note as a closed-form function of time, echo taps
+// included, needed ~45 expf per sample and ran slower than real time on the ESP32-S3.)
+
+#define ATTACK 128 // samples (4 ms)
+#define ECHO1 (SPLASH_RATE * 15 / 100) // 0.15 s
+#define ECHO2 SPLASH_ECHO_LEN          // 0.30 s
+
+typedef struct
 {
-    return (phase - floorf(phase)) < duty ? 1.f : -1.f;
+    float time, freq, decay, duty, gain; // duty < 0 = triangle
+} note_t;
+
+typedef struct
+{
+    int start, age;
+    float phase, inc, env, mul, duty, gain;
+} voice_t;
+
+#define T0 (T_FLASH / (float)SPLASH_FPS)
+#define TS1 ((T_SHINE1 + 6) / (float)SPLASH_FPS)
+#define TS2 ((T_SHINE2 + 6) / (float)SPLASH_FPS)
+
+static const note_t score[] = {
+    // Flash: "pling" arpeggio into an E major chord, triangle bass underneath
+    {T0 + 0.00f, 659.25f, 9.0f, 0.125f, 0.22f},
+    {T0 + 0.06f, 987.77f, 9.0f, 0.125f, 0.22f},
+    {T0 + 0.12f, 1318.5f, 2.2f, 0.125f, 0.20f},
+    {T0 + 0.12f, 1661.2f, 2.4f, 0.25f, 0.12f},
+    {T0 + 0.12f, 1975.5f, 2.6f, 0.25f, 0.10f},
+    {T0 + 0.00f, 164.81f, 1.6f, -1.f, 0.35f},
+    // Sparkles on the two shine sweeps
+    {TS1 + 0.000f, 2637.f, 14.f, 0.5f, 0.06f},
+    {TS1 + 0.045f, 3136.f, 14.f, 0.5f, 0.06f},
+    {TS1 + 0.090f, 3951.f, 14.f, 0.5f, 0.06f},
+    {TS1 + 0.135f, 5274.f, 14.f, 0.5f, 0.06f},
+    {TS2 + 0.000f, 5274.f, 14.f, 0.5f, 0.045f},
+    {TS2 + 0.045f, 3951.f, 14.f, 0.5f, 0.045f},
+    {TS2 + 0.090f, 3136.f, 14.f, 0.5f, 0.045f},
+    {TS2 + 0.135f, 2637.f, 14.f, 0.5f, 0.045f},
+};
+#define VOICES (int)(sizeof(score) / sizeof(note_t))
+
+static struct
+{
+    voice_t voice[VOICES];
+    float *delay;
+    int pos, n;
+    float sweep_phase, sweep_inc, sweep_mul;
+} synth;
+
+void splash_audio_init(float *delay)
+{
+    memset(&synth, 0, sizeof(synth));
+    memset(delay, 0, SPLASH_ECHO_LEN * sizeof(float));
+    synth.delay = delay;
+    for (int i = 0; i < VOICES; i++)
+    {
+        const note_t *n = &score[i];
+        synth.voice[i] = (voice_t){
+            .start = (int)(n->time * SPLASH_RATE),
+            .inc = n->freq / SPLASH_RATE,
+            .env = 1.f,
+            .mul = expf(-n->decay / SPLASH_RATE),
+            .duty = n->duty,
+            .gain = n->gain,
+        };
+    }
+    // Intro: square sweep 110 -> 880 Hz (3 octaves) up to the flash
+    synth.sweep_inc = 110.f / SPLASH_RATE;
+    synth.sweep_mul = powf(2.f, 3.f / (T0 * SPLASH_RATE));
 }
 
-static float triangle(float phase)
+float splash_audio_next(void)
 {
-    float p = phase - floorf(phase);
-    return 4.f * (p < 0.5f ? p : 1.f - p) - 1.f;
-}
-
-static float note(float t, float t0, float freq, float decay, float duty, float gain)
-{
-    if (t < t0)
-        return 0.f;
-    float dt = t - t0;
-    float env = expf(-dt * decay) * (dt < 0.004f ? dt / 0.004f : 1.f);
-    return square(freq * dt, duty) * env * gain;
-}
-
-// The jingle without echo, as a pure function of time.
-static float dry(float t)
-{
+    const int n = synth.n++;
+    const int n_flash = (int)(T0 * SPLASH_RATE);
     float s = 0.f;
 
-    const float t0 = T_FLASH / (float)SPLASH_FPS; // the flash
-
-    // Intro: soft square sweep 110 -> 880 Hz with the rings
-    if (t < t0)
+    if (n < n_flash)
     {
-        const float k = 3.f / t0 * 0.6931472f;
-        float phase = 110.f * (expf(k * t) - 1.f) / k;
-        s += square(phase, 0.25f) * (t / t0) * 0.18f;
+        s += (synth.sweep_phase < 0.25f ? 0.18f : -0.18f) * n / n_flash;
+        synth.sweep_phase += synth.sweep_inc;
+        if (synth.sweep_phase >= 1.f)
+            synth.sweep_phase -= 1.f;
+        synth.sweep_inc *= synth.sweep_mul;
     }
 
-    // Flash: "pling" arpeggio into an E major chord, triangle bass underneath
-    s += note(t, t0 + 0.00f, 659.25f, 9.f, 0.125f, 0.22f);
-    s += note(t, t0 + 0.06f, 987.77f, 9.f, 0.125f, 0.22f);
-    s += note(t, t0 + 0.12f, 1318.5f, 2.2f, 0.125f, 0.20f);
-    s += note(t, t0 + 0.12f, 1661.2f, 2.4f, 0.25f, 0.12f);
-    s += note(t, t0 + 0.12f, 1975.5f, 2.6f, 0.25f, 0.10f);
-    if (t > t0)
-        s += triangle(164.81f * (t - t0)) * expf(-(t - t0) * 1.6f) * 0.35f;
-
-    // Sparkles on the two shine sweeps
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < VOICES; i++)
     {
-        static const float sparkle[4] = {2637.f, 3136.f, 3951.f, 5274.f};
-        s += note(t, (T_SHINE1 + 6) / (float)SPLASH_FPS + i * 0.045f, sparkle[i], 14.f, 0.5f, 0.06f);
-        s += note(t, (T_SHINE2 + 6) / (float)SPLASH_FPS + i * 0.045f, sparkle[3 - i], 14.f, 0.5f, 0.045f);
+        voice_t *v = &synth.voice[i];
+        if (n < v->start || v->env < 0.0005f)
+            continue;
+        float amp = v->env * v->gain * (v->age < ATTACK ? v->age / (float)ATTACK : 1.f);
+        float p = v->phase;
+        s += amp * (v->duty < 0.f ? 4.f * (p < 0.5f ? p : 1.f - p) - 1.f : (p < v->duty ? 1.f : -1.f));
+        v->phase = p + v->inc >= 1.f ? p + v->inc - 1.f : p + v->inc;
+        v->env *= v->mul;
+        v->age++;
     }
-    return s;
-}
 
-float splash_sample(int n)
-{
-    float t = n / (float)SPLASH_RATE;
-    float s = dry(t) + 0.35f * dry(t - 0.15f) + 0.12f * dry(t - 0.30f);
-    s *= clampf((T_BLACK / (float)SPLASH_FPS - t) / 0.5f, 0.f, 1.f); // fade out with the picture
-    return clampf(s, -1.f, 1.f);
+    // Echo: taps at 0.15 s and 0.30 s of the dry signal
+    float *d = synth.delay;
+    float out = s + 0.35f * d[(synth.pos + SPLASH_ECHO_LEN - ECHO1) % SPLASH_ECHO_LEN] + 0.12f * d[synth.pos];
+    d[synth.pos] = s;
+    synth.pos = (synth.pos + 1) % SPLASH_ECHO_LEN;
+
+    out *= clampf((T_BLACK * SPLASH_RATE / SPLASH_FPS - n) / (0.5f * SPLASH_RATE), 0.f, 1.f); // fade with the picture
+    return clampf(out, -1.f, 1.f);
 }
 
 // ---------------------------------------------------------------------------- playback
@@ -369,60 +455,118 @@ float splash_sample(int n)
 #ifndef SPLASH_HOST
 #include <rg_system.h>
 
+#define BAND 8           // logical rows per LCD write (16 panel rows)
+#define AUDIO_CHUNK 512  // samples per rg_audio_submit
+#define TOTAL_SAMPLES (SPLASH_FRAMES * SPLASH_RATE / SPLASH_FPS)
+
+static volatile bool audio_stop, audio_done;
+
+// The jingle runs in its own task so the sound stays continuous whatever the frame rate.
+// rg_audio_submit blocks on the I2S DMA (or sleeps the equivalent time when muted), which paces it.
+static void audio_task(void *arg)
+{
+    rg_audio_frame_t *buf = arg;
+    for (int n = 0; n < TOTAL_SAMPLES && !audio_stop; n += AUDIO_CHUNK)
+    {
+        int count = TOTAL_SAMPLES - n < AUDIO_CHUNK ? TOTAL_SAMPLES - n : AUDIO_CHUNK;
+        for (int i = 0; i < count; i++)
+        {
+            int16_t v = (int16_t)(splash_audio_next() * 26000.f);
+            buf[i] = (rg_audio_frame_t){v, v};
+        }
+        rg_audio_submit(buf, count);
+    }
+    audio_done = true;
+}
+
 void splash_play(void)
 {
-    uint8_t *canvas = rg_alloc(W * H, MEM_ANY | MEM_NOPANIC);
-    uint16_t *frame = rg_alloc(W * 2 * H * 2 * 2, MEM_SLOW | MEM_NOPANIC);
-    rg_audio_frame_t *audio = rg_alloc((SPLASH_RATE / SPLASH_FPS + 2) * sizeof(rg_audio_frame_t), MEM_ANY | MEM_NOPANIC);
-    if (!canvas || !frame || !audio)
+    uint8_t *canvas = rg_alloc(W * H, MEM_FAST | MEM_NOPANIC);
+    uint32_t *band = rg_alloc(W * 2 * BAND * 2 * 2, MEM_FAST | MEM_NOPANIC);
+    rg_audio_frame_t *audio = rg_alloc(AUDIO_CHUNK * sizeof(rg_audio_frame_t), MEM_FAST | MEM_NOPANIC);
+    float *delay = rg_alloc(SPLASH_ECHO_LEN * sizeof(float), MEM_SLOW | MEM_NOPANIC);
+    bool audio_running = false;
+    if (!canvas || !band || !audio || !delay || !get_title_mask())
     {
         RG_LOGE("splash: out of memory");
         goto done;
     }
 
-    uint16_t pal[16];
+    // Two identical pixels per word, already in panel byte order (written with NOSWAP)
+    uint32_t pal2[16];
     for (int i = 0; i < 16; i++)
     {
         uint32_t c = splash_palette[i];
-        pal[i] = ((c >> 8) & 0xF800) | ((c >> 5) & 0x07E0) | ((c >> 3) & 0x001F);
+        uint16_t px = ((c >> 8) & 0xF800) | ((c >> 5) & 0x07E0) | ((c >> 3) & 0x001F);
+        px = (px >> 8) | (px << 8);
+        pal2[i] = px | ((uint32_t)px << 16);
     }
 
-    uint32_t held = rg_input_read_gamepad();
-    int64_t start = rg_system_timer();
+    splash_audio_init(delay);
+    audio_stop = audio_done = false;
+    audio_running = rg_task_create("splash_snd", &audio_task, audio, 3 * 1024, RG_TASK_PRIORITY_3, 1) != NULL;
+    audio_done = !audio_running;
 
-    for (int f = 0; f < SPLASH_FRAMES; f++)
+    uint32_t held = rg_input_read_gamepad();
+    int64_t start = rg_system_timer(), t_render = 0, t_lcd = 0;
+    int drawn = 0, last = -1;
+
+    while (1)
     {
         if (rg_input_read_gamepad() & ~held)
             break; // any newly pressed button skips
 
+        // The frame is picked by the clock: a slow frame makes the next one skip ahead, never stretches time
+        int64_t elapsed = rg_system_timer() - start;
+        int f = (int)(elapsed * SPLASH_FPS / 1000000);
+        if (f >= SPLASH_FRAMES)
+            break;
+        if (f == last)
+        {
+            rg_usleep((int64_t)(f + 1) * 1000000 / SPLASH_FPS - elapsed);
+            continue;
+        }
+        last = f;
+
+        int64_t t = rg_system_timer();
         splash_render(canvas, f);
-        for (int y = 0; y < H; y++)
-        {
-            uint16_t *line = frame + y * 2 * (W * 2);
-            for (int x = 0; x < W; x++)
-                line[x * 2] = line[x * 2 + 1] = pal[canvas[y * W + x]];
-            memcpy(line + W * 2, line, W * 2 * 2);
-        }
-        rg_display_write_rect(0, 0, W * 2, H * 2, W * 2 * 2, frame, 0);
+        t_render += rg_system_timer() - t;
 
-        int n0 = (int)((int64_t)f * SPLASH_RATE / SPLASH_FPS);
-        int n1 = (int)((int64_t)(f + 1) * SPLASH_RATE / SPLASH_FPS);
-        for (int n = n0; n < n1; n++)
+        for (int y0 = 0; y0 < H; y0 += BAND)
         {
-            int16_t v = (int16_t)(splash_sample(n) * 26000.f);
-            audio[n - n0] = (rg_audio_frame_t){v, v};
+            t = rg_system_timer();
+            for (int y = 0; y < BAND; y++)
+            {
+                const uint8_t *src = canvas + (y0 + y) * W;
+                uint32_t *line = band + y * 2 * W;
+                for (int x = 0; x < W; x++)
+                    line[x] = pal2[src[x]];
+                memcpy(line + W, line, W * 4);
+            }
+            t_render += rg_system_timer() - t, t = rg_system_timer();
+            rg_display_write_rect(0, y0 * 2, W * 2, BAND * 2, W * 4, (uint16_t *)band, RG_DISPLAY_WRITE_NOSWAP);
+            t_lcd += rg_system_timer() - t;
         }
-        rg_audio_submit(audio, n1 - n0);
-
-        int64_t wait = start + (int64_t)(f + 1) * 1000000 / SPLASH_FPS - rg_system_timer();
-        if (wait > 0)
-            rg_usleep(wait);
+        drawn++;
     }
 
+    if (drawn)
+        RG_LOGI("splash: %d of %d frames drawn in %d ms, per frame: render %d us, lcd %d us\n", drawn, SPLASH_FRAMES,
+                (int)((rg_system_timer() - start) / 1000), (int)(t_render / drawn), (int)(t_lcd / drawn));
+
 done:
+    audio_stop = true;
+    for (int i = 0; i < 200 && !audio_done; i++)
+        rg_task_delay(10); // the task owns `audio` until it exits
+    if (audio_done)
+    {
+        free(audio);
+        free(delay);
+    }
     free(canvas);
-    free(frame);
-    free(audio);
+    free(band);
+    free(title_mask);
+    title_mask = NULL;
     rg_display_clear(C_BLACK);
 }
 #endif

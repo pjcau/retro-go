@@ -409,6 +409,16 @@ static void console_exec(char *line)
         rg_system_set_debug_hud(strcmp(arg1, "on") == 0);
         printf("CTL hud %s\n", rg_system_get_debug_hud() ? "on" : "off");
     }
+    else if (strcmp(cmd, "volume") == 0)
+    {
+        // volume [0-100] : read or set the global volume, saved to the SD right away
+        if (arg1)
+        {
+            rg_audio_set_volume(atoi(arg1));
+            rg_settings_commit();
+        }
+        printf("CTL volume %d\n", rg_audio_get_volume());
+    }
     else if ((strcmp(cmd, "save") == 0 || strcmp(cmd, "load") == 0))
     {
         // save/load [slot] : emulator save-state, executed on the app's main task
@@ -424,7 +434,7 @@ static void console_exec(char *line)
     }
     else
     {
-        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch|resume <part> <app> <path> | save|load [slot] | hud on|off | launcher | reboot\n");
+        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch|resume <part> <app> <path> | save|load [slot] | hud on|off | volume [0-100] | launcher | reboot\n");
     }
 }
 
