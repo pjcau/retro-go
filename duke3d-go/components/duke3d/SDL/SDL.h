@@ -18,18 +18,22 @@ typedef int SDLMod;
 #define SDLK_FIRST 0
 #define SDLK_LAST 1024
 
-#define SDLK_KP4 SDLK_LEFT
-#define SDLK_KP6 SDLK_RIGHT
-#define SDLK_KP8 SDLK_UP
-#define SDLK_KP2 SDLK_DOWN
-#define SDLK_KP5 SDLK_BACKSLASH
-#define SDLK_KP0 SDLK_RETURN
-#define SDLK_KP9 SDLK_PAGEUP
-#define SDLK_KP3 SDLK_PAGEDOWN
-
-#define SDLK_KP7 0
-#define SDLK_KP1 0
-#define SDLK_PRINT 0
+/* Keys the gamepad never sends, on free slots at the top of display.c's
+ * scancodes[SDLK_LAST] like NUMLOCK/SCROLLOCK below. The keypad names used
+ * to alias the arrows, RETURN and BACKSLASH, so "scancodes[SDLK_KP0] = 0x52"
+ * overwrote RETURN: START/Enter reached the game as Insert and no menu
+ * entry could be selected. */
+#define SDLK_KP0 1001
+#define SDLK_KP1 1002
+#define SDLK_KP2 1003
+#define SDLK_KP3 1004
+#define SDLK_KP4 1005
+#define SDLK_KP5 1006
+#define SDLK_KP6 1007
+#define SDLK_KP7 1008
+#define SDLK_KP8 1009
+#define SDLK_KP9 1010
+#define SDLK_PRINT 1011
 
 #define AUDIO_S16SYS 16
 #define AUDIO_S8 8

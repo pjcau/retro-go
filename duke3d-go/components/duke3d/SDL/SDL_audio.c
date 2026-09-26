@@ -69,46 +69,14 @@ int SDL_BuildAudioCVT(SDL_AudioCVT *cvt, Uint16 src_format, Uint8 src_channels, 
 	return 0;
 }
 
-IRAM_ATTR int SDL_ConvertAudio(SDL_AudioCVT *cvt)
+// The ODROID-GO port turned each sample into two words for the ESP32's
+// internal DAC in differential mode -- twice the bytes it was given. Here the
+// mixer's signed 16-bit mono samples go to retro-go as they are, and that
+// doubling wrote 512 bytes past updateTask's mono[] buffer into FatFs'
+// volume table: the first file access after the video init crashed.
+int SDL_ConvertAudio(SDL_AudioCVT *cvt)
 {
-
-	Sint16 *sbuf = cvt->buf;
-	Uint16 *ubuf = cvt->buf;
-
-	int32_t dac0;
-	int32_t dac1;
-
-	for(int i = cvt->len-2; i >= 0; i-=2)
-	{
-		Sint16 range = sbuf[i/2] >> 8;
-
-		// Convert to differential output
-		if (range > 127)
-		{
-			dac1 = (range - 127);
-			dac0 = 127;
-		}
-		else if (range < -127)
-		{
-			dac1  = (range + 127);
-			dac0 = -127;
-		}
-		else
-		{
-			dac1 = 0;
-			dac0 = range;
-		}
-
-		dac0 += 0x80;
-		dac1 = 0x80 - dac1;
-
-		dac0 <<= 8;
-		dac1 <<= 8;
-
-		ubuf[i] = (int16_t)dac1;
-        ubuf[i + 1] = (int16_t)dac0;
-	}
-
+	(void)cvt;
 	return 0;
 }
 
