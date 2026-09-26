@@ -155,7 +155,7 @@ void gw_main(void)
     bool rom_status = gw_system_romload();
 
     if (!rom_status)
-        RG_PANIC("gw_system_romload failed!");
+        RG_PANIC("Not a Game & Watch ROM: .gw files are made with LCD-Game-Shrinker");
 
     /*** Clear audio buffer */
     gw_system_sound_init();
