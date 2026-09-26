@@ -186,7 +186,7 @@ If you wish to build or modify Retro-Go, you can find help in the following docu
 - PNG support is provided by [lodepng](https://github.com/lvandeve/lodepng/).
 - PCE cover art is from [Christian_Haitian](https://github.com/christianhaitian).
 - Some icons from [Rokey](https://iconarchive.com/show/seed-icons-by-rokey.html).
-- Background images from [es-theme-gbz35](https://github.com/rxbrad/es-theme-gbz35).
+- Background images from [es-theme-gbz35](https://github.com/rxbrad/es-theme-gbz35); logos, banners and backgrounds of the systems added by this fork (Arcade, Duke Nukem 3D, SG-1000, Atari 2600, GBA, MSX, NGP) too, via `tools/import_gbz35_art.py`.
 - Special thanks to [RGHandhelds](https://www.rghandhelds.com/) and [MyRetroGamecase](https://www.myretrogamecase.com/) for sending me a [G32](https://www.myretrogamecase.com/products/game-mini-g32-esp32-retro-gaming-console-1) device.
 - The [ODROID-GO](https://forum.odroid.com/viewtopic.php?f=159&t=37599) community for encouraging the development of retro-go!
 
