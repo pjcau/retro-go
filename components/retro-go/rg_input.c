@@ -284,6 +284,7 @@ static int console_b64_val(char c)
 // emulator is reading the card.
 static void console_put(const char *path, size_t size)
 {
+    rg_storage_mkdir(rg_dirname(path)); // e.g. a new system's /sd/roms/<name>
     FILE *fp = fopen(path, "wb");
     if (!fp)
     {
