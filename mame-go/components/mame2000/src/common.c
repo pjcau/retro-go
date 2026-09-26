@@ -744,7 +744,7 @@ void free_memory_region(int num)
 
 	if (num < MAX_MEMORY_REGIONS)
 	{
-		free(Machine->memory_region[num]);
+		MAMEGO_REGION_FREE(num);
 		Machine->memory_region[num] = 0;
 	}
 	else
@@ -753,7 +753,7 @@ void free_memory_region(int num)
 		{
 			if ((Machine->memory_region_type[i] & ~REGIONFLAG_MASK) == num)
 			{
-				free(Machine->memory_region[i]);
+				MAMEGO_REGION_FREE(i);
 				Machine->memory_region[i] = 0;
 				return;
 			}
@@ -964,3 +964,45 @@ void save_screen_snapshot(struct osd_bitmap *bitmap)
 		osd_fclose(fp);
 	}
 }
+
+
+#ifdef MAMEGO
+unsigned char mamego_region_flash[MAX_MEMORY_REGIONS];
+
+/* Implemented by the host app (mame-go main.c) on a flash partition: store
+ * len bytes at *offset, return the memory-mapped copy and advance *offset, or
+ * NULL to keep the region in RAM. This default (PC test builds) keeps it. */
+__attribute__((weak)) unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t *offset)
+{
+	(void)data; (void)len; (void)offset;
+	return NULL;
+}
+
+/* Called once the driver's init has run (drivers decrypt or reorder their ROMs
+ * there) and before the graphics are decoded. Gfx and sound-sample regions are
+ * read-only from then on: served from flash they free the PSRAM the 16-bit
+ * boards need (Aero Fighters: 3.6 MB of them). */
+void mamego_regions_to_flash(void)
+{
+	size_t offset = 0;
+	int i;
+
+	for (i = 0; i < MAX_MEMORY_REGIONS; i++)
+	{
+		int type = Machine->memory_region_type[i] & ~REGIONFLAG_MASK;
+		unsigned char *copy;
+
+		if (!Machine->memory_region[i] || Machine->memory_region_length[i] < 256 * 1024)
+			continue;
+		if (!((type >= REGION_GFX1 && type <= REGION_GFX8) || (type >= REGION_SOUND1 && type <= REGION_SOUND8)))
+			continue;
+		copy = mamego_flash_store(Machine->memory_region[i], Machine->memory_region_length[i], &offset);
+		if (!copy)
+			continue;
+		free(Machine->memory_region[i]);
+		Machine->memory_region[i] = copy;
+		mamego_region_flash[i] = 1;
+		logerror("mamego: region type %d (%u bytes) served from flash\n", type, Machine->memory_region_length[i]);
+	}
+}
+#endif

@@ -36,6 +36,10 @@ struct cached_tile_info {
 	const uint16_t *pal_data;
 	uint32_t pen_usage;
 	uint32_t flags;
+#ifdef MAMEGO
+	const struct GfxElement *gfx;	/* set + code, to find the tile again in the */
+	uint32_t code;					/* drawgfx.c tile cache (NULL: plain pen_data) */
+#endif
 };
 
 extern struct tile_info {
@@ -52,15 +56,25 @@ extern struct tile_info {
 
 	uint32_t priority;
 	uint8_t *mask_data;
+#ifdef MAMEGO
+	const struct GfxElement *gfx;	/* set by SET_TILE_INFO, see cached_tile_info */
+	uint32_t code;
+#endif
 } tile_info;
 
 #define SET_TILE_INFO(GFX,CODE,COLOR) { \
 	const struct GfxElement *gfx = Machine->gfx[(GFX)]; \
 	int _code = (CODE) % gfx->total_elements; \
-	tile_info.pen_data = gfx->gfxdata + _code*gfx->char_modulo; \
+	tile_info.pen_data = GFX_TILE(gfx, _code); \
 	tile_info.pal_data = &gfx->colortable[gfx->color_granularity * (COLOR)]; \
 	tile_info.pen_usage = gfx->pen_usage?gfx->pen_usage[_code]:0; \
+	SET_TILE_INFO_CACHE(gfx, _code) \
 }
+#ifdef MAMEGO
+#define SET_TILE_INFO_CACHE(G, C) tile_info.gfx = (G); tile_info.code = (C);
+#else
+#define SET_TILE_INFO_CACHE(G, C)
+#endif
 
 /* tile flags, set by get_tile_info callback */
 #define TILE_FLIPX					0x01

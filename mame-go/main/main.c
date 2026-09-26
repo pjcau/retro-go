@@ -7,6 +7,7 @@
  * input callbacks into rg_display / rg_audio / rg_input.
  */
 #include <rg_system.h>
+#include <esp_partition.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -134,6 +135,43 @@ static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, un
 static bool screenshot_handler(const char *filename, int width, int height)
 {
     return rg_surface_save_image_file(updates[current ^ 1], filename, width, height);
+}
+
+/* Big read-only ROM regions (gfx, sound samples) live in the "mamerom" flash
+ * partition, memory-mapped, instead of PSRAM (common.c mamego_regions_to_flash).
+ * A region already there from the last run of the game is only mapped; the
+ * flash is rewritten only when its content differs. */
+unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t *offset)
+{
+    static const esp_partition_t *part;
+    static const uint8_t *map;
+    static esp_partition_mmap_handle_t handle;
+    size_t off = *offset, size = (len + 0xFFF) & ~(size_t)0xFFF; /* erase sectors */
+
+    if (!part)
+    {
+        part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, 0x40, "mamerom");
+        if (!part || esp_partition_mmap(part, 0, part->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, &handle) != ESP_OK)
+        {
+            RG_LOGW("mamerom partition unavailable, ROMs stay in PSRAM");
+            part = NULL;
+            return NULL;
+        }
+    }
+    if (off + size > part->size)
+        return NULL;
+    if (memcmp(map + off, data, len) != 0)
+    {
+        RG_LOGI("mamerom: writing %u bytes at 0x%x", (unsigned)len, (unsigned)off);
+        if (esp_partition_erase_range(part, off, size) != ESP_OK || esp_partition_write(part, off, data, len) != ESP_OK ||
+            memcmp(map + off, data, len) != 0)
+        {
+            RG_LOGE("mamerom: write failed, region stays in PSRAM");
+            return NULL;
+        }
+    }
+    *offset = off + size;
+    return (unsigned char *)map + off;
 }
 
 static bool save_state_handler(const char *filename)

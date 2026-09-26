@@ -8,6 +8,7 @@ set(COMPONENT_SRCS
     src/common.c
     src/cpu/i8039/i8039.c
     src/cpu/m6502/m6502.c
+    src/cpu/m68000/m68kmame.c
     src/cpu/s2650/s2650.c
     src/cpu/z80/z80.c
     src/cpuintrf.c
@@ -15,7 +16,9 @@ set(COMPONENT_SRCS
     src/drawgfx.c
     src/drivers/1942.c
     src/drivers/1943.c
+    src/drivers/aerofgt.c
     src/drivers/astrocde.c
+    src/drivers/bloodbro.c
     src/drivers/circus.c
     src/drivers/dkong.c
     src/drivers/exidy.c
@@ -54,13 +57,18 @@ set(COMPONENT_SRCS
     src/png.c
     src/profiler.c
     src/sndhrdw/gorf.c
+    src/sndhrdw/seibu.c
     src/sndintrf.c
     src/sound/2203intf.c
+    src/sound/2610intf.c
+    src/sound/3812intf.c
     src/sound/5220intf.c
+    src/sound/adpcm.c
     src/sound/astrocde.c
     src/sound/ay8910.c
     src/sound/dac.c
     src/sound/fm.c
+    src/sound/fmopl.c
     src/sound/hc55516.c
     src/sound/mixer.c
     src/sound/namco.c
@@ -70,6 +78,7 @@ set(COMPONENT_SRCS
     src/sound/sn76496.c
     src/sound/streams.c
     src/sound/votrax.c
+    src/sound/ymdeltat.c
     src/sprite.c
     src/state.c
     src/tilemap.c
@@ -105,7 +114,7 @@ rg_setup_compile_options(
     -Wno-error=implicit-function-declaration -Wno-error=implicit-int
     -DALIGN_INTS -DALIGN_SHORTS -DMAME_UNDERCLOCK -DMAME_FASTSOUND -DBIGCASE
     -D__LIBRETRO__ -DLSB_FIRST -DMAMEGO
-    -DHAS_Z80=1 -DHAS_M6502=1 -DHAS_M65C02=1 -DHAS_N2A03=1 -DHAS_I8035=1 -DHAS_S2650=1
-    -DHAS_NAMCO=1 -DHAS_CUSTOM=1 -DHAS_SN76496=1 -DHAS_AY8910=1 -DHAS_YM2203=1 -DHAS_QSOUND=1
-    -DHAS_DAC=1 -DHAS_SAMPLES=1 -DHAS_HC55516=1 -DHAS_ASTROCADE=1 -DHAS_TMS5220=1 -DHAS_NES=1
+    -DHAS_Z80=1 -DHAS_M68000=1 -DHAS_M6502=1 -DHAS_M65C02=1 -DHAS_N2A03=1 -DHAS_I8035=1 -DHAS_S2650=1
+    -DHAS_NAMCO=1 -DHAS_CUSTOM=1 -DHAS_SN76496=1 -DHAS_AY8910=1 -DHAS_YM2203=1 -DHAS_YM2610=1 -DHAS_YM3812=1 -DHAS_QSOUND=1
+    -DHAS_DAC=1 -DHAS_SAMPLES=1 -DHAS_HC55516=1 -DHAS_ASTROCADE=1 -DHAS_TMS5220=1 -DHAS_NES=1 -DHAS_OKIM6295=1 -DHAS_ADPCM=1
 )

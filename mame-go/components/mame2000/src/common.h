@@ -189,6 +189,15 @@ int memory_region_length(int num);
 /* number, or one of the REGION_XXX identifiers defined above */
 int new_memory_region(int num, int length);
 void free_memory_region(int num);
+#ifdef MAMEGO
+/* mame-go: read-only ROM regions (gfx, sound samples) moved to a memory-mapped
+ * flash partition after driver init, see mamego_regions_to_flash() */
+extern unsigned char mamego_region_flash[MAX_MEMORY_REGIONS];
+void mamego_regions_to_flash(void);
+#define MAMEGO_REGION_FREE(i) do { if (!mamego_region_flash[i]) free(Machine->memory_region[i]); mamego_region_flash[i] = 0; } while (0)
+#else
+#define MAMEGO_REGION_FREE(i) free(Machine->memory_region[i])
+#endif
 
 extern data_t flip_screen_x, flip_screen_y;
 

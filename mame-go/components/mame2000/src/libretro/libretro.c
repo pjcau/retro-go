@@ -789,6 +789,12 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
 
 void retro_run(void)
 {
+#ifdef MAMEGO
+   {
+      extern unsigned int mamego_gfx_frame; /* drawgfx.c tile cache: tiles used in this frame stay */
+      mamego_gfx_frame++;
+   }
+#endif
    /* Software-framebuffer fast path.
     *
     * Before the emulator runs the next frame, ask the frontend for a
