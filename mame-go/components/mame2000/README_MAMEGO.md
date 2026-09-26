@@ -51,3 +51,10 @@ Local changes:
   differs). Regions in flash are never written or freed
   (`MAMEGO_REGION_FREE`). The PC test build maps them read-only to catch
   a driver writing to them.
+- **Idle-loop speed-ups** (`#ifdef MAMEGO` read handlers, MAME style): the
+  68000 main loops that poll a vblank flag -- Aero Fighters
+  `0B84: cmpi.b #1,$FF8055 / bcs` (`aerofgt_speedup_r`), Blood Bros.
+  `0988: btst #7,$8004C / beq` (`bloodbro_speedup_r`) -- stop the CPU until
+  the interrupt instead of emulating thousands of passes per frame. Found
+  by counting executed PCs on the PC build; the 68000's work roughly
+  halves, frames identical.

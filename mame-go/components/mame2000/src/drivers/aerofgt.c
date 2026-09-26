@@ -82,6 +82,20 @@ static READ_HANDLER( aerofgt_workram_r )
 	return READ_WORD(&aerofgt_workram[offset]);
 }
 
+#ifdef MAMEGO
+/* Speed-up (mame-go): Aero Fighters' main loop waits for the vblank IRQ by
+ * polling a flag, "0B84: cmpi.b #1,$FF8055 / bcs 0B84" -- about 4000 useless
+ * passes per frame. When the read comes from that loop and the flag is still
+ * clear, stop the 68000 until the interrupt instead of emulating them. */
+static READ_HANDLER( aerofgt_speedup_r )
+{
+	int data = READ_WORD(&aerofgt_workram[0x9054]);	/* $FF8054-55, 55 in the low byte */
+	if ((data & 0xff) == 0 && cpu_getpreviouspc() == 0x000b84)
+		cpu_spinuntil_int();
+	return data;
+}
+#endif
+
 static WRITE_HANDLER( aerofgt_workram_w )
 {
 	COMBINE_WORD_MEM(&aerofgt_workram[offset],data);
@@ -335,6 +349,9 @@ static const struct MemoryReadAddress aerofgt_readmem[] =
 	{ 0x1c0000, 0x1c3fff, MRA_BANK4 },
 	{ 0x1c4000, 0x1c7fff, MRA_BANK5 },
 	{ 0x1d0000, 0x1d1fff, aerofgt_spriteram_2_r },
+#ifdef MAMEGO
+	{ 0xff8054, 0xff8055, aerofgt_speedup_r },	/* vblank wait, see aerofgt_speedup_r */
+#endif
 	{ 0xfef000, 0xffefff, aerofgt_workram_r },	/* work RAM */
 	{ 0xffffa0, 0xffffa1, input_port_0_r },
 	{ 0xffffa2, 0xffffa3, input_port_1_r },

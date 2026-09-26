@@ -73,8 +73,26 @@ READ_HANDLER( bloodbro_sound_r )
 
 /**** Blood Bros Memory Map  *******************************************/
 
+#ifdef MAMEGO
+/* Speed-up (mame-go): the main loop waits for the vblank IRQ with
+ * "0988: btst #7,$8004C / beq 0988" (6 million passes in 1500 frames).
+ * When the read comes from that loop and the bit is still clear, stop the
+ * 68000 until the interrupt. $8004C is even: the high byte of the word. */
+static READ_HANDLER( bloodbro_speedup_r )
+{
+	unsigned char *RAM = memory_region(REGION_CPU1);
+	int data = READ_WORD(&RAM[0x8004c]);
+	if (!(data & 0x8000) && cpu_getpreviouspc() == 0x000988)
+		cpu_spinuntil_int();
+	return data;
+}
+#endif
+
 static const struct MemoryReadAddress readmem_cpu[] = {
 	{ 0x00000, 0x7ffff, MRA_ROM },
+#ifdef MAMEGO
+	{ 0x8004c, 0x8004d, bloodbro_speedup_r },	/* vblank wait */
+#endif
 	{ 0x80000, 0x8afff, MRA_RAM },
 	{ 0x8b000, 0x8bfff, MRA_RAM },
 	{ 0x8c000, 0x8c3ff, bloodbro_background_r },
