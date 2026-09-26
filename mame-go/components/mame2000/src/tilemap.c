@@ -506,6 +506,19 @@ void tilemap_dispose( struct tilemap *tilemap ){
 
 /***********************************************************************************/
 
+#ifdef MAMEGO
+/* A tile of a cached gfx set (drawgfx.c): the pointer stored when the tile was
+ * fetched may have been evicted since (a palette change redraws every tile
+ * without calling get_tile_info), so look it up again before reading pixels. */
+static INLINE const uint8_t *tile_pen_data( struct cached_tile_info *cached_tile_info ){
+	if( cached_tile_info->gfx && !cached_tile_info->gfx->gfxdata )
+		cached_tile_info->pen_data = mamego_gfx_tile( cached_tile_info->gfx, cached_tile_info->code );
+	return cached_tile_info->pen_data;
+}
+#else
+#define tile_pen_data(c) ((c)->pen_data)
+#endif
+
 static void unregister_pens( struct cached_tile_info *cached_tile_info, int num_pens ){
 	const uint16_t *pal_data = cached_tile_info->pal_data;
 	if( pal_data ){
@@ -520,7 +533,7 @@ static void unregister_pens( struct cached_tile_info *cached_tile_info, int num_
 			palette_decrease_usage_countx(
 				pal_data-Machine->remapped_colortable,
 				num_pens,
-				cached_tile_info->pen_data,
+				tile_pen_data( cached_tile_info ),
 				PALETTE_COLOR_VISIBLE|PALETTE_COLOR_CACHED );
 		}
 		cached_tile_info->pal_data = NULL;
@@ -539,7 +552,7 @@ static void register_pens( struct cached_tile_info *cached_tile_info, int num_pe
 		palette_increase_usage_countx(
 			cached_tile_info->pal_data-Machine->remapped_colortable,
 			num_pens,
-			cached_tile_info->pen_data,
+			tile_pen_data( cached_tile_info ),
 			PALETTE_COLOR_VISIBLE|PALETTE_COLOR_CACHED );
 	}
 }
@@ -705,7 +718,7 @@ static void draw_tile(
 	uint32_t tile_width = tilemap->cached_tile_width;
 	uint32_t tile_height = tilemap->cached_tile_height;
 	struct cached_tile_info *cached_tile_info = &tilemap->cached_tile_info[cached_index];
-	const uint8_t *pendata = cached_tile_info->pen_data;
+	const uint8_t *pendata = tile_pen_data( cached_tile_info );
 	const uint16_t *paldata = cached_tile_info->pal_data;
 
 	uint32_t flags = cached_tile_info->flags;
@@ -1041,7 +1054,7 @@ static void render_mask( struct tilemap *tilemap, uint32_t cached_index ){
 	uint32_t tile_height = tilemap->cached_tile_height;
 
 	uint32_t pen_usage = cached_tile_info->pen_usage;
-	const uint8_t *pen_data = cached_tile_info->pen_data;
+	const uint8_t *pen_data = tile_pen_data( cached_tile_info );
 	uint32_t flags = cached_tile_info->flags;
 
 	if( type & TILEMAP_BITMASK ){
@@ -1156,6 +1169,9 @@ static void update_tile_info( struct tilemap *tilemap ){
 			struct cached_tile_info *cached_tile_info = &tilemap->cached_tile_info[cached_index];
 			uint32_t memory_offset = tilemap->cached_index_to_memory_offset[cached_index];
 			unregister_pens( cached_tile_info, num_pens );
+#ifdef MAMEGO
+			tile_info.gfx = NULL; /* drivers not using SET_TILE_INFO set pen_data themselves */
+#endif
 			tilemap->tile_get_info( memory_offset );
 			{
 				uint32_t flags = tile_info.flags;
@@ -1164,6 +1180,10 @@ static void update_tile_info( struct tilemap *tilemap ){
 			cached_tile_info->pen_usage = tile_info.pen_usage;
 			cached_tile_info->pen_data = tile_info.pen_data;
 			cached_tile_info->pal_data = tile_info.pal_data;
+#ifdef MAMEGO
+			cached_tile_info->gfx = tile_info.gfx;
+			cached_tile_info->code = tile_info.code;
+#endif
 			tilemap->priority[cached_index] = tile_info.priority;
 			register_pens( cached_tile_info, num_pens );
 			dirty_pixels[cached_index] = 1;

@@ -400,6 +400,9 @@ int init_machine(void)
 		goto out_free;
 
 	if (gamedrv->driver_init) (*gamedrv->driver_init)();
+#ifdef MAMEGO
+	mamego_regions_to_flash();
+#endif
 
 	return 0;
 
@@ -432,7 +435,7 @@ void shutdown_machine(void)
 	for (i = 0;i < MAX_MEMORY_REGIONS;i++)
 	{
 		if (Machine->memory_region[i])
-			free(Machine->memory_region[i]);
+			MAMEGO_REGION_FREE(i);
 		Machine->memory_region[i] = 0;
 		Machine->memory_region_length[i] = 0;
 		Machine->memory_region_type[i] = 0;
@@ -806,9 +809,12 @@ static int run_machine_init(void)
 			{
 				int i;
 				/* invalidate contents to avoid subtle bugs */
+#ifdef MAMEGO
+				if (!mamego_region_flash[region]) /* flash is read-only */
+#endif
 				for (i = 0; i < memory_region_length(region); i++)
 					memory_region(region)[i] = rand();
-				free(Machine->memory_region[region]);
+				MAMEGO_REGION_FREE(region);
 				Machine->memory_region[region] = 0;
 			}
 		}

@@ -36,3 +36,18 @@ Local changes:
   to the original run for 60 frames, then drifts at the scheduler's 1-second
   renormalisation (some absolute time outside the timer list is not saved
   yet) -- the game goes on correctly, only its random numbers differ.
+- **Tile cache** (`src/drawgfx.c`, `GFX_TILE()` / `GFX_TILES()` in
+  `src/drawgfx.h`): a gfx set larger than 256 KB decoded keeps its raw ROM
+  and decodes tiles on demand into 192 KB of slots; tiles used in the
+  current frame are never evicted. Tilemaps keep set + code per tile and
+  look the pixels up again (`tile_pen_data()` in `src/tilemap.c`);
+  multi-tile sprites get a contiguous run from a per-frame arena. Same
+  frames as the fully decoded build (checked hash by hash on Blood Bros.,
+  Aero Fighters, Pac-Man, 1943).
+- **ROM regions in flash** (`mamego_regions_to_flash()` in `src/common.c`,
+  called after driver init in `src/mame.c`): gfx and sound-sample regions
+  of 256 KB and more move to the `mamerom` flash partition, memory-mapped
+  (`mamego_flash_store()` in `main/main.c`, rewritten only when the content
+  differs). Regions in flash are never written or freed
+  (`MAMEGO_REGION_FREE`). The PC test build maps them read-only to catch
+  a driver writing to them.

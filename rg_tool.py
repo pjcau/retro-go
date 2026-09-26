@@ -17,6 +17,7 @@ DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM3")
 DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis fmsx duke3d-go retro-extra mame-go")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
+MAMEROM_SIZE = 4 * 1024 * 1024  # data partition "mamerom", see build_image()
 PROJECT_APPS = {
   # Project name  Type, SubType, Size
   'launcher':     [0, 16, 1179648],
@@ -93,6 +94,10 @@ def build_image(apps, output_file, img_type="odroid", fatsize=0, target="unknown
             subtype = ota_next_id
             ota_next_id += 1
         args += [str(part[0]), str(subtype), str(part[2]), app, os.path.join(app, "build", app + ".bin")]
+    if "mame-go" in apps:
+        # mame-go serves big read-only ROM regions (gfx, sound samples) from here,
+        # memory-mapped, instead of PSRAM (mame-go/main/main.c mamego_flash_store)
+        args += ["1", "64", str(MAMEROM_SIZE), "mamerom", "none"]
     if fatsize:
         args += ["1", "129", fatsize, "vfs", "none"]
 

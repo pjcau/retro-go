@@ -54,6 +54,18 @@ struct GfxElement
 	unsigned char *gfxdata;	/* pixel data */
 	int line_modulo;	/* amount to add to get to the next line (usually = width) */
 	int char_modulo;	/* = line_modulo * height */
+#ifdef MAMEGO
+	/* Tile cache (mame-go): a large set keeps its raw ROM and decodes tiles on
+	 * demand instead of expanding every tile to 8 bpp (gfxdata is then NULL).
+	 * Read tiles through GFX_TILE(), never gfxdata. */
+	const unsigned char *cache_src;		/* raw ROM data */
+	struct GfxLayout *cache_layout;		/* copy of the layout */
+	unsigned short *cache_slot_of;		/* tile -> slot + 1, 0 = not decoded */
+	int *cache_code_of;					/* slot -> tile, -1 = free */
+	unsigned int *cache_frame;			/* slot -> frame it was last used in */
+	unsigned char *cache_data;			/* the slots, char_modulo bytes each */
+	int cache_slots, cache_hand;
+#endif
 }
 #ifndef _MSC_VER
 __attribute__ ((__aligned__ (32)))
@@ -119,6 +131,20 @@ extern plot_box_proc plot_box;
 
 
 void decodechar(struct GfxElement *gfx,int num,const unsigned char *src,const struct GfxLayout *gl);
+#ifdef MAMEGO
+unsigned char *mamego_gfx_tile(const struct GfxElement *gfx, int code);
+unsigned char *mamego_gfx_tiles(const struct GfxElement *gfx, int code, int count);
+extern unsigned int mamego_gfx_frame;	/* tiles used in this frame are never evicted */
+#define GFX_TILE(gfx, code) ((gfx)->gfxdata ? (gfx)->gfxdata + (code) * (gfx)->char_modulo : mamego_gfx_tile((gfx), (code)))
+#else
+#define GFX_TILE(gfx, code) ((gfx)->gfxdata + (code) * (gfx)->char_modulo)
+#endif
+/* count consecutive tiles in one block (multi-tile sprites) */
+#ifdef MAMEGO
+#define GFX_TILES(gfx, code, count) mamego_gfx_tiles((gfx), (code), (count))
+#else
+#define GFX_TILES(gfx, code, count) GFX_TILE(gfx, code)
+#endif
 struct GfxElement *decodegfx(const unsigned char *src,const struct GfxLayout *gl);
 void set_pixel_functions(void);
 void freegfx(struct GfxElement *gfx);

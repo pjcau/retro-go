@@ -54,7 +54,8 @@ static INLINE int readbit(const uint8_t *src,int bitnum)
 }
 
 
-void decodechar(struct GfxElement *gfx,int num,const uint8_t *src,const struct GfxLayout *gl)
+/* decode tile num of src into dp (char_modulo bytes), and its pen_usage */
+static void decodechar_into(struct GfxElement *gfx,int num,const uint8_t *src,const struct GfxLayout *gl,uint8_t *dest)
 {
 	int plane,x,y;
 	uint8_t *dp;
@@ -62,7 +63,7 @@ void decodechar(struct GfxElement *gfx,int num,const uint8_t *src,const struct G
 
 
 	offs = num * gl->charincrement;
-	dp = gfx->gfxdata + num * gfx->char_modulo;
+	dp = dest;
 	for (y = 0;y < gfx->height;y++)
 	{
 		int yoffs;
@@ -110,7 +111,7 @@ void decodechar(struct GfxElement *gfx,int num,const uint8_t *src,const struct G
 		/* fill the pen_usage array with info on the used pens */
 		gfx->pen_usage[num] = 0;
 
-		dp = gfx->gfxdata + num * gfx->char_modulo;
+		dp = dest;
 		for (y = 0;y < gfx->height;y++)
 		{
 			for (x = 0;x < gfx->width;x++)
@@ -121,6 +122,141 @@ void decodechar(struct GfxElement *gfx,int num,const uint8_t *src,const struct G
 		}
 	}
 }
+
+
+void decodechar(struct GfxElement *gfx,int num,const uint8_t *src,const struct GfxLayout *gl)
+{
+#ifdef MAMEGO
+	if (!gfx->gfxdata)
+	{
+		/* a cached set: drop the stale copy, decode it again on next use */
+		int slot = gfx->cache_slot_of[num];
+		if (slot)
+		{
+			gfx->cache_code_of[slot - 1] = -1;
+			gfx->cache_slot_of[num] = 0;
+		}
+		return;
+	}
+#endif
+	decodechar_into(gfx,num,src,gl,gfx->gfxdata + num * gfx->char_modulo);
+}
+
+
+#ifdef MAMEGO
+/* Sets larger than this keep their raw ROM and a cache of decoded tiles. The
+ * 16-bit boards decode 4 bpp tiles to 8 bpp: Aero Fighters 7 MB, Blood Bros
+ * 4.3 MB, beyond the free PSRAM once the program ROMs are loaded. */
+#ifndef MAMEGO_GFX_CACHE_MIN
+#define MAMEGO_GFX_CACHE_MIN	(256 * 1024)	/* decoded bytes */
+#endif
+#define MAMEGO_GFX_CACHE_BYTES	(192 * 1024)	/* slots per cached set */
+
+unsigned int mamego_gfx_frame;
+
+static int mamego_gfx_cache_init(struct GfxElement *gfx,const uint8_t *src,const struct GfxLayout *gl)
+{
+	int c, i, slots = MAMEGO_GFX_CACHE_BYTES / gfx->char_modulo;
+	uint8_t *tmp;
+
+	if (slots > (int)gl->total) slots = gl->total;
+	if (slots > 65535) slots = 65535;
+	gfx->cache_src = src;
+	gfx->cache_layout = malloc(sizeof(*gl));
+	gfx->cache_slot_of = calloc(gl->total, sizeof(unsigned short));
+	gfx->cache_code_of = malloc(slots * sizeof(int));
+	gfx->cache_frame = calloc(slots, sizeof(unsigned int));
+	gfx->cache_data = malloc(slots * gfx->char_modulo);
+	tmp = malloc(gfx->char_modulo);
+	if (!gfx->cache_layout || !gfx->cache_slot_of || !gfx->cache_code_of || !gfx->cache_frame || !gfx->cache_data || !tmp)
+	{
+		free(tmp);
+		return 0;
+	}
+	memcpy(gfx->cache_layout, gl, sizeof(*gl));
+	for (i = 0; i < slots; i++)
+		gfx->cache_code_of[i] = -1;
+	gfx->cache_slots = slots;
+	gfx->cache_hand = 0;
+
+	/* pen_usage (transparency shortcuts) still needs every tile once */
+	for (c = 0; c < gl->total; c++)
+		decodechar_into(gfx,c,src,gl,tmp);
+	free(tmp);
+
+	/* the raw ROM must outlive the decode: keep its region */
+	for (i = 0; i < MAX_MEMORY_REGIONS; i++)
+		if (Machine->memory_region[i] && src >= Machine->memory_region[i] &&
+			src < Machine->memory_region[i] + Machine->memory_region_length[i])
+			Machine->memory_region_type[i] &= ~REGIONFLAG_DISPOSE;
+
+	logerror("mamego: gfx %dx%d x%d cached in %d slots\n", gfx->width, gfx->height, gl->total, slots);
+	return 1;
+}
+
+unsigned char *mamego_gfx_tile(const struct GfxElement *cgfx, int code)
+{
+	struct GfxElement *gfx = (struct GfxElement *)cgfx;
+	int slot = gfx->cache_slot_of[code], tries;
+	uint8_t *dp;
+
+	if (slot)
+	{
+		gfx->cache_frame[slot - 1] = mamego_gfx_frame;
+		return gfx->cache_data + (slot - 1) * gfx->char_modulo;
+	}
+	/* clock hand: skip slots used in this frame, their pointers may still be
+	 * held by a tilemap or the sprite list; if all of them are, take one anyway */
+	for (tries = 0; tries < gfx->cache_slots; tries++)
+	{
+		slot = gfx->cache_hand;
+		gfx->cache_hand = (slot + 1) % gfx->cache_slots;
+		if (gfx->cache_code_of[slot] < 0 || gfx->cache_frame[slot] != mamego_gfx_frame)
+			break;
+	}
+	if (gfx->cache_code_of[slot] >= 0)
+		gfx->cache_slot_of[gfx->cache_code_of[slot]] = 0;
+	dp = gfx->cache_data + slot * gfx->char_modulo;
+	decodechar_into(gfx,code,gfx->cache_src,gfx->cache_layout,dp);
+	gfx->cache_code_of[slot] = code;
+	gfx->cache_slot_of[code] = slot + 1;
+	gfx->cache_frame[slot] = mamego_gfx_frame;
+	return dp;
+}
+
+/* count consecutive tiles in one contiguous block, for the sprite manager's
+ * multi-tile sprites (it walks pen_data across tile boundaries). Decoded into
+ * an arena emptied every frame; if a frame needs more, only the first tile of
+ * a run is decoded and the rest of that sprite shows stale pixels. */
+#define MAMEGO_GFX_RUN_BYTES	(256 * 1024)
+
+unsigned char *mamego_gfx_tiles(const struct GfxElement *cgfx, int code, int count)
+{
+	static uint8_t *arena;
+	static size_t used;
+	static unsigned int frame;
+	struct GfxElement *gfx = (struct GfxElement *)cgfx;
+	size_t need = (size_t)count * gfx->char_modulo;
+	uint8_t *dp;
+	int i;
+
+	if (gfx->gfxdata)
+		return gfx->gfxdata + code * gfx->char_modulo;
+	if (count <= 1 || code + count > (int)gfx->total_elements)
+		return mamego_gfx_tile(gfx, code);
+	if (!arena && !(arena = malloc(MAMEGO_GFX_RUN_BYTES)))
+		return mamego_gfx_tile(gfx, code);
+	if (frame != mamego_gfx_frame)
+		frame = mamego_gfx_frame, used = 0;
+	if (used + need > MAMEGO_GFX_RUN_BYTES)
+		return mamego_gfx_tile(gfx, code);
+	dp = arena + used;
+	used += need;
+	for (i = 0; i < count; i++)
+		decodechar_into(gfx,code + i,gfx->cache_src,gfx->cache_layout,dp + i * gfx->char_modulo);
+	return dp;
+}
+#endif
 
 
 struct GfxElement *decodegfx(const uint8_t *src,const struct GfxLayout *gl)
@@ -146,12 +282,6 @@ struct GfxElement *decodegfx(const uint8_t *src,const struct GfxLayout *gl)
 
 	gfx->line_modulo = gfx->width;
 	gfx->char_modulo = gfx->line_modulo * gfx->height;
-	if ((gfx->gfxdata = (unsigned char *) malloc(gl->total * gfx->char_modulo * sizeof(uint8_t))) == 0)
-	{
-		free(gfx);
-		return 0;
-	}
-
 	gfx->total_elements = gl->total;
 	gfx->color_granularity = 1 << gl->planes;
 
@@ -159,6 +289,22 @@ struct GfxElement *decodegfx(const uint8_t *src,const struct GfxLayout *gl)
 	if (gfx->color_granularity <= 32)	/* can't handle more than 32 pens */
 		gfx->pen_usage = (unsigned int *) malloc(gfx->total_elements * sizeof(int));
 		/* no need to check for failure, the code can work without pen_usage */
+
+#ifdef MAMEGO
+	if ((size_t)gl->total * gfx->char_modulo > MAMEGO_GFX_CACHE_MIN)
+	{
+		if (mamego_gfx_cache_init(gfx,src,gl))
+			return gfx;
+		freegfx(gfx);
+		return 0;
+	}
+#endif
+	if ((gfx->gfxdata = (unsigned char *) malloc(gl->total * gfx->char_modulo * sizeof(uint8_t))) == 0)
+	{
+		free(gfx->pen_usage);
+		free(gfx);
+		return 0;
+	}
 
 	for (c = 0;c < gl->total;c++)
 		decodechar(gfx,c,src,gl);
@@ -173,6 +319,13 @@ void freegfx(struct GfxElement *gfx)
 	{
 		free(gfx->pen_usage);
 		free(gfx->gfxdata);
+#ifdef MAMEGO
+		free(gfx->cache_layout);
+		free(gfx->cache_slot_of);
+		free(gfx->cache_code_of);
+		free(gfx->cache_frame);
+		free(gfx->cache_data);
+#endif
 		free(gfx);
 	}
 }
@@ -1280,6 +1433,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 		{
 			const uint16_t *pal = &gfx->colortable[gfx->color_granularity * (color % gfx->total_colors)]; /* ASG 980209 */
 			int source_base = (code % gfx->total_elements) * gfx->height;
+			const uint8_t *tile_base = GFX_TILE(gfx, code % gfx->total_elements);
 
 			int sprite_screen_height = (scaley*gfx->height+0x8000)>>16;
 			int sprite_screen_width = (scalex*gfx->width+0x8000)>>16;
@@ -1352,7 +1506,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1376,7 +1530,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1399,7 +1553,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1423,7 +1577,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1446,7 +1600,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1470,7 +1624,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1494,7 +1648,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1518,7 +1672,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1541,7 +1695,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1575,7 +1729,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1609,7 +1763,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1643,7 +1797,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint8_t *dest = dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1680,6 +1834,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 		{
 			const uint16_t *pal = &gfx->colortable[gfx->color_granularity * (color % gfx->total_colors)]; /* ASG 980209 */
 			int source_base = (code % gfx->total_elements) * gfx->height;
+			const uint8_t *tile_base = GFX_TILE(gfx, code % gfx->total_elements);
 
 			int sprite_screen_height = (scaley*gfx->height+0x8000)>>16;
 			int sprite_screen_width = (scalex*gfx->width+0x8000)>>16;
@@ -1752,7 +1907,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1776,7 +1931,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1799,7 +1954,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1823,7 +1978,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1846,7 +2001,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1870,7 +2025,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1894,7 +2049,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1918,7 +2073,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -1941,7 +2096,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -1975,7 +2130,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -2009,7 +2164,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 							uint8_t *pri = pri_buffer->line[y];
 
@@ -2043,7 +2198,7 @@ static INLINE void common_drawgfxzoom( struct osd_bitmap *dest_bmp,const struct 
 					{
 						for( y=sy; y<ey; y++ )
 						{
-							uint8_t *source = gfx->gfxdata + (source_base+(y_index>>16)) * gfx->line_modulo;
+							const uint8_t *source = tile_base + (y_index>>16) * gfx->line_modulo;
 							uint16_t *dest = (uint16_t *)dest_bmp->line[y];
 
 							int x, x_index = x_index_base;
@@ -4122,7 +4277,7 @@ DECLARE(drawgfx_core,(
 	osd_mark_dirty (sx,sy,ex,ey,0);	/* ASG 971011 */
 
 	{
-		uint8_t *sd = gfx->gfxdata + code * gfx->char_modulo;		/* source data */
+		const uint8_t *sd = GFX_TILE(gfx, code);		/* source data */
 		int sw = ex-sx+1;										/* source width */
 		int sh = ey-sy+1;										/* source height */
 		int sm = gfx->line_modulo;								/* source modulo */
