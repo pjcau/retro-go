@@ -2,6 +2,7 @@
 
 // 320x200 8-bit frame, presented through a retro-go palette surface.
 static rg_surface_t *update;
+static uint8_t *drawbuf; /* the game's frame, see SDL_CreateRGBSurface */
 
 SDL_Surface* primary_surface;
 
@@ -69,6 +70,9 @@ int SDL_InitSubSystem(Uint32 flags)
     {
         if (!update)
             update = rg_surface_create(320, 200, RG_PIXEL_PAL565_BE, MEM_FAST);
+        /* allocated here, before the game's cache takes the rest of the PSRAM */
+        if (!drawbuf)
+            drawbuf = rg_alloc(320 * 200, MEM_SLOW);
         SDL_CreateRGBSurface(0, 320, 200, 8, 0,0,0,0);
     }
     if( flags &= SDL_INIT_AUDIO)
@@ -101,9 +105,13 @@ SDL_Surface *SDL_CreateRGBSurface(Uint32 flags, int width, int height, int depth
     surface->pitch = width*(depth/8);
     surface->clip_rect = rect;
     surface->refcount = 1;
-    if(primary_surface == NULL && update && width == 320 && height == 200)
+    if(primary_surface == NULL && drawbuf && width == 320 && height == 200)
     {
-        surface->pixels = update->data; // draw straight into the display surface
+        /* The game draws in its own buffer: rg_display_submit() is asynchronous,
+         * and drawing straight into the surface being sent to the panel raced
+         * the display task (menu entries missing, text cut along a slanted
+         * line). SDL_Flip copies it once the previous frame is out. */
+        surface->pixels = drawbuf;
     	primary_surface = surface;
     }
     else
@@ -160,7 +168,7 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags)
 
 void SDL_FreeSurface(SDL_Surface *surface)
 {
-    if (update && surface->pixels != update->data)
+    if (surface->pixels != drawbuf)
         free(surface->pixels);
     free(surface->format);
     surface->refcount = 0;
@@ -173,9 +181,8 @@ void SDL_QuitSubSystem(Uint32 flags)
 
 int SDL_Flip(SDL_Surface *screen)
 {
-    if (screen->pixels != update->data)
-        memcpy(update->data, screen->pixels, 320 * 200);
-    rg_display_sync(true);
+    rg_display_sync(true); /* the previous frame has left update->data */
+    memcpy(update->data, screen->pixels, 320 * 200);
     rg_display_submit(update, 0);
     rg_system_tick(0);
 	return 0;
