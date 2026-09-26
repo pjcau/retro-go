@@ -10,7 +10,10 @@
 #include <psg.h>
 
 #undef AUDIO_SAMPLE_RATE
-#define AUDIO_SAMPLE_RATE 22050
+/* 32000 like the other apps: the PDM sink derives its DAC-mode clocks from
+ * rate / 100, and at 22050 the sound came out crackling and too loud (same as
+ * mame-go before it moved to 32000) */
+#define AUDIO_SAMPLE_RATE 32000
 
 static bool emulationPaused = false; // This should probably be a mutex
 static int overscan = false;
