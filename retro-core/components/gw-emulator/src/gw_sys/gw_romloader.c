@@ -333,11 +333,6 @@ bool gw_romloader()
 {
    printf("gw_romloader\n");
 
-   bool rom_status = gw_romloader_rom2ram();
-
-   //debug
-   if (!rom_status)
-      assert(false);
-
-   return rom_status;
+   /* no assert on failure: gw_main() tells the user the file is not a .gw ROM */
+   return gw_romloader_rom2ram();
 }
