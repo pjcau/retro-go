@@ -698,3 +698,16 @@ int AY8910_sh_start(const struct MachineSound *msound)
 	}
 	return 0;
 }
+
+#ifdef MAMEGO
+/* mame-go save state: the PSG has no pointers but its port handlers (code,
+ * valid on the build that wrote the state) */
+size_t AY8910_state(int chip, unsigned char *buf, size_t size, int mode)
+{
+	if (mode && size < sizeof(struct AY8910))
+		return 0;
+	if (mode == 1) memcpy(buf, &AYPSG[chip], sizeof(struct AY8910));
+	else if (mode == 2) memcpy(&AYPSG[chip], buf, sizeof(struct AY8910));
+	return sizeof(struct AY8910);
+}
+#endif

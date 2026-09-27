@@ -268,10 +268,23 @@ unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t 
     return (unsigned char *)map + off;
 }
 
+/* State buffer: the heap, or on a Neo Geo game (PSRAM nearly all given to
+   the sprite page cache) the page cache itself, borrowed between frames. */
+static void *state_buffer(size_t size, bool *borrowed)
+{
+    extern void *neospr_borrow(size_t size);
+    void *buf = size ? malloc(size) : NULL;
+    *borrowed = false;
+    if (!buf && size && (buf = neospr_borrow(size)))
+        *borrowed = true;
+    return buf;
+}
+
 static bool save_state_handler(const char *filename)
 {
     size_t size = retro_serialize_size();
-    void *buf = size ? malloc(size) : NULL;
+    bool borrowed;
+    void *buf = state_buffer(size, &borrowed);
     bool ok = buf && retro_serialize(buf, size);
     if (ok)
     {
@@ -280,19 +293,22 @@ static bool save_state_handler(const char *filename)
         if (fp)
             fclose(fp);
     }
-    free(buf);
+    if (!borrowed)
+        free(buf);
     return ok;
 }
 
 static bool load_state_handler(const char *filename)
 {
     size_t size = retro_serialize_size();
-    void *buf = size ? malloc(size) : NULL;
+    bool borrowed;
+    void *buf = state_buffer(size, &borrowed);
     FILE *fp = fopen(filename, "rb");
     bool ok = buf && fp && fread(buf, 1, size, fp) == size && fgetc(fp) == EOF && retro_unserialize(buf, size);
     if (fp)
         fclose(fp);
-    free(buf);
+    if (!borrowed)
+        free(buf);
     return ok;
 }
 

@@ -2948,6 +2948,10 @@ static unsigned Dummy_dasm(char *buffer, unsigned pc)
 
 #define MAMEGO_STATE_MAGIC 0x3153474d /* "MGS1" */
 
+/* set by a driver init whose board keeps state outside the CPU regions
+   (Neo Geo: work/video/palette RAM, latches, YM2610); 0 size, 1 save, 2 load */
+size_t (*mamego_driver_state)(unsigned char *buf, size_t size, int mode);
+
 static size_t mamego_state_walk(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
 {
 	size_t pos = 0;
@@ -3022,10 +3026,23 @@ static size_t mamego_state_walk(unsigned char *buf, size_t size, int mode) /* 0 
 	for (i = 0; i < MAX_MEMORY_REGIONS; i++)
 	{
 		int type = Machine->memory_region_type[i] & ~REGIONFLAG_MASK;
-		if (type >= REGION_CPU1 && type <= REGION_CPU8 && Machine->memory_region[i])
-			MG_IO(Machine->memory_region[i], Machine->memory_region_length[i]);
+		extern unsigned char mamego_region_flash[];
+		if (!(type >= REGION_CPU1 && type <= REGION_CPU8 && Machine->memory_region[i]))
+			continue;
+		/* a region served from flash is read-only ROM; with a driver hook the
+		   main CPU region is its program ROM, the RAM being elsewhere */
+		if (mamego_region_flash[i] || (mamego_driver_state && type == REGION_CPU1))
+			continue;
+		MG_IO(Machine->memory_region[i], Machine->memory_region_length[i]);
 	}
 #undef MG_IO
+
+	if (mamego_driver_state)
+	{
+		size_t len = mamego_driver_state(NULL, 0, 0);
+		if (mode && (pos + len > size || !mamego_driver_state(buf + pos, len, mode))) return 0;
+		pos += len;
+	}
 
 	if (mode == 2)
 	{

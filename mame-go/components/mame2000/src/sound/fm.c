@@ -2485,6 +2485,76 @@ void YM2610_offload(int on)
 	ymf_head = ymf_tail = 0;
 }
 
+/* mame-go save state for YM2610 chip 0 (Neo Geo): the whole chip struct plus
+ * the writes queued for core 1. Pointers inside the struct point into the
+ * struct itself, into TL_TABLE (both malloc'd, relocated here), into static
+ * tables or code (valid: a state only loads on the build that wrote it), or
+ * at the sample ROMs (kept from the running chip). */
+size_t YM2610_state(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
+{
+	size_t len = 2 * sizeof(void *) + sizeof(YM2610) + sizeof(int) + sizeof(ymq[0]);
+	YM2610 *F = FM2610;
+	if (!mode)
+		return len;
+	if (!F || size < len)
+		return 0;
+	ym_wait(); /* core 1 done with the chip */
+	if (mode == 1)
+	{
+		void *bases[2] = { F, TL_TABLE };
+		memcpy(buf, bases, sizeof(bases));
+		memcpy(buf + sizeof(bases), F, sizeof(YM2610));
+		memcpy(buf + sizeof(bases) + sizeof(YM2610), &ymq_n[ymq_fill], sizeof(int));
+		memcpy(buf + sizeof(bases) + sizeof(YM2610) + sizeof(int), ymq[ymq_fill], sizeof(ymq[0]));
+	}
+	else
+	{
+		void *bases[2];
+		uint8_t *pcmbuf = F->pcmbuf, *dmem = F->deltaT.memory;
+		uint32_t pcm_size = F->pcm_size;
+		int dsize = F->deltaT.memory_size;
+		intptr_t self, tl;
+		int c, s;
+		memcpy(bases, buf, sizeof(bases));
+		self = (intptr_t)F - (intptr_t)bases[0];
+		tl = (intptr_t)TL_TABLE - (intptr_t)bases[1];
+		memcpy(F, buf + sizeof(bases), sizeof(YM2610));
+#define IN(p, base, n) ((uintptr_t)(p) >= (uintptr_t)(base) && (uintptr_t)(p) < (uintptr_t)(base) + (n))
+#define RELOC(p) do { \
+		if (IN(p, bases[0], sizeof(YM2610))) (p) = (void *)((intptr_t)(p) + self); \
+		else if (IN(p, bases[1], 2 * TL_MAX * sizeof(int))) (p) = (void *)((intptr_t)(p) + tl); } while (0)
+		RELOC(F->OPN.P_CH);
+		for (c = 0; c < 6; c++)
+		{
+			FM_CH *CH = &F->CH[c];
+			for (s = 0; s < 4; s++)
+			{
+				RELOC(CH->SLOT[s].DT);
+				RELOC(CH->SLOT[s].AR);
+				RELOC(CH->SLOT[s].DR);
+				RELOC(CH->SLOT[s].SR);
+				RELOC(CH->SLOT[s].RR);
+			}
+			RELOC(CH->connect1);
+			RELOC(CH->connect2);
+			RELOC(CH->connect3);
+			RELOC(CH->connect4);
+		}
+		RELOC(F->adpcmTL);
+#undef RELOC
+#undef IN
+		F->pcmbuf = pcmbuf;
+		F->pcm_size = pcm_size;
+		F->deltaT.memory = dmem;
+		F->deltaT.memory_size = dsize;
+		/* samples already rendered belong to the old timeline */
+		ymf_head = ymf_tail = 0;
+		memcpy(&ymq_n[ymq_fill], buf + sizeof(bases) + sizeof(YM2610), sizeof(int));
+		memcpy(ymq[ymq_fill], buf + sizeof(bases) + sizeof(YM2610) + sizeof(int), sizeof(ymq[0]));
+	}
+	return len;
+}
+
 /* core 0, frame end: previous frame's samples out, this frame's job in */
 static void ym2610_offload_update(int num, int16_t **buffer, int length)
 {

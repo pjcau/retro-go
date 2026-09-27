@@ -23,6 +23,16 @@ static void soundlatch_callback(int param)
 	latch = param;
 }
 
+#ifdef MAMEGO
+/* mame-go save state: 1 reads the latch into *value, 2 restores it */
+int soundlatch_state(int *value, int mode)
+{
+	if (mode == 1) *value = latch;
+	else if (mode == 2) latch = *value;
+	return 1;
+}
+#endif
+
 WRITE_HANDLER( soundlatch_w )
 {
 	/* make all the CPUs synchronize, and only AFTER that write the new command to the latch */

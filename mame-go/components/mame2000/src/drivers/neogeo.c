@@ -265,20 +265,21 @@ unsigned int neogeo_frame_counter_speed=4;
 
 static int irq2_enable;
 
+static int vblank_fc=0;     /* animation counter divider (file scope: saved in states) */
+
 static int neogeo_interrupt(void)
 {
-	static int fc=0;
 
 
 	/* Add a timer tick to the pd4990a */
 	addretrace();
 
 	/* Animation counter, 1 once per frame is too fast, every 4 seems good */
-        if  (fc>=neogeo_frame_counter_speed) {
-                fc=0;
+        if  (vblank_fc>=neogeo_frame_counter_speed) {
+                vblank_fc=0;
                 neogeo_frame_counter++;
         }
-        fc++;
+        vblank_fc++;
 
 	if (irq2_enable) cpu_cause_interrupt(0,2);
 
@@ -289,11 +290,12 @@ static int neogeo_interrupt(void)
 static int irq2enable,irq2start,irq2repeat=1000,irq2control;
 static int lastirq2line = 1000;
 
+static int raster_fc=0;           /* raster interrupt state (file scope: saved in states) */
+static int raster_enable=1;
+
 static int neogeo_raster_interrupt(void)
 {
-	static int fc=0;
 	int line = RASTER_LINES - cpu_getiloops();
-static int raster_enable=1;
 
 	if (line == RASTER_LINES)	/* vblank */
 	{
@@ -305,12 +307,12 @@ static int raster_enable=1;
 		addretrace();
 
 		/* Animation counter, 1 once per frame is too fast, every 4 seems good */
-		if  (fc >= neogeo_frame_counter_speed)
+		if  (raster_fc >= neogeo_frame_counter_speed)
 		{
-			fc=0;
+			raster_fc=0;
 			neogeo_frame_counter++;
 		}
-		fc++;
+		raster_fc++;
 
 		if (osd_skip_this_frame()==0)
 			neogeo_vh_raster_partial_refresh(Machine->scrbitmap,line-RASTER_VBLANK_END+FIRST_VISIBLE_LINE-1);
@@ -568,23 +570,24 @@ WRITE_HANDLER( neo_control_w )
 		irq2repeat_limit = 29;
 }
 
+static int irq2pos_value; /* file scope: saved in states */
+
 static WRITE_HANDLER( neo_irq2pos_w )
 {
-	static int value;
 	int line;
 
 	if (offset)
 	{
-		value = (value & 0xffff0000) | data;
+		irq2pos_value = (irq2pos_value & 0xffff0000) | data;
 		if (neogeo_irq2type) return;
 	}
 	else
 	{
-		value = (value & 0x0000ffff) | (data << 16);
+		irq2pos_value = (irq2pos_value & 0x0000ffff) | (data << 16);
 		if (!neogeo_irq2type) return;
 	}
 
-	line = value / 0x180 + 1;
+	line = irq2pos_value / 0x180 + 1;
 	if (line <= irq2repeat_limit) irq2repeat = line;
 	/* ugly kludge to align irq2start in all games */
 	else irq2start = line + (neogeo_irq2type);
@@ -691,9 +694,12 @@ static const struct MemoryWriteAddress sound_writemem[] =
 };
 
 
+/* Z80 ROM bank offsets, as set by init_neogeo() until the game switches them
+   (file scope: saved in states) */
+static int bank[4] = { 0x08000, 0x0c000, 0x0e000, 0x0f000 };
+
 static READ_HANDLER( z80_port_r )
 {
-	static int bank[4];
 
 
 #if 0
@@ -803,6 +809,70 @@ static WRITE_HANDLER( z80_port_w )
 			break;
 	}
 }
+
+#ifdef MAMEGO
+/* mame-go save state, Neo Geo part (called by mamego_state_walk() in
+ * cpuintrf.c): everything the board keeps outside the CPU regions - work
+ * RAM, video RAM, both palette banks, backup RAM, memory card, the driver's
+ * latches and IRQ2 raster state, the calendar chip, the bank offsets of both
+ * CPUs, and the YM2610. The program ROM stays out (flash, read-only). */
+size_t neogeo_mamego_state(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
+{
+	extern size_t YM2610_mamego_state(unsigned char *buf, size_t size, int mode);
+	extern int soundlatch_state(int *value, int mode);
+	size_t pos = 0, ym;
+	int bank4 = cpu_bankbase[4] ? (int)(cpu_bankbase[4] - memory_region(REGION_CPU1)) : 0x100000;
+	int pal = palno, latch = 0;
+#define NG_IO(ptr, len) do { \
+		size_t _l = (len); \
+		if (mode && pos + _l > size) return 0; \
+		if (mode == 1) memcpy(buf + pos, (ptr), _l); \
+		else if (mode == 2) memcpy((ptr), buf + pos, _l); \
+		pos += _l; } while (0)
+#define NG_V(v) NG_IO(&(v), sizeof(v))
+
+	if (mode == 1)
+		soundlatch_state(&latch, 1);
+	NG_IO(neogeo_ram, 0x10000);
+	NG_IO(vidram, 0x10c00);
+	NG_IO(pal_bank1, 0x2000);
+	NG_IO(pal_bank2, 0x2000);
+	NG_IO(neogeo_sram, 0x10000);
+	NG_IO(neogeo_memcard, 0x800);
+	NG_V(pal); NG_V(modulo); NG_V(where); NG_V(fix_bank);
+	NG_V(neogeo_frame_counter); NG_V(irq2_enable);
+	NG_V(irq2enable); NG_V(irq2start); NG_V(irq2repeat); NG_V(irq2control);
+	NG_V(lastirq2line); NG_V(raster_enable); NG_V(raster_fc); NG_V(vblank_fc); NG_V(irq2pos_value); NG_V(irq2repeat_limit);
+	NG_V(pending_command); NG_V(result_code); NG_V(ts);
+	NG_V(sram_locked); NG_V(prot_data);
+	NG_V(mcd_action); NG_V(mcd_number); NG_V(memcard_status); NG_V(memcard_number);
+	NG_V(seconds); NG_V(minutes); NG_V(hours); NG_V(days); NG_V(month); NG_V(year);
+	NG_V(weekday); NG_V(retraces); NG_V(coinflip); NG_V(outputbit); NG_V(bitno);
+	NG_V(latch); NG_V(bank4); NG_IO(bank, sizeof(bank));
+#undef NG_V
+#undef NG_IO
+	ym = YM2610_mamego_state(NULL, 0, 0);
+	if (mode && (pos + ym > size || !YM2610_mamego_state(buf + pos, ym, mode)))
+		return 0;
+	pos += ym;
+
+	if (mode == 2)
+	{
+		unsigned char *RAM = memory_region(REGION_CPU2);
+		soundlatch_state(&latch, 2);
+		palno = pal;
+		neogeo_paletteram = pal ? pal_bank2 : pal_bank1;
+		palette_swap_pending = 1; /* MAME palette rebuilt from the bank */
+		if (bank4 >= 0 && bank4 < memory_region_length(REGION_CPU1))
+			cpu_setbank(4, memory_region(REGION_CPU1) + bank4);
+		cpu_setbank(5, &RAM[bank[0]]);
+		cpu_setbank(6, &RAM[bank[1]]);
+		cpu_setbank(7, &RAM[bank[2]]);
+		cpu_setbank(8, &RAM[bank[3]]);
+	}
+	return pos;
+}
+#endif
 
 static const struct IOReadPort neo_readio[] =
 {

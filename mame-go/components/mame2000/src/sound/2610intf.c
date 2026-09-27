@@ -75,6 +75,25 @@ static void FMTimerInit( void )
 		Timer[i][0] = Timer[i][1] = 0;
 }
 
+#ifdef MAMEGO
+/* mame-go save state (Neo Geo): YM2610 chip, its SSG and the two timer
+ * handles (entries of timer.c's static array, restored by index there) */
+size_t YM2610_state(unsigned char *buf, size_t size, int mode);
+size_t AY8910_state(int chip, unsigned char *buf, size_t size, int mode);
+size_t YM2610_mamego_state(unsigned char *buf, size_t size, int mode)
+{
+	size_t a = YM2610_state(NULL, 0, 0), b = AY8910_state(0, NULL, 0, 0);
+	size_t len = sizeof(Timer[0]) + a + b;
+	if (!mode)
+		return len;
+	if (size < len || !YM2610_state(buf, a, mode) || !AY8910_state(0, buf + a, b, mode))
+		return 0;
+	if (mode == 1) memcpy(buf + a + b, Timer[0], sizeof(Timer[0]));
+	else memcpy(Timer[0], buf + a + b, sizeof(Timer[0]));
+	return len;
+}
+#endif
+
 /* update request from fm.c */
 void YM2610UpdateRequest(int chip)
 {

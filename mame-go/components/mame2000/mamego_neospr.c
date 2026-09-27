@@ -397,6 +397,26 @@ int neospr_start(uint32_t *pen_usage, unsigned total_tiles)
 	return 0;
 }
 
+/* Save states: the page cache is the only block in PSRAM big enough for a
+ * Neo Geo state (0.5 MB) while a game runs. Called between frames, when no
+ * tile pointer is held; the cache is emptied and refills from the card.
+ * NULL when there is no cache or it is too small. */
+void *neospr_borrow(size_t size)
+{
+	uint32_t i;
+	if (!cache || (size_t)cache_slots * NEOSPR_PAGE < size)
+		return NULL;
+	for (i = 0; i < total_pages; i++)
+		page_slot[i] = -1;
+	for (i = 0; i < (uint32_t)cache_slots; i++)
+	{
+		slot_page[i] = -1;
+		slot_used[i] = 0;
+	}
+	next_victim = 0;
+	return cache;
+}
+
 static int pick_victim(void)
 {
 	/* least recently used slot, skipping the ones this frame already uses */
