@@ -45,7 +45,11 @@
 #include <esp_heap_caps.h>
 #endif
 
-#define AUDIO_SAMPLE_RATE 22050
+/* Mix (OPL music + sfx) at 16 kHz, output doubled to 32 kHz, the rate every
+ * app uses (the PDM sink misbehaves at 22050). Mixing at 32 kHz left the sound
+ * task short of time: gaps heard as a fast "wheel" with knocks. */
+#define AUDIO_SAMPLE_RATE 16000
+#define AUDIO_OUTPUT_RATE (AUDIO_SAMPLE_RATE * 2)
 
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / TICRATE + 1)
 #define NUM_MIX_CHANNELS 8
@@ -302,7 +306,11 @@ static void soundTask(void *arg)
                     if (!chan->sfx)
                         continue;
 
-                    size_t pos = (size_t)(chan->pos++ * chan->factor);
+                    /* Linear interpolation: the 11 kHz sfx are resampled to 32 kHz,
+                     * a non-integer ratio; repeating the nearest sample 2 or 3
+                     * times, irregularly, came out as a hiss. */
+                    float fpos = chan->pos++ * chan->factor;
+                    size_t pos = (size_t)fpos;
 
                     if (pos >= chan->sfx->length)
                     {
@@ -310,6 +318,8 @@ static void soundTask(void *arg)
                     }
                     else if ((sample = chan->sfx->samples[pos]))
                     {
+                        int next = pos + 1 < chan->sfx->length ? chan->sfx->samples[pos + 1] : sample;
+                        sample += (int)((next - sample) * (fpos - pos));
                         totalSample += sample - 127;
                         totalSources++;
                     }
@@ -342,7 +352,22 @@ static void soundTask(void *arg)
             memset(mixbuffer, 0, sizeof(mixbuffer));
         }
 
-        rg_audio_submit(mixbuffer, AUDIO_BUFFER_LENGTH);
+        {
+            /* double to AUDIO_OUTPUT_RATE, the second frame halfway to the next */
+            static rg_audio_sample_t out[AUDIO_BUFFER_LENGTH * 2];
+            static int16_t prev_l, prev_r;
+            const int16_t *in = (const int16_t *)mixbuffer;
+            for (int i = 0; i < AUDIO_BUFFER_LENGTH; i++)
+            {
+                int16_t l = in[2 * i], r = in[2 * i + 1];
+                out[2 * i].left = (prev_l + l) / 2;
+                out[2 * i].right = (prev_r + r) / 2;
+                out[2 * i + 1].left = l;
+                out[2 * i + 1].right = r;
+                prev_l = l, prev_r = r;
+            }
+            rg_audio_submit(out, AUDIO_BUFFER_LENGTH * 2);
+        }
     }
 }
 
@@ -541,7 +566,7 @@ void app_main()
         .options = &options_handler,
     };
 
-    app = rg_system_init(AUDIO_SAMPLE_RATE, &handlers, NULL);
+    app = rg_system_init(AUDIO_OUTPUT_RATE, &handlers, NULL);
     rg_system_set_tick_rate(TICRATE);
 
     SCREENWIDTH = RG_MIN(rg_display_get_width(), MAX_SCREENWIDTH);

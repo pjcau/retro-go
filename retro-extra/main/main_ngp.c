@@ -19,7 +19,11 @@
 #define NGP_HEIGHT 152
 #define NGP_CPU_FREQ 6144000
 #define NGP_FPS 60
-#define NGP_SAMPLE_RATE 22050
+/* The sound chip runs at 16 kHz and the output is doubled (interpolated) to
+ * 32 kHz, the rate every app uses (the PDM sink misbehaves at 22050). Running
+ * the chip itself at 32 kHz pushed the CPU to 95-97% on Metal Slug. */
+#define NGP_SAMPLE_RATE 16000
+#define NGP_OUTPUT_RATE (NGP_SAMPLE_RATE * 2)
 
 /* Globals the core expects from the frontend (were in libretro.c) */
 struct ngp_screen *screen;
@@ -105,7 +109,7 @@ void ngp_main(void)
         .event = &event_handler,
     };
 
-    app = rg_system_reinit(NGP_SAMPLE_RATE, &handlers, NULL);
+    app = rg_system_reinit(NGP_OUTPUT_RATE, &handlers, NULL);
 
     updates[0] = rg_surface_create(NGP_WIDTH, NGP_HEIGHT, RG_PIXEL_565_LE, MEM_FAST);
     currentUpdate = updates[0];
@@ -149,7 +153,8 @@ void ngp_main(void)
 
     const int samplesPerFrame = NGP_SAMPLE_RATE / NGP_FPS;
     static int16_t mono[NGP_SAMPLE_RATE / NGP_FPS + 16];
-    static rg_audio_sample_t stereo[NGP_SAMPLE_RATE / NGP_FPS + 16];
+    static rg_audio_sample_t stereo[(NGP_SAMPLE_RATE / NGP_FPS + 16) * 2];
+    int16_t prev = 0;
     int skipFrames = 0;
 
     while (true)
@@ -188,10 +193,15 @@ void ngp_main(void)
         ngp_sound_update((uint16_t *)mono, samplesPerFrame * sizeof(int16_t));
         dac_update((uint16_t *)mono, samplesPerFrame * sizeof(int16_t));
         for (int i = 0; i < samplesPerFrame; i++)
-            stereo[i].left = stereo[i].right = mono[i];
+        {
+            int16_t mid = (prev + mono[i]) / 2;
+            stereo[2 * i].left = stereo[2 * i].right = mid;
+            stereo[2 * i + 1].left = stereo[2 * i + 1].right = mono[i];
+            prev = mono[i];
+        }
 
         rg_system_tick(rg_system_timer() - startTime);
-        rg_audio_submit(stereo, samplesPerFrame);
+        rg_audio_submit(stereo, samplesPerFrame * 2);
 
         if (skipFrames == 0)
         {

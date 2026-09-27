@@ -9,6 +9,8 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
+#include <esp_timer.h>
 #include <driver/gpio.h>
 #include <driver/i2s_pdm.h>
 #include <soc/soc_caps.h>
@@ -32,6 +34,9 @@
 #define DMA_DESC_NUM 8
 #define DMA_FRAME_NUM 256
 #define SUBMIT_CHUNK 256
+// No samples for this long (an app loading, the hourglass, a silent menu):
+// switch the channel off. Longer than the DMA lead a blocking write can take.
+#define IDLE_OFF_US 100000
 
 static struct {
     const char *last_error;
@@ -41,6 +46,10 @@ static struct {
     bool enabled;       // channel running (carrier on the pin)
     int sample_rate;
     int64_t busy_until; // pacing while the channel is off
+    int64_t last_submit;
+    volatile bool in_submit;
+    SemaphoreHandle_t lock;         // serializes enable/disable (submit vs idle timer)
+    esp_timer_handle_t idle_timer;
 } state;
 
 // The board has no reconstruction filter between the PDM pin and the PAM8403
@@ -50,19 +59,44 @@ static struct {
 // while there is something audible to play, and disabled otherwise (pin idle
 // LOW, carrier gone). Submissions while the channel is off are paced in time
 // exactly like the dummy driver so the emulators keep their speed regulation.
-static bool apply_state(void)
+static bool channel_wanted(void)
 {
-    bool want = state.chan && !state.muted && state.volume > 0;
-    if (want == state.enabled)
+    return state.chan && !state.muted && state.volume > 0;
+}
+
+static bool set_enabled(bool on)
+{
+    if (on == state.enabled)
         return true;
-    esp_err_t ret = want ? i2s_channel_enable(state.chan) : i2s_channel_disable(state.chan);
+    esp_err_t ret = on ? i2s_channel_enable(state.chan) : i2s_channel_disable(state.chan);
     if (ret != ESP_OK)
     {
         state.last_error = esp_err_to_name(ret);
         return false;
     }
-    state.enabled = want;
+    state.enabled = on;
     return true;
+}
+
+// Mute / volume 0 switch the channel off at once; switching it on waits for
+// the next submission. An enabled channel with nothing to play emits its idle
+// sigma-delta pattern: hiss, and while an app loads (the hourglass) a squeal.
+static bool apply_state(void)
+{
+    bool ok = true;
+    xSemaphoreTake(state.lock, portMAX_DELAY);
+    if (!channel_wanted())
+        ok = set_enabled(false);
+    xSemaphoreGive(state.lock);
+    return ok;
+}
+
+static void idle_check(void *arg)
+{
+    xSemaphoreTake(state.lock, portMAX_DELAY);
+    if (state.enabled && !state.in_submit && rg_system_timer() - state.last_submit > IDLE_OFF_US)
+        set_enabled(false);
+    xSemaphoreGive(state.lock);
 }
 
 static bool driver_init(int device, int sample_rate)
@@ -72,10 +106,25 @@ static bool driver_init(int device, int sample_rate)
     state.enabled = false;
     state.sample_rate = sample_rate;
     state.busy_until = 0;
+    state.last_submit = 0;
+    state.in_submit = false;
+    if (!state.lock)
+        state.lock = xSemaphoreCreateMutex();
+    if (!state.idle_timer)
+    {
+        const esp_timer_create_args_t args = {.callback = idle_check, .name = "pdm_idle"};
+        esp_timer_create(&args, &state.idle_timer);
+    }
+    if (state.idle_timer)
+        esp_timer_start_periodic(state.idle_timer, IDLE_OFF_US / 2);
 
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.dma_desc_num = DMA_DESC_NUM;
     chan_cfg.dma_frame_num = DMA_FRAME_NUM;
+    // No auto_clear: when a submission is a little late the DMA replays its
+    // last buffer, which is inaudible; zeroing it instead turned every late
+    // frame into a click (a fast "machine gun" in every core). Long gaps (an
+    // app loading) are handled by switching the channel off, see idle_check().
 
     esp_err_t ret = i2s_new_channel(&chan_cfg, &state.chan, NULL);
     if (ret == ESP_OK)
@@ -97,13 +146,15 @@ static bool driver_init(int device, int sample_rate)
     }
     if (ret != ESP_OK)
         state.last_error = esp_err_to_name(ret);
-    // Not enabled here: rg_audio_init() pushes mute/volume right after init
-    // and apply_state() starts the carrier only if they say so.
+    // Not enabled here: the first submission starts the carrier, if mute and
+    // volume allow it (rg_audio_init() pushes them right after init).
     return state.last_error == NULL;
 }
 
 static bool driver_deinit(void)
 {
+    if (state.idle_timer)
+        esp_timer_stop(state.idle_timer);
     if (state.chan)
     {
         if (state.enabled)
@@ -118,6 +169,14 @@ static bool driver_deinit(void)
 
 static bool driver_submit(const rg_audio_frame_t *frames, size_t count)
 {
+    if (channel_wanted())
+    {
+        xSemaphoreTake(state.lock, portMAX_DELAY);
+        state.in_submit = true;
+        state.last_submit = rg_system_timer();
+        set_enabled(true);
+        xSemaphoreGive(state.lock);
+    }
     if (!state.enabled)
     {
         // Pace like the DMA path would: busy_until is when the audio queued
@@ -132,6 +191,7 @@ static bool driver_submit(const rg_audio_frame_t *frames, size_t count)
         state.busy_until += (int64_t)(count * (1000000.f / state.sample_rate));
         if (state.busy_until - now > max_lead)
             rg_usleep(state.busy_until - now - max_lead);
+        state.in_submit = false;
         return true;
     }
 
@@ -149,10 +209,15 @@ static bool driver_submit(const rg_audio_frame_t *frames, size_t count)
             size_t written = 0;
             if (i2s_channel_write(state.chan, buffer, pos * sizeof(int16_t),
                                   &written, 1000 / portTICK_PERIOD_MS) != ESP_OK)
+            {
+                state.in_submit = false;
                 return false;
+            }
             pos = 0;
         }
     }
+    state.last_submit = rg_system_timer();
+    state.in_submit = false;
     return true;
 }
 
@@ -161,14 +226,12 @@ static bool driver_set_sample_rates(int sample_rate)
     if (!state.chan)
         return false;
     i2s_pdm_tx_clk_config_t clk_cfg = I2S_PDM_TX_CLK_DAC_DEFAULT_CONFIG(sample_rate);
-    bool was_enabled = state.enabled;
-    if (was_enabled && i2s_channel_disable(state.chan) != ESP_OK)
-        return false;
-    state.enabled = false;
-    if (i2s_channel_reconfig_pdm_tx_clock(state.chan, &clk_cfg) != ESP_OK)
-        return false;
-    state.sample_rate = sample_rate;
-    return was_enabled ? apply_state() : true;
+    xSemaphoreTake(state.lock, portMAX_DELAY);
+    bool ok = set_enabled(false) && i2s_channel_reconfig_pdm_tx_clock(state.chan, &clk_cfg) == ESP_OK;
+    xSemaphoreGive(state.lock);
+    if (ok)
+        state.sample_rate = sample_rate;
+    return ok; /* the next submission switches the channel back on */
 }
 
 static bool driver_set_mute(bool mute)

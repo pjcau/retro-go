@@ -17,6 +17,10 @@ static struct { int64_t frame, m68k, z80, ym, sn, vdp; } gen_prof;
 #define GEN_PROF_ACC(f, v)  ((void)0)
 #endif
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
+/* The YM2612 renders at AUDIO_SAMPLE_RATE / 2 (26633 Hz); the PDM sink wants
+ * 32 kHz like every other app (at other rates its DAC-mode clocks, derived
+ * from rate / 100, misbehave), so the frame is resampled before submitting. */
+#define OUTPUT_RATE 32000
 
 extern unsigned char* VRAM;
 extern int zclk;
@@ -209,6 +213,33 @@ static void options_handler(rg_gui_option_t *dest)
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
+/* Linear resampling of one frame of YM2612 output (26633 Hz) to OUTPUT_RATE.
+ * The phase and the last input sample carry over, so frame edges are smooth. */
+static void submit_resampled(const rg_audio_frame_t *in, int count)
+{
+    static rg_audio_frame_t out[AUDIO_BUFFER_LENGTH];
+    static rg_audio_frame_t last;
+    static int32_t phase = -65536; /* 16.16, position in "in"; -1 = last */
+    const int32_t step = (int32_t)(((int64_t)(AUDIO_SAMPLE_RATE / 2) << 16) / OUTPUT_RATE);
+    int n = 0;
+
+    while ((phase >> 16) + 1 <= count - 1 && n < (int)RG_COUNT(out))
+    {
+        int i = phase >> 16;
+        int32_t frac = phase & 0xFFFF;
+        const rg_audio_frame_t *a = i < 0 ? &last : &in[i];
+        const rg_audio_frame_t *b = &in[i + 1];
+        /* 15-bit fraction: a 16-bit difference times it stays within int32 */
+        out[n].left = a->left + (((b->left - a->left) * (frac >> 1)) >> 15);
+        out[n].right = a->right + (((b->right - a->right) * (frac >> 1)) >> 15);
+        n++;
+        phase += step;
+    }
+    phase -= count << 16;
+    last = in[count - 1];
+    rg_audio_submit(out, n);
+}
+
 void app_main(void)
 {
     const rg_handlers_t handlers = {
@@ -220,7 +251,7 @@ void app_main(void)
         .options = &options_handler,
     };
 
-    app = rg_system_init(AUDIO_SAMPLE_RATE / 2, &handlers, NULL);
+    app = rg_system_init(OUTPUT_RATE, &handlers, NULL);
 
     yfm_enabled = rg_settings_get_number(NS_APP, SETTING_YFM_EMULATION, 1);
     sn76489_enabled = rg_settings_get_number(NS_APP, SETTING_SN76489_EMULATION, 0);
@@ -445,7 +476,7 @@ void app_main(void)
 
         if (yfm_enabled || z80_enabled) {
             // TODO: Mix in gwenesis_sn76489_buffer
-            rg_audio_submit((void *)(ym_frame ? ym_frame : gwenesis_ym2612_buffer), AUDIO_BUFFER_LENGTH >> 1);
+            submit_resampled((const rg_audio_frame_t *)(ym_frame ? ym_frame : gwenesis_ym2612_buffer), AUDIO_BUFFER_LENGTH >> 1);
         }
 
         if (skipFrames == 0)
