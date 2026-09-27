@@ -369,8 +369,10 @@ int neospr_start(uint32_t *pen_usage, unsigned total_tiles)
 		return -1;
 #ifdef ESP_PLATFORM
 	{
+		/* leave 1.5 MB: the frame bitmaps and display surfaces of the
+		   second-core video path (~420 KB) are allocated after this */
 		size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
-		bytes = largest > 1536 * 1024 ? largest - 1024 * 1024 : 512 * 1024;
+		bytes = largest > 2048 * 1024 ? largest - 1536 * 1024 : 512 * 1024;
 	}
 #else
 	bytes = getenv("NEOSPR_CACHE_KB") ? (size_t)atoi(getenv("NEOSPR_CACHE_KB")) * 1024 : 2048 * 1024;

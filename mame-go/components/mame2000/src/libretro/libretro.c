@@ -858,6 +858,12 @@ void retro_run(void)
    mame_run_one_frame();
 
    PROF_PUSH(PROF_OUT);
+#ifdef MAMEGO
+   extern int mame2000_frame_presented;
+   if (mame2000_frame_presented)
+      mame2000_frame_presented = 0; /* the host already has it (mamego_present_indexed) */
+   else
+#endif
    if (should_skip_frame)
       video_cb(NULL, gfx_width, gfx_height, gfx_width * 2);
    else if (mame2000_direct_frame_data != 0)

@@ -90,6 +90,100 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
     current ^= 1;
 }
 
+/* Neo Geo frames converted on the second core (mame2000 libretro/video.c,
+ * mamego_present_indexed): the core hands over its pen bitmap and the pen
+ * -> RGB565 table instead of blitting + copying on core 0 (Metal Slug 2:
+ * 3.6 ms per frame). The table is copied here, the bitmap is left alone by
+ * MAME until the next call, which first waits for this conversion. */
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+static struct
+{
+    const void *pix;
+    int bits, width, height, pitch;
+    uint16_t *pal;
+    int pal_size;
+} present;
+static TaskHandle_t present_task;
+static SemaphoreHandle_t present_done;
+static volatile bool present_busy;
+
+static void present_task_main(void *arg)
+{
+    for (;;)
+    {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        rg_surface_t *surface = updates[current];
+        const uint16_t *pal = present.pal;
+        for (int y = 0; y < present.height; y++)
+        {
+            uint16_t *dst = (uint16_t *)((uint8_t *)surface->data + y * surface->stride);
+            if (present.bits == 16)
+            {
+                const uint16_t *src = (const uint16_t *)present.pix + y * present.pitch;
+                for (int x = 0; x < present.width; x++)
+                    dst[x] = pal[src[x]];
+            }
+            else
+            {
+                const uint8_t *src = (const uint8_t *)present.pix + y * present.pitch;
+                for (int x = 0; x < present.width; x++)
+                    dst[x] = pal[src[x]];
+            }
+        }
+        rg_display_submit(surface, 0);
+        current ^= 1;
+        present_busy = false;
+        xSemaphoreGive(present_done);
+    }
+}
+
+static int present_indexed(const void *pix, int bits, int width, int height, int pitch, const void *palette, int colors)
+{
+    if (present_busy)
+        xSemaphoreTake(present_done, portMAX_DELAY);
+    if (!pix) /* the core only waits for the previous frame */
+        return 1;
+    if (!present_task)
+    {
+        present_done = xSemaphoreCreateBinary();
+        if (xTaskCreatePinnedToCore(present_task_main, "mame_present", 3072, NULL, 5, &present_task, 1) != pdPASS)
+            return 0;
+    }
+    if (colors > present.pal_size)
+    {
+        free(present.pal);
+        present.pal = malloc(colors * sizeof(uint16_t));
+        present.pal_size = present.pal ? colors : 0;
+        if (!present.pal)
+            return 0;
+    }
+    if (!updates[0] || updates[0]->width != width || updates[0]->height != height)
+    {
+        /* PSRAM: with the YM2610 and present tasks on core 1 there is no
+           room for 2 x 136 KB of internal RAM (the core 1 task writes it) */
+        for (int i = 0; i < 2; i++)
+        {
+            rg_surface_free(updates[i]);
+            updates[i] = rg_surface_create(width, height, RG_PIXEL_565_LE, MEM_SLOW);
+        }
+    }
+    if (bits == 16)
+        for (int i = 0; i < colors; i++)
+            present.pal[i] = (uint16_t)((const uint32_t *)palette)[i];
+    else
+        memcpy(present.pal, palette, colors * sizeof(uint16_t));
+    present.pix = pix;
+    present.bits = bits;
+    present.width = width;
+    present.height = height;
+    present.pitch = pitch;
+    present_busy = true;
+    xTaskNotifyGive(present_task);
+    return 1;
+}
+
 static size_t audio_batch_cb(const int16_t *data, size_t frames)
 {
     rg_audio_submit((const rg_audio_frame_t *)data, frames);
@@ -231,6 +325,10 @@ static void mame_task(void *arg)
     retro_init();
 
     struct retro_game_info game = {app->romPath, NULL, 0, NULL};
+    {
+        extern int (*mamego_present_indexed)(const void *, int, int, int, int, const void *, int);
+        mamego_present_indexed = present_indexed;
+    }
     if (!retro_load_game(&game))
         RG_PANIC("This game is not supported, or its ROM set is incomplete");
 

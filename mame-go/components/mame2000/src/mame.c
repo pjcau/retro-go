@@ -468,6 +468,9 @@ static void vh_close(void)
 	freegfx(Machine->uifont);
 	Machine->uifont = 0;
 	osd_close_display();
+#ifdef MAMEGO
+	{ extern void mamego_present_shutdown(void); mamego_present_shutdown(); }
+#endif
 	if (Machine->scrbitmap)
 	{
 		bitmap_free(Machine->scrbitmap);
@@ -744,6 +747,19 @@ void draw_screen(int _bitmap_dirty)
   Calls OSD layer handling overlays and backdrops (not yet)
 
 ***************************************************************************/
+#ifdef MAMEGO
+/* mame-go (libretro/video.c): the screen bitmap alternates between two
+   while the host converts the previous frame on its second core */
+int mamego_set_screen_bitmap(struct osd_bitmap *b)
+{
+	if (artwork_overlay)
+		return 0;
+	Machine->scrbitmap = b;
+	real_scrbitmap = b;
+	return 1;
+}
+#endif
+
 void update_video_and_audio(void)
 {
 	osd_update_video_and_audio(real_scrbitmap);

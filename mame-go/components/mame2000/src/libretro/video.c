@@ -57,6 +57,7 @@ void (*update_screen)(struct osd_bitmap *bitmap) = update_screen_dummy;
 const void *mame2000_direct_frame_data  = 0;
 size_t      mame2000_direct_frame_pitch = 0;
 
+
 static int video_depth,video_fps;
 static int modifiable_palette;
 static int screen_colors;
@@ -816,6 +817,83 @@ int osd_skip_this_frame(void)
 }
 
 /* Update the display. */
+#ifdef MAMEGO
+/* mame-go: Neo Geo frames (8-bit pens with the 256-colour gp2x_palette, or
+ * 16-bit pens with palette_16bit_lookup) go to the host with that table instead of
+ * through update_screen() + video_cb's copy; the host converts them on its
+ * second core. The host returns 0 to decline (then the normal path runs).
+ * The frame being converted stays untouched: MAME draws the next one into
+ * a second bitmap (the Neo Geo redraws the whole screen every frame, so
+ * alternating bitmaps is safe). A call with pix == NULL waits for the host. */
+int (*mamego_present_indexed)(const void *pix, int bits, int width, int height, int pitch,
+                              const void *palette, int colors) = 0;
+int mame2000_frame_presented = 0;
+static struct osd_bitmap *mamego_bitmaps[2];
+
+static int mamego_present_frame(struct osd_bitmap *bitmap)
+{
+	extern int neogeo_mvs_vh_start(void);
+	extern int mamego_set_screen_bitmap(struct osd_bitmap *b);
+	struct osd_bitmap *next;
+
+	int bits;
+
+	/* bits 16: pens -> palette_16bit_lookup (uint32_t), bits 8: pens -> gp2x_palette (uint16_t) */
+	if (update_screen == blitscreen_dirty0_palettized16)
+		bits = 16;
+	else if (update_screen == blitscreen_dirty0_color8)
+		bits = 8;
+	else
+		return 0;
+	if (!mamego_present_indexed || Machine->drv->vh_start != neogeo_mvs_vh_start || bitmap != Machine->scrbitmap)
+		return 0;
+	if (mamego_bitmaps[0] && bitmap != mamego_bitmaps[0] && bitmap != mamego_bitmaps[1])
+		return 0;
+	if (!mamego_bitmaps[0])
+	{
+		mamego_bitmaps[0] = bitmap;
+		mamego_bitmaps[1] = osd_alloc_bitmap(bitmap->width, bitmap->height, bitmap->depth);
+		if (!mamego_bitmaps[1])
+		{
+			mamego_present_indexed = 0; /* no memory for it: stay on the normal path */
+			return 0;
+		}
+	}
+	if (bits == 16
+		? !mamego_present_indexed(((unsigned short *)bitmap->line[skiplines]) + skipcolumns, 16,
+			gfx_display_columns, gfx_display_lines, (bitmap->line[1] - bitmap->line[0]) >> 1,
+			palette_16bit_lookup, screen_colors)
+		: !mamego_present_indexed(bitmap->line[skiplines] + skipcolumns, 8,
+			gfx_display_columns, gfx_display_lines, bitmap->line[1] - bitmap->line[0],
+			gp2x_palette, 256))
+		return 0;
+	next = (bitmap == mamego_bitmaps[0]) ? mamego_bitmaps[1] : mamego_bitmaps[0];
+	if (!mamego_set_screen_bitmap(next)) /* MAME draws the next frame there */
+	{
+		mamego_present_indexed(0, 0, 0, 0, 0, 0, 0); /* one bitmap only: let the host finish first */
+		return 1;
+	}
+	{
+		static int logged;
+		if (!logged++)
+			printf("mamego: %dx%d %d-bit frames converted by the host (second core)\n", gfx_display_columns, gfx_display_lines, bits);
+	}
+	return 1;
+}
+
+/* game shutdown: MAME frees whichever bitmap is current, this frees the other */
+void mamego_present_shutdown(void)
+{
+	int i;
+	if (mamego_present_indexed)
+		mamego_present_indexed(0, 0, 0, 0, 0, 0, 0); /* host: wait until the last frame is converted */
+	for (i = 0; i < 2; i++)
+		if (mamego_bitmaps[i] && mamego_bitmaps[i] != Machine->scrbitmap)
+			osd_free_bitmap(mamego_bitmaps[i]);
+	mamego_bitmaps[0] = mamego_bitmaps[1] = 0;
+}
+#endif
+
 static void osd_update_video_and_audio_(struct osd_bitmap *bitmap);
 void osd_update_video_and_audio(struct osd_bitmap *bitmap)
 {
@@ -985,6 +1063,11 @@ static void osd_update_video_and_audio_(struct osd_bitmap *bitmap)
 		else
 		{
 			mame2000_direct_frame_data  = 0;
+#ifdef MAMEGO
+			if (mamego_present_frame(bitmap))
+				mame2000_frame_presented = 1;
+			else
+#endif
 			/* copy the bitmap to screen memory */
 			update_screen(bitmap);
 		}
