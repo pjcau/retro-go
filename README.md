@@ -39,6 +39,7 @@ Docs: [firmware](https://pjcau.github.io/esp32-emu-turbo/docs/software/firmware)
 ### retro-core
 - **SNES (snes9x)** — the Phase 4 renderer work that brought most games to 60 fps: audio samples per frame from the ROM fps, 32 KB I-cache / 64 KB D-cache, z-buffer in internal SRAM, blank-tile cache, colour-math fast path, Mode 7 hoisting, `restrict` tile writers, backdrop colour and CGRAM 0-15 per line, save-state loader heap-corruption fix, Native 12-button keymap default, SNES_PROF counters (`8164755a` .. `c16ff62f`). See [snes-optimization.md](https://github.com/pjcau/esp32-emu-turbo/blob/main/website/docs/software/snes-optimization.md).
 - **SuperFX (GSU)** brought back from snes9x2005, with the GSU running on core 1: Star Fox runs (`98f88705`).
+- **SuperFX state in save states**: the GSU registers and pipeline are saved in an extra chunk, so a Star Fox save state restores the 3D exactly (`4e038331`).
 - **Neo Geo Pocket / Color** via the libretro RACE core (`components/race`, `main_ngp.c`) (`717df408`), later moved to retro-extra.
 - SG-1000 dispatch fixed (`30df124b`); NES, GB/GBC and PC Engine draw every frame (frameskip 0) (`e733d4d3`); Game & Watch shows a message on a non-`.gw` file instead of asserting (`e324e61d`).
 
