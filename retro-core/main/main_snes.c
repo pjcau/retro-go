@@ -408,6 +408,14 @@ void snes_main(void)
     rg_system_set_tick_rate(Memory.ROMFramesPerSecond);
     app->frameskip = 3;
 
+#ifndef USE_BLARGG_APU
+    // S-DSP mixing on core 1 (snes9x apu.c, roadmap Phase 5): the frame's
+    // DSP register writes are replayed there while core 0 runs the next
+    // frame; audio one frame later. Same samples as inline (PC harness).
+    if (!S9xAudioOffload(true))
+        RG_LOGW("S-DSP stays on core 0 (no memory for the queues)\n");
+#endif
+
     // Samples to mix and submit per emulated frame. AUDIO_BUFFER_LENGTH
     // (rate/50+1) is only right for PAL: on a 60 fps ROM it hands the sink
     // 20% more audio than real time, so the sink's pacing caps emulation at
@@ -489,7 +497,16 @@ void snes_main(void)
 #endif
 
     #ifndef USE_BLARGG_APU
-        if (apu_enabled && lowpass_filter)
+        if (S9xAudioOffloaded())
+        {
+            // last frame's samples (mixed on core 1), then this frame's job
+            int16_t *mixed = S9xAudioFrame(samplesPerFrame, lowpass_filter, AUDIO_LOW_PASS_RANGE);
+            if (mixed)
+                memcpy(audioBuffer, mixed, samplesPerFrame * 4);
+            else
+                memset(audioBuffer, 0, samplesPerFrame * 4);
+        }
+        else if (apu_enabled && lowpass_filter)
             S9xMixSamplesLowPass((void *)audioBuffer, samplesPerFrame << 1, AUDIO_LOW_PASS_RANGE);
         else if (apu_enabled)
             S9xMixSamples((void *)audioBuffer, samplesPerFrame << 1);

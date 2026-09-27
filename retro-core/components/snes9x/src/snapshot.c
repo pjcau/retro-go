@@ -34,6 +34,7 @@ bool S9xSaveState(const char *filename)
 
    if (Settings.SuperFX)
       S9xSuperFXWait();
+   S9xAudioSync(); /* S-DSP on core 1: registers and channels settled */
 
    if (!(fp = fopen(filename, "wb")))
       return false;
@@ -73,6 +74,7 @@ bool S9xLoadState(const char *filename)
 
    if (Settings.SuperFX)
       S9xSuperFXWait();
+   S9xAudioSync();
 
    if (!(fp = fopen(filename, "rb")))
       return false;
@@ -140,6 +142,7 @@ bool S9xLoadState(const char *filename)
    S9xFixColourBrightness();
    S9xAPUUnpackStatus();
    S9xFixSoundAfterSnapshotLoad();
+   S9xAudioSync(); /* core 0's register image from the loaded state */
    ICPU.ShiftedPB = ICPU.Registers.PB << 16;
    ICPU.ShiftedDB = ICPU.Registers.DB << 16;
    S9xSetPCBase(ICPU.ShiftedPB + ICPU.Registers.PC);

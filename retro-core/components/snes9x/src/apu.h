@@ -76,6 +76,12 @@ void S9xDecacheSamples(void);
 void S9xSetAPUControl(uint8_t byte);
 void S9xSetAPUDSP(uint8_t byte);
 uint8_t S9xGetAPUDSP(void);
+/* S-DSP mixing on core 1 (apu.c) */
+extern uint8_t S9xDSPMixEndX, S9xDSPMixKeyClr;
+bool S9xAudioOffload(bool on);
+bool S9xAudioOffloaded(void);
+void S9xAudioSync(void);
+int16_t *S9xAudioFrame(int32_t sample_count, bool low_pass, int32_t low_pass_range);
 uint8_t S9xAPUReadPort(int32_t Address);
 void S9xAPUWritePort(int32_t Address, uint8_t Byte);
 bool S9xInitSound(int32_t buffer_ms, int32_t lag_ms);

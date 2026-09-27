@@ -123,11 +123,14 @@ void S9xAPUSetEndOfSample(int32_t i, Channel* ch)
    APU.DSP [APU_KON] &= ~(1 << i);
    APU.DSP [APU_KOFF] &= ~(1 << i);
    APU.KeyedChannels &= ~(1 << i);
+   S9xDSPMixEndX |= 1 << i;   /* for core 0's register image (apu.c) */
+   S9xDSPMixKeyClr |= 1 << i;
 }
 
 void S9xAPUSetEndX(int32_t ch)
 {
    APU.DSP [APU_ENDX] |= 1 << ch;
+   S9xDSPMixEndX |= 1 << ch;
 }
 
 void S9xSetEnvRate(Channel* ch, uint32_t rate, int32_t direction, int32_t target, uint32_t mode)

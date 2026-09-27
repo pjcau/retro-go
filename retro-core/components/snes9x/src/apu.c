@@ -8,6 +8,8 @@
 #include "soundux.h"
 #include "cpuexec.h"
 
+static bool dsp_offload; /* S-DSP on core 1, see below */
+
 extern const int32_t NoiseFreq[32];
 
 bool S9xInitAPU()
@@ -34,6 +36,10 @@ void S9xDeinitAPU()
 
 void S9xResetAPU()
 {
+   bool offload = S9xAudioOffloaded();
+   if (offload)
+      S9xAudioSync();
+   dsp_offload = false;
    int32_t i, j;
    Settings.APUEnabled = true;
    memset(IAPU.RAM, 0, 0x100);
@@ -90,6 +96,8 @@ void S9xResetAPU()
 
    S9xResetSound(true);
    S9xSetEchoEnable(0);
+   S9xAudioSync();
+   dsp_offload = offload;
 }
 
 uint8_t S9xAPUReadPort(int32_t Address)
@@ -130,9 +138,8 @@ void S9xAPUWritePort(int32_t Address, uint8_t Byte)
    IAPU.WaitCounter++;
 }
 
-void S9xSetAPUDSP(uint8_t byte)
+static void dsp_apply(uint8_t reg, uint8_t byte)
 {
-   uint8_t reg = IAPU.RAM [0xf2];
    static uint8_t KeyOn;
    static uint8_t KeyOnPrev;
    int32_t i;
@@ -448,10 +455,223 @@ void S9xSetAPUControl(uint8_t byte)
    IAPU.RAM [0xf1] = byte;
 }
 
+/* ----------------------------------------------------------------------
+ * S-DSP on core 1 (esp32-emu-turbo, roadmap Phase 5).
+ *
+ * The SPC700 has to stay on core 0, in lockstep with the 65816 (they talk
+ * through four ports every few cycles). The S-DSP's sample generation does
+ * not: this port already mixes a whole frame at once at the frame end, from
+ * the channel state the frame's register writes left. So the frame's DSP
+ * register writes are queued, and core 1 replays them in order and mixes
+ * the frame while core 0 emulates the next one (same model as the Genesis
+ * YM2612 and the Neo Geo YM2610). Audio comes out one frame (~17 ms) later.
+ *
+ * What the SPC700 reads back: the registers from an image kept on core 0
+ * (updated on every write the way the handler would store it), ENDX/KON/KOFF
+ * bits the mixer changes when a sample ends (recorded as deltas by
+ * soundux.c and applied at the frame boundary), and OUTX/ENVX from a
+ * snapshot taken there. Inline, those came from the end of the previous
+ * frame's mix as well, so readback timing is unchanged.
+ * ---------------------------------------------------------------------- */
+uint8_t S9xDSPMixEndX, S9xDSPMixKeyClr;    /* soundux.c: channels the mixer ended */
+
+typedef struct { uint8_t reg, val; } dsp_write_t;
+#define DSPQ_MAX 8192
+static dsp_write_t *dspq[2];
+static int dspq_n[2], dspq_fill, dspq_overflow;
+static uint8_t dsp_image[0x80], outx_snap[8], envx_snap[8];
+static int16_t *mixbuf[2];
+static int mix_job_q, mix_job_count, mix_job_lowpass, mix_job_range, mix_out, mix_ready;
+
+static void dsp_publish(void)
+{
+   int c;
+   dsp_image[APU_ENDX] |= S9xDSPMixEndX;
+   dsp_image[APU_KON] &= ~S9xDSPMixKeyClr;
+   dsp_image[APU_KOFF] &= ~S9xDSPMixKeyClr;
+   S9xDSPMixEndX = S9xDSPMixKeyClr = 0;
+   for (c = 0; c < 8; c++)
+   {
+      Channel *ch = &SoundData.channels[c];
+      int32_t e = ch->envx;
+      outx_snap[c] = ch->state == SOUND_SILENT ? 0 : ((ch->sample >> 8) | (ch->sample & 0xff));
+      envx_snap[c] = e > 0x7f ? 0x7f : (e < 0 ? 0 : e);
+   }
+}
+
+/* core 1: the frame's register writes in order, then its samples */
+static void mix_job(void)
+{
+   int i, q = mix_job_q;
+   for (i = 0; i < dspq_n[q]; i++)
+      dsp_apply(dspq[q][i].reg, dspq[q][i].val);
+   dspq_n[q] = 0;
+   if (mix_job_lowpass)
+      S9xMixSamplesLowPass(mixbuf[mix_out], mix_job_count << 1, mix_job_range);
+   else
+      S9xMixSamples(mixbuf[mix_out], mix_job_count << 1);
+}
+
+#ifdef ESP_PLATFORM
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+static TaskHandle_t mix_task;
+static SemaphoreHandle_t mix_done;
+static volatile bool mix_busy;
+static void mix_task_main(void *arg)
+{
+   for (;;)
+   {
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      mix_job();
+      __sync_synchronize();
+      mix_busy = false;
+      xSemaphoreGive(mix_done);
+   }
+}
+static void mix_wait(void)
+{
+   if (mix_busy)
+      xSemaphoreTake(mix_done, portMAX_DELAY);
+}
+static void mix_start(void)
+{
+   mix_busy = true;
+   __sync_synchronize();
+   xTaskNotifyGive(mix_task);
+}
+static bool mix_task_create(void)
+{
+   if (!mix_task)
+   {
+      mix_done = xSemaphoreCreateBinary();
+      if (!mix_done || xTaskCreatePinnedToCore(mix_task_main, "snes_dsp", 4096, NULL, 5, &mix_task, 1) != pdPASS)
+         return false;
+   }
+   return true;
+}
+#else
+static void mix_wait(void) {}
+static void mix_start(void) { mix_job(); } /* PC: runs at once, same order, deterministic */
+static bool mix_task_create(void) { return true; }
+#endif
+
+/* Everything applied and mixed, image = real registers (save/load, reset,
+   switching the offload): nothing may run on core 1 after this. */
+void S9xAudioSync(void)
+{
+   int q, i;
+   mix_wait();
+   for (q = 0; q < 2; q++)
+   {
+      for (i = 0; dspq[q] && i < dspq_n[q]; i++)
+         dsp_apply(dspq[q][i].reg, dspq[q][i].val);
+      dspq_n[q] = 0;
+   }
+   S9xDSPMixEndX = S9xDSPMixKeyClr = 0;
+   memcpy(dsp_image, APU.DSP, sizeof(dsp_image));
+   dsp_publish();
+   mix_ready = 0;
+}
+
+bool S9xAudioOffload(bool on)
+{
+   S9xAudioSync();
+   if (on && !dspq[0])
+   {
+      dspq[0] = malloc(DSPQ_MAX * sizeof(dsp_write_t));
+      dspq[1] = malloc(DSPQ_MAX * sizeof(dsp_write_t));
+      mixbuf[0] = malloc(2048 * sizeof(int16_t));
+      mixbuf[1] = malloc(2048 * sizeof(int16_t));
+      if (!dspq[0] || !dspq[1] || !mixbuf[0] || !mixbuf[1] || !mix_task_create())
+         on = false;
+   }
+   dsp_offload = on;
+   return on;
+}
+
+bool S9xAudioOffloaded(void)
+{
+   return dsp_offload;
+}
+
+/* Frame end, core 0: collects the last frame's samples (NULL on the first
+   frame after a sync) and starts mixing this one on core 1. */
+int16_t *S9xAudioFrame(int32_t sample_count, bool low_pass, int32_t low_pass_range)
+{
+   int16_t *out = NULL;
+   if (sample_count > 1024)
+      sample_count = 1024;
+   mix_wait();
+   dsp_publish();
+   if (mix_ready)
+      out = mixbuf[mix_out];
+   mix_out ^= 1;
+   mix_job_q = dspq_fill;
+   dspq_fill ^= 1;
+   dspq_n[dspq_fill] = 0;
+   mix_job_count = sample_count;
+   mix_job_lowpass = low_pass;
+   mix_job_range = low_pass_range;
+   mix_ready = 1;
+   mix_start();
+   return out;
+}
+
+void S9xSetAPUDSP(uint8_t byte)
+{
+   uint8_t reg = IAPU.RAM [0xf2];
+   if (!dsp_offload)
+   {
+      dsp_apply(reg, byte);
+      return;
+   }
+   if (dspq_n[dspq_fill] < DSPQ_MAX)
+   {
+      dspq[dspq_fill][dspq_n[dspq_fill]].reg = reg;
+      dspq[dspq_fill][dspq_n[dspq_fill]].val = byte;
+      dspq_n[dspq_fill]++;
+   }
+   else
+      dspq_overflow++;
+   /* the image, as dsp_apply() would leave the register */
+   if (reg >= 0x80)
+      return;
+   switch (reg)
+   {
+   case APU_KON:
+      dsp_image[APU_ENDX] &= ~(byte & ~dsp_image[APU_KOFF]);
+      return;                       /* KON is not stored on a write */
+   case APU_ENDX:
+      byte = 0;
+      break;
+   case APU_FLG:
+      if (byte & APU_SOFT_RESET)
+      {
+         dsp_image[APU_ENDX] = dsp_image[APU_KOFF] = dsp_image[APU_KON] = 0;
+         byte = APU_MUTE | APU_ECHO_DISABLED | (byte & 0x1f);
+      }
+      break;
+   default:
+      break;
+   }
+   dsp_image[reg] = byte;
+}
+
 uint8_t S9xGetAPUDSP()
 {
    uint8_t reg = IAPU.RAM [0xf2] & 0x7f;
    uint8_t byte = APU.DSP [reg];
+
+   if (dsp_offload)
+   {
+      if ((reg & 0x0f) == APU_OUTX)
+         return outx_snap[reg >> 4];
+      if ((reg & 0x0f) == APU_ENVX)
+         return envx_snap[reg >> 4];
+      return dsp_image[reg];
+   }
 
    switch (reg)
    {
