@@ -427,9 +427,21 @@ static READ_HANDLER( controller3_r )
 }
 static READ_HANDLER( controller4_r ) { return readinputport(6); }
 
+#ifdef MAMEGO
+/* program byte at offset: above 1 MB it may be in flash (mamego_prog_hi) */
+extern unsigned char *mamego_prog_hi;
+static unsigned char *neogeo_prog(int offset)
+{
+	if (mamego_prog_hi && offset >= 0x100000)
+		return mamego_prog_hi + (offset - 0x100000);
+	return memory_region(REGION_CPU1) + offset;
+}
+#else
+#define neogeo_prog(offset) (memory_region(REGION_CPU1) + (offset))
+#endif
+
 static WRITE_HANDLER( neo_bankswitch_w )
 {
-	unsigned char *RAM = memory_region(REGION_CPU1);
 	int bankaddress;
 
 
@@ -447,7 +459,7 @@ static WRITE_HANDLER( neo_bankswitch_w )
 		bankaddress = 0x100000;
 	}
 
-	cpu_setbank(4,&RAM[bankaddress]);
+	cpu_setbank(4,neogeo_prog(bankaddress));
 }
 
 
@@ -821,7 +833,9 @@ size_t neogeo_mamego_state(unsigned char *buf, size_t size, int mode) /* 0 size,
 	extern size_t YM2610_mamego_state(unsigned char *buf, size_t size, int mode);
 	extern int soundlatch_state(int *value, int mode);
 	size_t pos = 0, ym;
-	int bank4 = cpu_bankbase[4] ? (int)(cpu_bankbase[4] - memory_region(REGION_CPU1)) : 0x100000;
+	int bank4 = !cpu_bankbase[4] ? 0x100000
+		: mamego_prog_hi && cpu_bankbase[4] >= mamego_prog_hi ? (int)(cpu_bankbase[4] - mamego_prog_hi) + 0x100000
+		: (int)(cpu_bankbase[4] - memory_region(REGION_CPU1));
 	int pal = palno, latch = 0;
 #define NG_IO(ptr, len) do { \
 		size_t _l = (len); \
@@ -864,7 +878,7 @@ size_t neogeo_mamego_state(unsigned char *buf, size_t size, int mode) /* 0 size,
 		neogeo_paletteram = pal ? pal_bank2 : pal_bank1;
 		palette_swap_pending = 1; /* MAME palette rebuilt from the bank */
 		if (bank4 >= 0 && bank4 < memory_region_length(REGION_CPU1))
-			cpu_setbank(4, memory_region(REGION_CPU1) + bank4);
+			cpu_setbank(4, neogeo_prog(bank4));
 		cpu_setbank(5, &RAM[bank[0]]);
 		cpu_setbank(6, &RAM[bank[1]]);
 		cpu_setbank(7, &RAM[bank[2]]);

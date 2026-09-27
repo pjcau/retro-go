@@ -539,6 +539,10 @@ static int32_t *snd_slot_page;
 static uint32_t *snd_slot_used, snd_clock, snd_pages;
 static unsigned snd_misses;
 
+/* set by readroms() before the pre-pass: the program will need all of the
+   flash partition (see mamego_regions_to_flash()) */
+int neosnd_big_program;
+
 int neosnd_wanted(int type, unsigned size)
 {
 	if (type < REGION_SOUND1 || type > REGION_SOUND8)
@@ -549,7 +553,7 @@ int neosnd_wanted(int type, unsigned size)
 	if (getenv("NEOSND")) /* PC tests: 1 = always page, 0 = never */
 		return atoi(getenv("NEOSND"));
 #endif
-	return size > NEOSND_FLASH_MAX;
+	return size > NEOSND_FLASH_MAX || neosnd_big_program;
 }
 
 /* Plain ROM_LOADs laid end to end, copied into the .pcm file as they are. */

@@ -123,8 +123,12 @@ int mamego_pick_driver(const char *zip_path, const char *base_name)
     int best = -1, best_score = -1;
     for (int i = 0; drivers[i]; i++)
     {
-        const struct GameDriver *d = drivers[i];
-        if (!(d == family || d->clone_of == family))
+        const struct GameDriver *d = drivers[i], *a = d;
+        /* the family: the set and its clones, down to the modern clones of
+           a modern set (shocktro -> shocktrom -> shocktroa) */
+        while (a && a != family)
+            a = a->clone_of;
+        if (!a)
             continue;
         int score = roms_score(d, list, n);
         if (score > best_score || (score == best_score && i == exact))

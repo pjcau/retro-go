@@ -651,6 +651,9 @@ int m68k_execute(int num_cycles)
 			REG_IR = m68ki_read_imm_16();
 			m68ki_instruction_jump_table[REG_IR]();
 			USE_CYCLES(CYC_INSTRUCTION[REG_IR]);
+#ifdef PCHIST /* PC analysis builds only (-DPCHIST): cycles per 16-byte block */
+			{ extern void m68k_pchist(unsigned pc, unsigned cycles); m68k_pchist(REG_PPC, CYC_INSTRUCTION[REG_IR]); }
+#endif
 
 			/* Trace m68k_exception, if necessary */
 			m68ki_exception_if_trace(); /* auto-disable (see m68kcpu.h) */
@@ -915,6 +918,23 @@ static void idle_stat(uint wrote, uint regs, uint idle)
 	if (e->pc != REG_PC) { if (e->n > 1000) return; memset(e, 0, sizeof(*e)); e->pc = REG_PC; e->ppc = REG_PPC; }
 	e->n++; e->wrote += wrote; e->regs += regs; e->idle += idle;
 }
+#ifdef PCHIST
+static unsigned pchist[0x100000 >> 4], pchist_hi;
+static void pchist_dump(void)
+{
+	unsigned i, j, top[20] = {0}; unsigned long long tot = pchist_hi;
+	for (i = 0; i < sizeof(pchist) / 4; i++) tot += pchist[i];
+	for (j = 0; j < 20; j++) { unsigned b = 0; for (i = 0; i < sizeof(pchist) / 4; i++) if (pchist[i] > pchist[b]) b = i; top[j] = b;
+		fprintf(stderr, "PCHIST %06x %5.1f%%\n", b << 4, 100.0 * pchist[b] / tot); pchist[b] = 0; }
+	fprintf(stderr, "PCHIST above 1 MB %5.1f%%\n", 100.0 * pchist_hi / tot);
+}
+void m68k_pchist(unsigned pc, unsigned cycles)
+{
+	static int init;
+	if (!init) { init = 1; atexit(pchist_dump); }
+	if (pc < 0x100000) pchist[pc >> 4] += cycles; else pchist_hi += cycles;
+}
+#endif
 #else
 #define idle_stat(w, r, i) ((void)0)
 #endif

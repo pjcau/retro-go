@@ -315,6 +315,7 @@ extern const struct GameDriver driver_mutnatm;
 extern const struct GameDriver driver_kotmm;
 extern const struct GameDriver driver_sengokum;
 extern const struct GameDriver driver_burningfm;
+extern const struct GameDriver driver_lbowlingm;
 extern const struct GameDriver driver_gpilotsm;
 extern const struct GameDriver driver_joyjoym;
 extern const struct GameDriver driver_bjourneym;
@@ -328,6 +329,7 @@ extern const struct GameDriver driver_roboarmym;
 extern const struct GameDriver driver_fatfury1m;
 extern const struct GameDriver driver_fbfrenzym;
 extern const struct GameDriver driver_crswordm;
+extern const struct GameDriver driver_trallym;
 extern const struct GameDriver driver_bstars2m;
 extern const struct GameDriver driver_quizdai2m;
 extern const struct GameDriver driver_samshom;
@@ -389,28 +391,83 @@ extern const struct GameDriver driver_ragnagrdm;
 extern const struct GameDriver driver_pgoalm;
 extern const struct GameDriver driver_ironclad;
 extern const struct GameDriver driver_magdrop2m;
+extern const struct GameDriver driver_samsho4m;
+extern const struct GameDriver driver_rbffspecm;
 extern const struct GameDriver driver_twinsprim;
 extern const struct GameDriver driver_wakuwak7m;
 extern const struct GameDriver driver_stakwin2m;
 extern const struct GameDriver driver_ghostlop;
 extern const struct GameDriver driver_breakersm;
 extern const struct GameDriver driver_miexchngm;
+extern const struct GameDriver driver_kof97m;
 extern const struct GameDriver driver_magdrop3m;
+extern const struct GameDriver driver_lastbladm;
 extern const struct GameDriver driver_puzzldprm;
 extern const struct GameDriver driver_popbouncm;
+extern const struct GameDriver driver_shocktrom;
 extern const struct GameDriver driver_blazstarm;
+extern const struct GameDriver driver_rbff2m;
 extern const struct GameDriver driver_mslug2m;
+extern const struct GameDriver driver_lastbld2m;
 extern const struct GameDriver driver_neocup98m;
 extern const struct GameDriver driver_breakrevm;
+extern const struct GameDriver driver_shocktr2m;
 extern const struct GameDriver driver_flipshotm;
 extern const struct GameDriver driver_pbobbl2nm;
 extern const struct GameDriver driver_ctomadaym;
+extern const struct GameDriver driver_mslugxm;
 extern const struct GameDriver driver_vliner;
 extern const struct GameDriver driver_zintrckb;
 extern const struct GameDriver driver_froman2b;
 extern const struct GameDriver driver_crswd2bl;
 extern const struct GameDriver driver_diggerma;
 extern const struct GameDriver driver_lasthope;
+extern const struct GameDriver driver_bstarsh;
+extern const struct GameDriver driver_maglordhm;
+extern const struct GameDriver driver_ncombath;
+extern const struct GameDriver driver_kotmh;
+extern const struct GameDriver driver_sengokuh;
+extern const struct GameDriver driver_burningfh;
+extern const struct GameDriver driver_gpilotsh;
+extern const struct GameDriver driver_bjourneyh;
+extern const struct GameDriver driver_quizdaisk;
+extern const struct GameDriver driver_2020bba;
+extern const struct GameDriver driver_socbrawlh;
+extern const struct GameDriver driver_samshoh;
+extern const struct GameDriver driver_tophuntrh;
+extern const struct GameDriver driver_aof2a;
+extern const struct GameDriver driver_wh2h;
+extern const struct GameDriver driver_fatfurspa;
+extern const struct GameDriver driver_fightfeva;
+extern const struct GameDriver driver_samsho2k;
+extern const struct GameDriver driver_samsho2ka;
+extern const struct GameDriver driver_quizkofk;
+extern const struct GameDriver driver_kof95a;
+extern const struct GameDriver driver_kof95h;
+extern const struct GameDriver driver_samsho3h;
+extern const struct GameDriver driver_fswords;
+extern const struct GameDriver driver_rbff1a;
+extern const struct GameDriver driver_rbff1ka;
+extern const struct GameDriver driver_rbff1k;
+extern const struct GameDriver driver_aof3k;
+extern const struct GameDriver driver_kof96a;
+extern const struct GameDriver driver_kof96h;
+extern const struct GameDriver driver_ironclado;
+extern const struct GameDriver driver_samsho4k;
+extern const struct GameDriver driver_rbffspeck;
+extern const struct GameDriver driver_kof97h;
+extern const struct GameDriver driver_kof97k;
+extern const struct GameDriver driver_lastbladh;
+extern const struct GameDriver driver_lastsold;
+extern const struct GameDriver driver_shocktroa;
+extern const struct GameDriver driver_rbff2h;
+extern const struct GameDriver driver_rbff2k;
+extern const struct GameDriver driver_mslug2t;
+extern const struct GameDriver driver_vliner7e;
+extern const struct GameDriver driver_vliner6e;
+extern const struct GameDriver driver_vliner54;
+extern const struct GameDriver driver_vliner53;
+extern const struct GameDriver driver_kof97pls;
 
 const struct GameDriver *drivers[] = {
 	&driver_pacman,
@@ -722,6 +779,7 @@ const struct GameDriver *drivers[] = {
 	&driver_kotmm,
 	&driver_sengokum,
 	&driver_burningfm,
+	&driver_lbowlingm,
 	&driver_gpilotsm,
 	&driver_joyjoym,
 	&driver_bjourneym,
@@ -735,6 +793,7 @@ const struct GameDriver *drivers[] = {
 	&driver_fatfury1m,
 	&driver_fbfrenzym,
 	&driver_crswordm,
+	&driver_trallym,
 	&driver_bstars2m,
 	&driver_quizdai2m,
 	&driver_samshom,
@@ -796,27 +855,82 @@ const struct GameDriver *drivers[] = {
 	&driver_pgoalm,
 	&driver_ironclad,
 	&driver_magdrop2m,
+	&driver_samsho4m,
+	&driver_rbffspecm,
 	&driver_twinsprim,
 	&driver_wakuwak7m,
 	&driver_stakwin2m,
 	&driver_ghostlop,
 	&driver_breakersm,
 	&driver_miexchngm,
+	&driver_kof97m,
 	&driver_magdrop3m,
+	&driver_lastbladm,
 	&driver_puzzldprm,
 	&driver_popbouncm,
+	&driver_shocktrom,
 	&driver_blazstarm,
+	&driver_rbff2m,
 	&driver_mslug2m,
+	&driver_lastbld2m,
 	&driver_neocup98m,
 	&driver_breakrevm,
+	&driver_shocktr2m,
 	&driver_flipshotm,
 	&driver_pbobbl2nm,
 	&driver_ctomadaym,
+	&driver_mslugxm,
 	&driver_vliner,
 	&driver_zintrckb,
 	&driver_froman2b,
 	&driver_crswd2bl,
 	&driver_diggerma,
 	&driver_lasthope,
+	&driver_bstarsh,
+	&driver_maglordhm,
+	&driver_ncombath,
+	&driver_kotmh,
+	&driver_sengokuh,
+	&driver_burningfh,
+	&driver_gpilotsh,
+	&driver_bjourneyh,
+	&driver_quizdaisk,
+	&driver_2020bba,
+	&driver_socbrawlh,
+	&driver_samshoh,
+	&driver_tophuntrh,
+	&driver_aof2a,
+	&driver_wh2h,
+	&driver_fatfurspa,
+	&driver_fightfeva,
+	&driver_samsho2k,
+	&driver_samsho2ka,
+	&driver_quizkofk,
+	&driver_kof95a,
+	&driver_kof95h,
+	&driver_samsho3h,
+	&driver_fswords,
+	&driver_rbff1a,
+	&driver_rbff1ka,
+	&driver_rbff1k,
+	&driver_aof3k,
+	&driver_kof96a,
+	&driver_kof96h,
+	&driver_ironclado,
+	&driver_samsho4k,
+	&driver_rbffspeck,
+	&driver_kof97h,
+	&driver_kof97k,
+	&driver_lastbladh,
+	&driver_lastsold,
+	&driver_shocktroa,
+	&driver_rbff2h,
+	&driver_rbff2k,
+	&driver_mslug2t,
+	&driver_vliner7e,
+	&driver_vliner6e,
+	&driver_vliner54,
+	&driver_vliner53,
+	&driver_kof97pls,
 	0
 };

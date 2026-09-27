@@ -46,6 +46,9 @@ void showdisclaimer(void)   /* MAURY_BEGIN: dichiarazione */
 #ifdef MAMEGO
 static unsigned char *neospr_stub[MAX_MEMORY_REGIONS];
 extern unsigned char mamego_region_flash[MAX_MEMORY_REGIONS];
+/* banked part (above 1 MB) of a Neo Geo program split between PSRAM and
+   flash by mamego_regions_to_flash(), NULL when the program is in one piece */
+unsigned char *mamego_prog_hi;
 extern size_t mamego_flash_offset;
 static unsigned char *mamego_sound_to_flash(const struct RomModule *region_hdr, unsigned region_size);
 unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t *offset);
@@ -93,6 +96,10 @@ int readroms(void)
 
 		memset(neospr_stub, 0, sizeof(neospr_stub));
 		mamego_flash_offset = 0;
+		{
+			extern int neosnd_big_program;
+			neosnd_big_program = (p->crc & ~REGIONFLAG_MASK) == REGION_CPU1 && p->offset > 0x400000;
+		}
 		for (region = 0; (p->name || p->offset || p->length) && region < MAX_MEMORY_REGIONS; region++)
 		{
 			int type = p->crc & ~REGIONFLAG_MASK, entries = 0;
@@ -1139,6 +1146,27 @@ void mamego_regions_to_flash(void)
 			if (type != REGION_CPU1 || Machine->drv->vh_start != neogeo_mvs_vh_start
 				|| Machine->memory_region_length[i] < 1024 * 1024)
 				continue;
+		}
+		if (type == REGION_CPU1 && Machine->memory_region_length[i] > 0x400000)
+		{
+			/* 5 MB programs (Shock Troopers, KOF '97): larger than the
+			   partition. The first MB (fixed at 0x000000) stays in PSRAM, the
+			   banked part (seen through the 1 MB window at 0x200000) goes to
+			   flash; the driver's bankswitch reads it through mamego_prog_hi. */
+			unsigned char *old = Machine->memory_region[i], *lo;
+			size_t len = Machine->memory_region_length[i];
+			extern void memory_rebase(const unsigned char *old, size_t len, unsigned char *copy);
+			copy = mamego_flash_store(old + 0x100000, len - 0x100000, &offset);
+			if (!copy || !(lo = malloc(0x100000)))
+				continue;
+			memcpy(lo, old, 0x100000);
+			memory_rebase(old + 0x100000, len - 0x100000, copy);
+			memory_rebase(old, 0x100000, lo);
+			free(old);
+			Machine->memory_region[i] = lo;
+			mamego_prog_hi = copy;
+			logerror("mamego: program split, 1 MB in RAM + %u KB served from flash\n", (unsigned)((len - 0x100000) / 1024));
+			continue;
 		}
 		copy = mamego_flash_store(Machine->memory_region[i], Machine->memory_region_length[i], &offset);
 		if (!copy)
