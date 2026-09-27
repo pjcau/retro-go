@@ -104,6 +104,7 @@ static struct
     int bits, width, height, pitch;
     uint16_t *pal;
     int pal_size;
+    void (*render)(void);
 } present;
 static TaskHandle_t present_task;
 static SemaphoreHandle_t present_done;
@@ -114,6 +115,8 @@ static void present_task_main(void *arg)
     for (;;)
     {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (present.render) /* Neo Geo sprites of this frame (vidhrdw/neogeo.c) */
+            present.render();
         rg_surface_t *surface = updates[current];
         const uint16_t *pal = present.pal;
         for (int y = 0; y < present.height; y++)
@@ -148,7 +151,7 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
     if (!present_task)
     {
         present_done = xSemaphoreCreateBinary();
-        if (xTaskCreatePinnedToCore(present_task_main, "mame_present", 3072, NULL, 5, &present_task, 1) != pdPASS)
+        if (xTaskCreatePinnedToCore(present_task_main, "mame_present", 6144, NULL, 5, &present_task, 1) != pdPASS)
             return 0;
     }
     if (colors > present.pal_size)
@@ -174,6 +177,11 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
             present.pal[i] = (uint16_t)((const uint32_t *)palette)[i];
     else
         memcpy(present.pal, palette, colors * sizeof(uint16_t));
+    {
+        extern void (*mamego_frame_render)(void);
+        present.render = mamego_frame_render; /* drawn on this core before converting */
+        mamego_frame_render = NULL;
+    }
     present.pix = pix;
     present.bits = bits;
     present.width = width;
@@ -270,9 +278,13 @@ unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t 
 
 /* State buffer: the heap, or on a Neo Geo game (PSRAM nearly all given to
    the sprite page cache) the page cache itself, borrowed between frames. */
+static int present_indexed(const void *pix, int bits, int width, int height, int pitch, const void *palette, int colors);
+
 static void *state_buffer(size_t size, bool *borrowed)
 {
     extern void *neospr_borrow(size_t size);
+    if (present_task)
+        present_indexed(NULL, 0, 0, 0, 0, NULL, 0); /* core 1 done with the frame and the page cache */
     void *buf = size ? malloc(size) : NULL;
     *borrowed = false;
     if (!buf && size && (buf = neospr_borrow(size)))

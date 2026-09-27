@@ -100,9 +100,24 @@ void neospr_frame(void);
 void neospr_stop(void);
 #endif
 
+#ifdef MAMEGO
+void (*mamego_frame_render)(void);
+extern int (*mamego_present_indexed)(const void *pix, int bits, int width, int height, int pitch,
+                                     const void *palette, int colors);
+static int render_defer = -1;
+static unsigned char *vidram_r;          /* the renderer's copy of the video RAM */
+#endif
+
 void neogeo_vh_stop(void)
 {
 #ifdef MAMEGO
+	if (mamego_frame_render || render_defer > 0)
+	{
+		/* the host may still be drawing from vidram_r and the page cache */
+		mamego_frame_render = 0;
+		if (mamego_present_indexed)
+			mamego_present_indexed(0, 0, 0, 0, 0, 0, 0);
+	}
 	{ extern unsigned int m68ki_idle_enable; extern unsigned z80_idle_enable; m68ki_idle_enable = 0; z80_idle_enable = 0; }
 	neospr_stop();
 	{ extern void neosnd_stop(void); neosnd_stop(); }
@@ -111,6 +126,12 @@ void neogeo_vh_stop(void)
 	if (pal_bank2) free(pal_bank2);
 	if (vidram) free(vidram);
 	if (neogeo_ram) free(neogeo_ram);
+#ifdef MAMEGO
+	if (vidram_r) free(vidram_r);
+	vidram_r = 0;
+	render_defer = -1;
+	mamego_frame_render = 0;
+#endif
 
 	pal_bank1=pal_bank2=vidram=neogeo_ram=0;
 }
@@ -511,9 +532,35 @@ READ_HANDLER( vidram_data_r )
 	return (READ_WORD(&vidram[where << 1]));
 }
 
+#ifdef MAMEGO
+/* Sprites drawn on core 1 (see neogeo_vh_screenrefresh): the renderer reads a
+   copy of the video RAM taken at the end of the frame, while core 0 already
+   runs the next one. Only the 256-byte blocks written during the frame are
+   copied (a few hundred words a frame against 67 KB). */
+#define VRAM_USED  0x10c00
+static uint32_t vram_dirty[(VRAM_USED / 256 + 31) / 32];
+#define VRAM_TOUCH(off) do { unsigned _o = (off); if (_o < VRAM_USED) vram_dirty[_o >> 13] |= 1u << ((_o >> 8) & 31); } while (0)
+void neogeo_vram_all_dirty(void) { memset(vram_dirty, 0xff, sizeof(vram_dirty)); }
+static void vram_sync(void)
+{
+	unsigned w, b;
+	for (w = 0; w < sizeof(vram_dirty) / 4; w++)
+		while (vram_dirty[w])
+		{
+			b = __builtin_ctz(vram_dirty[w]);
+			vram_dirty[w] &= vram_dirty[w] - 1;
+			if ((w * 32 + b) * 256 < VRAM_USED)
+				memcpy(vidram_r + (w * 32 + b) * 256, vidram + (w * 32 + b) * 256, 256);
+		}
+}
+#else
+#define VRAM_TOUCH(off) ((void)0)
+#endif
+
 WRITE_HANDLER( vidram_data_w )
 {
 	WRITE_WORD(&vidram[where << 1],data);
+	VRAM_TOUCH(where << 1);
 	where = (where + modulo) & 0xffff;
 }
 
@@ -539,6 +586,7 @@ READ_HANDLER( mish_vid_r )
 WRITE_HANDLER( mish_vid_w )
 {
 	COMBINE_WORD_MEM(&vidram[offset],data);
+	VRAM_TOUCH(offset);
 }
 
 WRITE_HANDLER( neo_board_fix_w )
@@ -932,7 +980,11 @@ void NeoMVSDrawGfx16(unsigned char **line,const struct GfxElement *gfx, /* AJP *
 
 /******************************************************************************/
 
-static void screenrefresh(struct osd_bitmap *bitmap,const struct rectangle *clip)
+/* do_palette: MAME palette bookkeeping (core 0 only: global palette state);
+   do_draw: sprites + fix layer into bitmap, from the given video RAM and the
+   frame counter / fix bank of that frame (core 1 when deferred) */
+static void screenrefresh_(struct osd_bitmap *bitmap,const struct rectangle *clip,int do_palette,int do_draw,
+		const unsigned char *vidram,unsigned int neogeo_frame_counter,int fix_bank)
 {
 	int sx =0,sy =0,oy =0,my =0,zx = 1, rzy = 1;
 	int offs,i,count,y,x;
@@ -978,8 +1030,8 @@ static void screenrefresh(struct osd_bitmap *bitmap,const struct rectangle *clip
 	}
 	#endif
 
-	if (clip->max_y - clip->min_y > 8 ||	/* kludge to speed up raster effects */
-			clip->min_y == Machine->visible_area.min_y)
+	if (do_palette && (clip->max_y - clip->min_y > 8 ||	/* kludge to speed up raster effects */
+			clip->min_y == Machine->visible_area.min_y))
     {
 		/* Palette swap occured after last frame but before this one */
 		if (palette_swap_pending) swap_palettes();
@@ -988,6 +1040,8 @@ static void screenrefresh(struct osd_bitmap *bitmap,const struct rectangle *clip
 		neogeo_palette(clip);
 		/* no need to check the return code since we redraw everything each frame */
 	}
+	if (!do_draw)
+		return;
 
 	fillbitmap(bitmap,Machine->pens[4095],clip);
 
@@ -1262,9 +1316,55 @@ for (i = 0;i < 8;i+=2)
 
 }
 
+static void screenrefresh(struct osd_bitmap *bitmap,const struct rectangle *clip)
+{
+	screenrefresh_(bitmap,clip,1,1,vidram,neogeo_frame_counter,fix_bank);
+}
+
+#ifdef MAMEGO
+/* Set when this frame's sprites are left to the host's present task (core 1,
+   mame-go main.c), which calls it before converting the bitmap; libretro
+   video.c runs it itself when the frame does not go that way. */
+static struct { struct osd_bitmap *bitmap; unsigned int frame_counter; int fix_bank; } render_job;
+
+static void neogeo_render_job(void)
+{
+	neospr_frame();
+	screenrefresh_(render_job.bitmap,&Machine->visible_area,0,1,vidram_r,render_job.frame_counter,render_job.fix_bank);
+}
+#endif
+
 void neogeo_vh_screenrefresh(struct osd_bitmap *bitmap,int full_refresh)
 {
 #ifdef MAMEGO
+	if (render_defer < 0)
+	{
+		/* only with paged sprites (tiles decoded ahead, pen_usage fixed: nothing
+		   the renderer writes is read by core 0) and the host's present path */
+		render_defer = neospr_active() && mamego_present_indexed && (vidram_r = malloc(VRAM_USED)) != NULL;
+#ifndef ESP_PLATFORM
+		if (getenv("NEODEFER") && !strcmp(getenv("NEODEFER"), "0")) render_defer = 0;
+#endif
+		if (render_defer)
+		{
+			memcpy(vidram_r, vidram, VRAM_USED);
+			memset(vram_dirty, 0, sizeof(vram_dirty));
+			printf("neogeo: sprites drawn on the second core\n");
+		}
+	}
+	if (render_defer && mamego_present_indexed)
+	{
+		/* the renderer still drawing the last frame reads vidram_r and the
+		   palette: wait for it, then palette on core 0, copy, hand over */
+		mamego_present_indexed(0, 0, 0, 0, 0, 0, 0);
+		screenrefresh_(bitmap,&Machine->visible_area,1,0,vidram,neogeo_frame_counter,fix_bank);
+		vram_sync();
+		render_job.bitmap = bitmap;
+		render_job.frame_counter = neogeo_frame_counter;
+		render_job.fix_bank = fix_bank;
+		mamego_frame_render = neogeo_render_job;
+		return;
+	}
 	if (neospr_active())
 		neospr_frame();
 #endif

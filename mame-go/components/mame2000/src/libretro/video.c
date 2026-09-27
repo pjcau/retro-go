@@ -830,6 +830,17 @@ int (*mamego_present_indexed)(const void *pix, int bits, int width, int height, 
 int mame2000_frame_presented = 0;
 static struct osd_bitmap *mamego_bitmaps[2];
 
+/* a frame whose sprites the driver left to the host (Neo Geo, vidhrdw/neogeo.c)
+   but that does not go to the host: draw them on this core */
+static void mamego_render_now(void)
+{
+	extern void (*mamego_frame_render)(void);
+	void (*render)(void) = mamego_frame_render;
+	mamego_frame_render = 0;
+	if (render)
+		render();
+}
+
 static int mamego_present_frame(struct osd_bitmap *bitmap)
 {
 	extern int neogeo_mvs_vh_start(void);
@@ -899,6 +910,9 @@ void osd_update_video_and_audio(struct osd_bitmap *bitmap)
 {
 	PROF_PUSH(PROF_BLIT);
 	osd_update_video_and_audio_(bitmap);
+#ifdef MAMEGO
+	mamego_render_now(); /* skipped frame: keep the bitmap and the state in step */
+#endif
 	PROF_POP();
 }
 static void osd_update_video_and_audio_(struct osd_bitmap *bitmap)
@@ -1067,9 +1081,14 @@ static void osd_update_video_and_audio_(struct osd_bitmap *bitmap)
 			if (mamego_present_frame(bitmap))
 				mame2000_frame_presented = 1;
 			else
+			{
+				mamego_render_now(); /* sprites left for the host: draw them here */
 #endif
 			/* copy the bitmap to screen memory */
 			update_screen(bitmap);
+#ifdef MAMEGO
+			}
+#endif
 		}
 
 		if (have_to_clear_bitmap)

@@ -877,6 +877,7 @@ size_t neogeo_mamego_state(unsigned char *buf, size_t size, int mode) /* 0 size,
 		palno = pal;
 		neogeo_paletteram = pal ? pal_bank2 : pal_bank1;
 		palette_swap_pending = 1; /* MAME palette rebuilt from the bank */
+		neogeo_vram_all_dirty();  /* the renderer's copy (sprites on core 1) */
 		if (bank4 >= 0 && bank4 < memory_region_length(REGION_CPU1))
 			cpu_setbank(4, neogeo_prog(bank4));
 		cpu_setbank(5, &RAM[bank[0]]);
