@@ -18,6 +18,9 @@ bool S9xSaveState(const char *filename)
    int chunks = 0;
    FILE *fp = NULL;
 
+   if (Settings.SuperFX)
+      S9xSuperFXWait();
+
    if (!(fp = fopen(filename, "wb")))
       return false;
 
@@ -47,6 +50,9 @@ bool S9xLoadState(const char *filename)
    uint8_t buffer[512];
    int chunks = 0;
    FILE *fp = NULL;
+
+   if (Settings.SuperFX)
+      S9xSuperFXWait();
 
    if (!(fp = fopen(filename, "rb")))
       return false;

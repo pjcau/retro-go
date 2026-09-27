@@ -9,6 +9,10 @@
 #include "dma.h"
 #include "display.h"
 #include "srtc.h"
+#include "fxemu.h"
+#include "fxinst.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 extern const uint8_t mul_brightness [16][32];
 
@@ -100,6 +104,123 @@ void S9xFixColourBrightness()
 /* S9xSetPPU()                                                                */
 /* This function sets a PPU Register to a specific byte                       */
 /******************************************************************************/
+static TaskHandle_t fx_task;
+static volatile int fx_state; /* FX_IDLE -> FX_RUNNING (core 1) -> FX_DONE, see S9xSuperFXExec */
+enum { FX_IDLE, FX_RUNNING, FX_DONE };
+
+static void S9xSetSuperFX(uint8_t Byte, uint16_t Address)
+{
+   uint8_t old_fill_ram;
+   if (!Settings.SuperFX)
+      return;
+
+   old_fill_ram = Memory.FillRAM[Address];
+   Memory.FillRAM[Address] = Byte;
+
+   /* The GSU state belongs to core 1 while it runs */
+   if (fx_state == FX_RUNNING)
+      return;
+
+   switch (Address)
+   {
+      case 0x3030:
+         if ((old_fill_ram ^ Byte) & FLG_G)
+         {
+            if (Byte & FLG_G) /* Go flag has been changed */
+               S9xSuperFXExec();
+            else
+               FxFlushCache();
+         }
+         break;
+      case 0x3034:
+      case 0x3036:
+         Memory.FillRAM [Address] &= 0x7f;
+         break;
+      case 0x3038:
+         fx_dirtySCBR();
+         break;
+      case 0x303c:
+         fx_updateRamBank(Byte);
+         break;
+      case 0x301f:
+         Memory.FillRAM [0x3000 + GSU_SFR] |= FLG_G;
+         S9xSuperFXExec();
+         break;
+      default:
+         break;
+   }
+}
+
+/* GSU on core 1.
+ * In run-to-STOP mode (every GSU game but Winter Gold / Dirt Racer) the
+ * whole GSU program used to run inline on core 0 when the CPU set the Go
+ * flag, which cost 50-67% of each second in Star Fox. Here it runs on core 1
+ * (idle during SNES games) while core 0 keeps emulating the 65816 and the
+ * PPU. That is how the hardware behaves: the CPU polls SFR.G ($3030) until
+ * the GSU stops, and the game hands the ROM/RAM buses to the GSU while it
+ * runs. Core 0 collects the result once per scanline (S9xSuperFXExec from
+ * the H-blank handler) and raises the GSU IRQ there. */
+
+static void fx_task_main(void *arg)
+{
+   for (;;)
+   {
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      FxEmulate(~0);
+      __sync_synchronize();
+      fx_state = FX_DONE;
+   }
+}
+
+static void fx_collect(void)
+{
+   int32_t GSUStatus;
+   fx_state = FX_IDLE;
+   GSUStatus = Memory.FillRAM [0x3000 + GSU_SFR] | (Memory.FillRAM [0x3000 + GSU_SFR + 1] << 8);
+   if ((GSUStatus & (FLG_G | FLG_IRQ)) == FLG_IRQ)
+      S9xSetIRQ(GSU_IRQ_SOURCE); /* Trigger a GSU IRQ. */
+}
+
+/* Block until core 1 is done with the GSU (reset, save states). */
+void S9xSuperFXWait(void)
+{
+   while (fx_state == FX_RUNNING)
+      vTaskDelay(1);
+   if (fx_state == FX_DONE)
+      fx_collect();
+}
+
+void S9xSuperFXExec(void)
+{
+   if (Settings.SuperFX)
+   {
+      bool async = !Settings.WinterGold || Settings.StarfoxHack;
+
+      if (fx_state == FX_RUNNING)
+         return;
+      if (fx_state == FX_DONE)
+         fx_collect();
+
+      if ((Memory.FillRAM [0x3000 + GSU_SFR] & FLG_G) && (Memory.FillRAM [0x3000 + GSU_SCMR] & 0x18) == 0x18)
+      {
+         if (async && !fx_task)
+            xTaskCreatePinnedToCore(fx_task_main, "snes_gsu", 4096, NULL, 4, &fx_task, 1);
+         if (async && fx_task)
+         {
+            fx_state = FX_RUNNING;
+            __sync_synchronize();
+            xTaskNotifyGive(fx_task);
+            return;
+         }
+         if (async)
+            FxEmulate(~0);
+         else
+            FxEmulate((Memory.FillRAM [0x3000 + GSU_CLSR] & 1) ? 700 : 350);
+         fx_collect();
+      }
+   }
+}
+
 void S9xSetPPU(uint8_t Byte, uint16_t Address)
 {
    SNES_PROF_SET(last_reg, Address - 0x2100);
@@ -610,7 +731,10 @@ void S9xSetPPU(uint8_t Byte, uint16_t Address)
       if (Address == 0x2801 && Settings.SRTC) /* Dai Kaijyu Monogatari II */
          S9xSetSRTC(Byte, Address);
       else if (Address >= 0x3000 && Address < 0x3300)
+      {
+         S9xSetSuperFX(Byte, Address);
          return;
+      }
    }
    Memory.FillRAM[Address] = Byte;
 }

@@ -15,6 +15,9 @@
 #include "apu.h"
 #include "dsp.h"
 #include "srtc.h"
+#include "fxemu.h"
+
+extern FxInit_s SuperFX;
 
 #ifdef __W32_HEAP
 #include <malloc.h>
@@ -503,7 +506,14 @@ void InitROM(bool Interleaved)
       if ((Memory.ROMType & 0xf0) == 0xf0 && (strncmp(Memory.ROMName, "MEGAMAN X", 9) == 0 || strncmp(Memory.ROMName, "ROCKMAN X", 9) == 0))
          Settings.C4 = !Settings.ForceNoC4;
 
-      if ((Memory.ROMSpeed & ~0x10) == 0x25)
+      if (Settings.SuperFX)
+      {
+         SuperFXROMMap();
+         Settings.DSP1Master = false;
+         Settings.C4 = false;
+         Settings.SDD1 = false;
+      }
+      else if ((Memory.ROMSpeed & ~0x10) == 0x25)
          TalesROMMap(Interleaved);
       else if (Memory.ExtendedFormat)
          JumboLoROMMap(Interleaved);
@@ -812,6 +822,101 @@ void LoROMMap(void)
       DSPMap();
 
    MapRAM();
+   WriteProtectROM();
+}
+
+static void DetectSuperFxRamSize(void)
+{
+   if (Memory.ROM[0x7FDA] == 0x33)
+      Memory.SRAMSize = Memory.ROM[0x7FBD];
+   else if (strncmp(Memory.ROMName, "STAR FOX 2", 10) == 0)
+      Memory.SRAMSize = 6;
+   else
+      Memory.SRAMSize = 5;
+}
+
+/* SuperFX (GSU) cartridges, from snes9x2005. The GSU sees banks 00-3f as
+ * LoROM through a copy at ROM + 2 MB where every 32 KB block is repeated
+ * twice per 64 KB (see FxReset), so the ROM buffer must hold 6 MB. */
+void SuperFXROMMap(void)
+{
+   int32_t c;
+   int32_t i;
+
+   if (Memory.ROM_AllocSize - Memory.ROM_Offset < 0x600000 || Memory.CalculatedSize > 0x200000)
+   {
+      printf("SuperFX: ROM buffer %u bytes, need 6 MB - SuperFX disabled\n", (unsigned)(Memory.ROM_AllocSize - Memory.ROM_Offset));
+      Settings.SuperFX = false;
+      LoROMMap();
+      return;
+   }
+
+   DetectSuperFxRamSize();
+
+   /* Banks 00->3f and 80->bf */
+   for (c = 0; c < 0x400; c += 16)
+   {
+      Memory.Map [c + 0] = Memory.Map [c + 0x800] = Memory.RAM;
+      Memory.Map [c + 1] = Memory.Map [c + 0x801] = Memory.RAM;
+      Memory.MapInfo[c + 0].Type = Memory.MapInfo[c + 0x800].Type = MAP_TYPE_RAM;
+      Memory.MapInfo[c + 1].Type = Memory.MapInfo[c + 0x801].Type = MAP_TYPE_RAM;
+
+      Memory.Map [c + 2] = Memory.Map [c + 0x802] = (uint8_t*) MAP_PPU;
+      Memory.Map [c + 3] = Memory.Map [c + 0x803] = (uint8_t*) MAP_PPU;
+      Memory.Map [c + 4] = Memory.Map [c + 0x804] = (uint8_t*) MAP_CPU;
+      Memory.Map [c + 5] = Memory.Map [c + 0x805] = (uint8_t*) MAP_CPU;
+      Memory.Map [c + 6] = Memory.Map [c + 0x806] = (uint8_t*) Memory.SRAM - 0x6000;
+      Memory.Map [c + 7] = Memory.Map [c + 0x807] = (uint8_t*) Memory.SRAM - 0x6000;
+      Memory.MapInfo[c + 6].Type = Memory.MapInfo[c + 0x806].Type = MAP_TYPE_RAM;
+      Memory.MapInfo[c + 7].Type = Memory.MapInfo[c + 0x807].Type = MAP_TYPE_RAM;
+
+      for (i = c + 8; i < c + 16; i++)
+      {
+         Memory.Map [i] = Memory.Map [i + 0x800] = &Memory.ROM [(c << 11) % Memory.CalculatedSize] - 0x8000;
+         Memory.MapInfo[i].Type = Memory.MapInfo[i + 0x800].Type = MAP_TYPE_ROM;
+      }
+   }
+
+   /* Banks 40->7f and c0->ff */
+   for (c = 0; c < 0x400; c += 16)
+   {
+      for (i = c; i < c + 16; i++)
+      {
+         Memory.Map [i + 0x400] = Memory.Map [i + 0xc00] = &Memory.ROM [(c << 12) % Memory.CalculatedSize];
+         Memory.MapInfo[i + 0x400].Type = Memory.MapInfo[i + 0xc00].Type = MAP_TYPE_ROM;
+      }
+   }
+
+   /* Banks 7e->7f, RAM */
+   for (c = 0; c < 16; c++)
+   {
+      Memory.Map [c + 0x7e0] = Memory.RAM;
+      Memory.Map [c + 0x7f0] = Memory.RAM + 0x10000;
+      Memory.MapInfo[c + 0x7e0].Type = Memory.MapInfo[c + 0x7f0].Type = MAP_TYPE_RAM;
+   }
+
+   /* Banks 70->71, S-RAM (GSU RAM). Our SRAM is 64 KB (SRAM_SIZE, part of
+    * the save-state layout), so bank 71 mirrors 70: one GSU RAM bank. */
+   for (c = 0; c < 32; c++)
+   {
+      Memory.Map [c + 0x700] = Memory.SRAM;
+      Memory.MapInfo[c + 0x700].Type = MAP_TYPE_RAM;
+   }
+
+   /* Replicate the first 2Mb of the ROM at ROM + 2MB such that each 32K
+      block is repeated twice in each 64K block. */
+   for (c = 0; c < 64; c++)
+   {
+      memcpy(&Memory.ROM [0x200000 + c * 0x10000], &Memory.ROM [c * 0x8000], 0x8000);
+      memcpy(&Memory.ROM [0x208000 + c * 0x10000], &Memory.ROM [c * 0x8000], 0x8000);
+   }
+
+   SuperFX.pvRegisters = &Memory.FillRAM [0x3000];
+   SuperFX.nRamBanks = 1;
+   SuperFX.pvRam = Memory.SRAM;
+   SuperFX.nRomBanks = Memory.CalculatedSize >> 15;
+   SuperFX.pvRom = Memory.ROM;
+
    WriteProtectROM();
 }
 

@@ -9,6 +9,7 @@
 #include "dma.h"
 #include "gfx.h"
 #include "soundux.h"
+#include "fxemu.h"
 
 SICPU ICPU;
 SCPUState CPU;
@@ -21,6 +22,8 @@ SoundStatus so;
 #endif
 
 SSettings Settings;
+
+FxInit_s SuperFX;
 
 int32_t OpAddress = 0;
 

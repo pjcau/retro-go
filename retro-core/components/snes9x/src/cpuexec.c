@@ -104,6 +104,8 @@ void S9xDoHBlankProcessing()
          IPPU.HDMA = S9xDoHDMA(IPPU.HDMA);
       break;
    case HBLANK_END_EVENT:
+      if (Settings.SuperFX)
+         S9xSuperFXExec();
 #ifndef USE_BLARGG_APU
       CPU.Cycles -= Settings.H_Max;
       if (IAPU.APUExecuting)
