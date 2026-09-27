@@ -390,6 +390,22 @@ static void console_exec(char *line)
         snprintf(path, sizeof(path), "%s%s%s", arg2, rest ? " " : "", rest ? rest : "");
         console_put(path, (size_t)atoi(arg1));
     }
+    else if (strcmp(cmd, "cat") == 0 && arg1)
+    {
+        // cat <path> : print a text file (e.g. /sd/crash.log), one "CTL cat" line each
+        char path[RG_PATH_MAX + 1];
+        snprintf(path, sizeof(path), "%s%s%s%s%s", arg1, arg2 ? " " : "", arg2 ? arg2 : "", rest ? " " : "", rest ? rest : "");
+        FILE *fp = fopen(path, "r");
+        char line[256];
+        while (fp && fgets(line, sizeof(line), fp))
+        {
+            line[strcspn(line, "\r\n")] = 0;
+            printf("CTL cat %s\n", line);
+        }
+        printf("CTL cat %s %s\n", fp ? "done" : "failed", path);
+        if (fp)
+            fclose(fp);
+    }
     else if (strcmp(cmd, "rm") == 0 && arg1)
     {
         char path[RG_PATH_MAX + 1];
