@@ -1160,6 +1160,19 @@ int osd_fwrite_swap (void *file, const void *buffer, int length)
 	return res;
 }
 
+#ifdef MAMEGO
+/* The whole content of a zipped/RAM file, without copying it (mame-go
+   streams sample ROMs to flash from here, see common.c). */
+const unsigned char *osd_fdata(void *file, unsigned *length)
+{
+	FakeFileHandle *f = (FakeFileHandle *) file;
+	if ((f->type != kZippedFile && f->type != kRAMFile) || !f->data)
+		return NULL;
+	*length = f->length;
+	return f->data;
+}
+#endif
+
 int osd_fread_scatter (void *file, void *buffer, int length, int increment)
 {
 	unsigned char *buf = (unsigned char*)buffer;

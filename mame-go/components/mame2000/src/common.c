@@ -43,6 +43,14 @@ void showdisclaimer(void)   /* MAURY_BEGIN: dichiarazione */
 
 ***************************************************************************/
 
+#ifdef MAMEGO
+static unsigned char *neospr_stub[MAX_MEMORY_REGIONS];
+extern unsigned char mamego_region_flash[MAX_MEMORY_REGIONS];
+extern size_t mamego_flash_offset;
+static unsigned char *mamego_sound_to_flash(const struct RomModule *region_hdr, unsigned region_size);
+unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t *offset);
+#endif
+
 int readroms(void)
 {
 	int region;
@@ -72,6 +80,29 @@ int readroms(void)
 	for (region = 0;region < MAX_MEMORY_REGIONS;region++)
 		Machine->memory_region[region] = 0;
 
+#ifdef MAMEGO
+	{
+		/* Neo Geo sprite regions go to the SD card (mamego_neospr.c). Prepare
+		   them before anything else is loaded: converting needs the PSRAM the
+		   program and sample ROMs are about to take. */
+		extern int neospr_wanted(int type);
+		extern unsigned char *neospr_region_load(int type, const struct RomModule *first, int entries, unsigned region_size);
+		const struct RomModule *p = romp;
+
+		memset(neospr_stub, 0, sizeof(neospr_stub));
+		mamego_flash_offset = 0;
+		for (region = 0; (p->name || p->offset || p->length) && region < MAX_MEMORY_REGIONS; region++)
+		{
+			int type = p->crc & ~REGIONFLAG_MASK, entries = 0;
+			while (p[1 + entries].length)
+				entries++;
+			if (neospr_wanted(type))
+				neospr_stub[region] = neospr_region_load(type, p + 1, entries, p->offset);
+			p += 1 + entries;
+		}
+	}
+#endif
+
 	region = 0;
 
 	while (romp->name || romp->offset || romp->length)
@@ -99,6 +130,41 @@ int readroms(void)
 		}
 
 		region_size = romp->offset;
+#ifdef MAMEGO
+		if (neospr_stub[region])
+		{
+			/* Neo Geo sprites: on the SD card, prepared before this loop */
+			int entries = 0;
+			while (romp[1 + entries].length)
+				entries++;
+			{
+				Machine->memory_region[region] = neospr_stub[region];
+				Machine->memory_region_length[region] = region_size;
+				Machine->memory_region_type[region] = romp->crc;
+				current_rom += entries;
+				romp += 1 + entries;
+				region++;
+				continue;
+			}
+		}
+		{
+			unsigned char *flash = mamego_sound_to_flash(romp, region_size);
+			if (flash)
+			{
+				int entries = 0;
+				while (romp[1 + entries].length)
+					entries++;
+				Machine->memory_region[region] = flash;
+				Machine->memory_region_length[region] = region_size;
+				Machine->memory_region_type[region] = romp->crc;
+				mamego_region_flash[region] = 1;
+				current_rom += entries;
+				romp += 1 + entries;
+				region++;
+				continue;
+			}
+		}
+#endif
 		if ((Machine->memory_region[region] = (unsigned char *) malloc(region_size)) == 0)
 		{
 			printf("readroms():  Unable to allocate %d bytes of RAM\n",region_size);
@@ -968,6 +1034,65 @@ void save_screen_snapshot(struct osd_bitmap *bitmap)
 
 #ifdef MAMEGO
 unsigned char mamego_region_flash[MAX_MEMORY_REGIONS];
+size_t mamego_flash_offset; /* next free byte of the flash partition, reset per game */
+
+/* Sample regions straight to flash while loading, one ROM file at a time:
+ * the region is never allocated in PSRAM, only the unzipped file is (Neo Geo
+ * Sonic Wings 2: 3 MB region + 2 MB file did not fit next to the program).
+ * Only plain ROM_LOADs laid end to end, each a multiple of the 4 KB flash
+ * sector, so consecutive stores form the region. Returns the mapped region
+ * or NULL (then readroms() loads it into RAM as usual). */
+static unsigned char *mamego_sound_to_flash(const struct RomModule *region_hdr, unsigned region_size)
+{
+	extern const unsigned char *osd_fdata(void *file, unsigned *length);
+	const struct RomModule *r;
+	size_t start = mamego_flash_offset;
+	unsigned expect = 0;
+	unsigned char *base = NULL;
+	int type = region_hdr->crc & ~REGIONFLAG_MASK;
+
+	if (type < REGION_SOUND1 || type > REGION_SOUND8 || region_size < 256 * 1024)
+		return NULL;
+#ifndef ESP_PLATFORM
+	if (getenv("SNDFLASH") && !strcmp(getenv("SNDFLASH"), "0")) /* PC A/B runs */
+		return NULL;
+#endif
+	for (r = region_hdr + 1; r->length; r++)
+	{
+		unsigned length = r->length & ~ROMFLAG_MASK;
+		if (!r->name || r->name == (char *)-1 || (r->length & ROMFLAG_MASK) || r->offset != expect || (length & 0xFFF))
+			return NULL;
+		expect += length;
+	}
+	if (expect != region_size)
+		return NULL;
+
+	for (r = region_hdr + 1; r->length; r++)
+	{
+		const struct GameDriver *drv = Machine->gamedrv;
+		unsigned length = r->length & ~ROMFLAG_MASK, got = 0;
+		const unsigned char *data;
+		unsigned char *copy;
+		void *f = NULL;
+
+		do { f = osd_fopen(drv->name, r->name, OSD_FILETYPE_ROM, 0); drv = drv->clone_of; } while (!f && drv);
+		if (!f)
+			goto fail;
+		printf("loading %-12s (to flash)\n", r->name);
+		data = osd_fdata(f, &got);
+		copy = (data && got >= length) ? mamego_flash_store(data, length, &mamego_flash_offset) : NULL;
+		osd_fclose(f);
+		if (!copy || (base && copy != base + r->offset))
+			goto fail;
+		if (!base)
+			base = copy;
+	}
+	return base;
+
+fail:
+	mamego_flash_offset = start;
+	return NULL;
+}
 
 /* Implemented by the host app (mame-go main.c) on a flash partition: store
  * len bytes at *offset, return the memory-mapped copy and advance *offset, or
@@ -984,7 +1109,7 @@ __attribute__((weak)) unsigned char *mamego_flash_store(const unsigned char *dat
  * boards need (Aero Fighters: 3.6 MB of them). */
 void mamego_regions_to_flash(void)
 {
-	size_t offset = 0;
+	size_t offset = mamego_flash_offset; /* after the sample regions readroms() streamed */
 	int i;
 
 	for (i = 0; i < MAX_MEMORY_REGIONS; i++)
@@ -992,8 +1117,13 @@ void mamego_regions_to_flash(void)
 		int type = Machine->memory_region_type[i] & ~REGIONFLAG_MASK;
 		unsigned char *copy;
 
-		if (!Machine->memory_region[i] || Machine->memory_region_length[i] < 256 * 1024)
+		if (!Machine->memory_region[i] || Machine->memory_region_length[i] < 256 * 1024 || mamego_region_flash[i])
 			continue;
+		{
+			extern int neospr_owns(const unsigned char *region);
+			if (neospr_owns(Machine->memory_region[i])) /* a 16-byte stub, the tiles are on the card */
+				continue;
+		}
 		if (!((type >= REGION_GFX1 && type <= REGION_GFX8) || (type >= REGION_SOUND1 && type <= REGION_SOUND8)))
 			continue;
 		copy = mamego_flash_store(Machine->memory_region[i], Machine->memory_region_length[i], &offset);

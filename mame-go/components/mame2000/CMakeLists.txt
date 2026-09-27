@@ -2,6 +2,7 @@
 set(COMPONENT_SRCS
     mamego_driver.c
     mamego_pick.c
+    mamego_neospr.c
     src/artwork.c
     src/audit.c
     src/cheat.c
@@ -25,6 +26,7 @@ set(COMPONENT_SRCS
     src/drivers/frogger.c
     src/drivers/galaga.c
     src/drivers/galaxian.c
+    src/drivers/neogeo.c
     src/drivers/pacman.c
     src/drivers/scramble.c
     src/drivers/starfire.c
