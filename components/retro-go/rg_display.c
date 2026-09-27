@@ -489,6 +489,11 @@ char *rg_display_get_border(void)
     return rg_settings_get_string(NS_APP, SETTING_BORDER, NULL);
 }
 
+// Bench switch (console "lcd off|on"): drop every frame before it reaches the
+// panel while the emulation and audio keep running, to tell display-bus noise
+// from anything else.
+bool rg_display_frozen = false;
+
 void rg_display_submit(const rg_surface_t *update, uint32_t flags)
 {
     const int64_t time_start = rg_system_timer();
@@ -496,6 +501,12 @@ void rg_display_submit(const rg_surface_t *update, uint32_t flags)
     // Those things should probably be asserted, but this is a new system let's be forgiving...
     if (!update || !update->data)
         return;
+
+    if (rg_display_frozen)
+    {
+        counters.totalFrames++;
+        return;
+    }
 
     if (display.source.width != update->width || display.source.height != update->height)
     {

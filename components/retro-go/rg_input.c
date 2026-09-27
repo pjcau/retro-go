@@ -390,6 +390,53 @@ static void console_exec(char *line)
         snprintf(path, sizeof(path), "%s%s%s", arg2, rest ? " " : "", rest ? rest : "");
         console_put(path, (size_t)atoi(arg1));
     }
+    else if (strcmp(cmd, "acap") == 0)
+    {
+        // acap [seconds] : capture the next submitted audio (max 6 s), mono
+        extern int16_t *rg_audio_cap_buf;
+        extern volatile size_t rg_audio_cap_len, rg_audio_cap_pos;
+        int secs = arg1 ? atoi(arg1) : 3;
+        if (secs < 1 || secs > 6) secs = 3;
+        size_t len = (size_t)secs * rg_audio_get_sample_rate();
+        rg_audio_cap_len = 0;
+        free(rg_audio_cap_buf);
+        rg_audio_cap_buf = rg_alloc(len * sizeof(int16_t), MEM_SLOW);
+        rg_audio_cap_pos = 0;
+        rg_audio_cap_len = rg_audio_cap_buf ? len : 0;
+        printf("CTL acap %s %u %d\n", rg_audio_cap_buf ? "started" : "failed", (unsigned)len, rg_audio_get_sample_rate());
+    }
+    else if (strcmp(cmd, "adump") == 0)
+    {
+        // adump : print the capture as base64, "CTL a <chunk>" lines
+        extern int16_t *rg_audio_cap_buf;
+        extern volatile size_t rg_audio_cap_len, rg_audio_cap_pos;
+        static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const uint8_t *p = (const uint8_t *)rg_audio_cap_buf;
+        size_t n = rg_audio_cap_buf ? rg_audio_cap_pos * sizeof(int16_t) : 0;
+        char line[97];
+        for (size_t i = 0; i < n;)
+        {
+            int o = 0;
+            for (int k = 0; k < 24 && i < n; k++, i += 3)
+            {
+                uint32_t v = p[i] << 16 | (i + 1 < n ? p[i + 1] << 8 : 0) | (i + 2 < n ? p[i + 2] : 0);
+                line[o++] = b64[v >> 18 & 63];
+                line[o++] = b64[v >> 12 & 63];
+                line[o++] = i + 1 < n ? b64[v >> 6 & 63] : '=';
+                line[o++] = i + 2 < n ? b64[v & 63] : '=';
+            }
+            line[o] = 0;
+            printf("CTL a %s\n", line);
+        }
+        printf("CTL adump done %u %d\n", (unsigned)(n / 2), rg_audio_get_sample_rate());
+    }
+    else if (strcmp(cmd, "lcd") == 0 && arg1)
+    {
+        // lcd off|on : stop/restart sending frames to the panel (bench: display-bus noise)
+        extern bool rg_display_frozen;
+        rg_display_frozen = strcmp(arg1, "off") == 0;
+        printf("CTL lcd %s\n", rg_display_frozen ? "off" : "on");
+    }
     else if (strcmp(cmd, "cat") == 0 && arg1)
     {
         // cat <path> : print a text file (e.g. /sd/crash.log), one "CTL cat" line each

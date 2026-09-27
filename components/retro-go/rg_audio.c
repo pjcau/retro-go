@@ -135,6 +135,12 @@ void rg_audio_deinit(void)
     RELEASE_DEVICE();
 }
 
+// Bench capture (console "acap N" / "adump"): the samples exactly as the
+// emulator submits them, before the driver, to tell a digital artefact from
+// an analog one. Mono (L+R)/2, in PSRAM.
+int16_t *rg_audio_cap_buf;
+volatile size_t rg_audio_cap_len, rg_audio_cap_pos;
+
 void rg_audio_submit(const rg_audio_frame_t *frames, size_t count)
 {
     const int64_t time_start = rg_system_timer();
@@ -144,6 +150,12 @@ void rg_audio_submit(const rg_audio_frame_t *frames, size_t count)
 
     if (!frames || !count)
         return;
+
+    if (rg_audio_cap_buf && rg_audio_cap_pos < rg_audio_cap_len)
+    {
+        for (size_t i = 0; i < count && rg_audio_cap_pos < rg_audio_cap_len; i++)
+            rg_audio_cap_buf[rg_audio_cap_pos++] = ((int)frames[i].left + frames[i].right) / 2;
+    }
 
     if (ACQUIRE_DEVICE(0))
     {
