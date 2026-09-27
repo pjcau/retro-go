@@ -48,10 +48,15 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#ifdef ESP_PLATFORM
+#include <esp_heap_caps.h>
+#endif
 
 #include "doomstat.h"
 #include "lprintf.h"
 #include "z_zone.h"
+
+#define ZONE_PSRAM_RESERVE (1536 * 1024)
 
 #define CHUNK_SIZE 4        // Minimum chunk size at which blocks are allocated
 #define ZONEID  0x931d4a11  // signature for block header
@@ -201,6 +206,15 @@ void *(Z_Malloc)(size_t size, int tag, void **user DA(const char *file, int line
     return user ? *user = NULL : NULL;           // malloc(0) returns NULL
 
   size = (size+CHUNK_SIZE-1) & ~(CHUNK_SIZE-1);  // round to chunk size
+
+#ifdef ESP_PLATFORM
+  // RG: the lump cache only shrank when one of *our* mallocs failed, so it
+  // grew until PSRAM was empty and a non-zone allocation elsewhere (SD,
+  // audio, display) got NULL and crashed (LoadProhibited after ~2 min of
+  // demos, free PSRAM 7.2 MB -> 0.15 MB). Keep a reserve for everyone else.
+  while (blockbytag[PU_CACHE] && heap_caps_get_free_size(MALLOC_CAP_SPIRAM) < ZONE_PSRAM_RESERVE + size)
+    (Z_FreeTags)(PU_CACHE, PU_CACHE, 2);
+#endif
 
   while (!(block = (malloc)(size + HEADER_SIZE))) {
     if (!blockbytag[PU_CACHE])

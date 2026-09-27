@@ -20,6 +20,10 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <string.h>
+#ifdef ESP_PLATFORM
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#endif
 #include <errno.h>
 #include <doomtype.h>
 #include <doomstat.h>
@@ -555,6 +559,14 @@ static void options_handler(rg_gui_option_t *dest)
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
+#define DOOM_STACK_SIZE (16 * 1024)
+
+static void doom_main_task(void *arg)
+{
+    D_DoomMain();
+    vTaskDelete(NULL);
+}
+
 void app_main()
 {
     const rg_handlers_t handlers = {
@@ -607,5 +619,22 @@ void app_main()
 #endif
 
     Z_Init();
+#ifdef ESP_PLATFORM
+    // PrBoom's recursive BSP renderer outgrew the 8 KB main task shared by all
+    // apps: stack HWM 4252 at start, 124 bytes after a few minutes of E1 play,
+    // then a crash (2026-09-27). The game gets its own 16 KB task; this one
+    // stays as the watchdog for it (rg_system's STACK stat is the main task's).
+    TaskHandle_t doom_task;
+    if (xTaskCreatePinnedToCore(&doom_main_task, "doom_main", DOOM_STACK_SIZE, NULL,
+                                uxTaskPriorityGet(NULL), &doom_task, 0) == pdPASS)
+    {
+        while (1)
+        {
+            vTaskDelay(pdMS_TO_TICKS(10000));
+            RG_LOGI("doom_main stack free: %u bytes of %u\n",
+                    (unsigned)uxTaskGetStackHighWaterMark(doom_task), DOOM_STACK_SIZE);
+        }
+    }
+#endif
     D_DoomMain();
 }
