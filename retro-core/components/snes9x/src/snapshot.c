@@ -9,6 +9,20 @@
 #include "display.h"
 #include "srtc.h"
 #include "soundux.h"
+#include "fxemu.h"
+#include "fxinst.h"
+
+/* SuperFX (GSU): nearly all of its state is re-read from its register space
+ * (FillRAM 0x3000-0x32ff, saved above) at every FxEmulate(); what lives only
+ * in the emulator struct goes in this extra chunk, written for GSU games only.
+ * States saved before it existed still load (the chunk is optional). */
+typedef struct
+{
+   char     magic[4];                    /* "GSU1" */
+   uint32_t vColorReg, vPlotOptionReg, vLastRamAdr, vCacheBaseReg;
+   uint8_t  vRomBuffer, vPipe, bCacheActive, pad;
+} gsu_state_t;
+extern FxRegs_s GSU;
 
 static const char header[16] = "SNES9X_000000002";
 
@@ -37,12 +51,18 @@ bool S9xSaveState(const char *filename)
    chunks += fwrite(&IAPU, sizeof(IAPU), 1, fp);
    chunks += fwrite(IAPU.RAM, 0x10000, 1, fp);
    chunks += fwrite(&SoundData, sizeof(SoundData), 1, fp);
+   if (Settings.SuperFX)
+   {
+      gsu_state_t g = {{'G', 'S', 'U', '1'}, GSU.vColorReg, GSU.vPlotOptionReg, GSU.vLastRamAdr,
+                       GSU.vCacheBaseReg, GSU.vRomBuffer, GSU.vPipe, GSU.bCacheActive, 0};
+      chunks += fwrite(&g, sizeof(g), 1, fp);
+   }
 
    printf("Saved chunks = %d\n", chunks);
 
    fclose(fp);
 
-   return chunks == 13;
+   return chunks == 13 + (Settings.SuperFX ? 1 : 0);
 }
 
 bool S9xLoadState(const char *filename)
@@ -95,6 +115,23 @@ bool S9xLoadState(const char *filename)
    IAPU.WaitAddress1 = IAPU.WaitAddress1 - IAPU.RAM + IAPU_RAM;
    IAPU.WaitAddress2 = IAPU.WaitAddress2 - IAPU.RAM + IAPU_RAM;
    IAPU.RAM = IAPU_RAM;
+
+   if (Settings.SuperFX)
+   {
+      gsu_state_t g;
+      if (fread(&g, sizeof(g), 1, fp) == 1 && !memcmp(g.magic, "GSU1", 4))
+      {
+         GSU.vColorReg = g.vColorReg;
+         GSU.vPlotOptionReg = g.vPlotOptionReg;
+         GSU.vLastRamAdr = g.vLastRamAdr;
+         GSU.vCacheBaseReg = g.vCacheBaseReg;
+         GSU.vRomBuffer = g.vRomBuffer;
+         GSU.vPipe = g.vPipe;
+         GSU.bCacheActive = g.bCacheActive;
+      }
+      GSU.vSCBRDirty = true;   /* screen pointers from the restored SCBR/SCMR */
+      GSU.vPrevMode = ~0u;
+   }
 
    FixROMSpeed();
    IPPU.ColorsChanged = true;
