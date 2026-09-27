@@ -1,3 +1,74 @@
+# ESP32 Emu Turbo fork: changes from upstream retro-go
+
+This is [pjcau/retro-go](https://github.com/pjcau/retro-go), the firmware of the
+[ESP32 Emu Turbo](https://github.com/pjcau/esp32-emu-turbo) handheld (ESP32-S3 N16R8,
+ILI9488 480x320 8080 display, PDM audio, SD card). It forks
+[ducalex/retro-go](https://github.com/ducalex/retro-go) at `4ced1206` (2026-01-16);
+`git log 4ced1206..master` lists every change. The upstream README follows this section.
+
+Docs: [firmware](https://pjcau.github.io/esp32-emu-turbo/docs/software/firmware) ·
+[SNES optimization](https://pjcau.github.io/esp32-emu-turbo/docs/software/snes-optimization) ·
+[boot splash](https://pjcau.github.io/esp32-emu-turbo/docs/software/boot-splash) ·
+[arcade](https://pjcau.github.io/esp32-emu-turbo/docs/next-steps/arcade) ·
+[forks survey](https://pjcau.github.io/esp32-emu-turbo/docs/software/retro-go-forks-survey)
+(sources under [`website/docs/`](https://github.com/pjcau/esp32-emu-turbo/blob/main/website/docs)).
+
+### Target `esp32-emu-turbo`
+- **Target config** (`components/retro-go/targets/esp32-emu-turbo/`): GPIO map kept in sync with the board's `board_config.h`, IDF5 sdkconfig with USB console; RIGHT=GPIO2 / A=GPIO1 after the first article (`7c0c903d`, `d940b9a0`, `bcf19aa7`, `53878dcb`).
+- **Display**: i80 parallel driver `drivers/display/st7796s_i80.h` (drives the ILI9488; name is historical), 0x3C continuation fix, landscape 480x320, rotated 180° with MADCTL 0xE8 for the tail-left enclosure (`ce2456a9`, `0e533078`, `30df124b`).
+- **Audio**: new PDM TX sink `drivers/audio/pdm.c` in DAC line mode, silent when idle (`28dfc19a`, `614808d4`). **32 kHz rule**: every app runs at 32000 Hz (22050 crackled on the PDM sink), and the PDM channel is switched off while no audio arrives (`bcdabb65`, `71c4641e`).
+- **Launcher**: L/R shoulder buttons switch systems (`53878dcb`).
+
+### Console remote control (`RG_GAMEPAD_CONSOLE`, `rg_input.c`, `rg_system.c`)
+- Bench control over the USB serial console: `ping`, `key`/`hold`/`release`, `launch`, `launcher`, `resume[N]`, `save`, `load`, `reboot`, `hud on|off`, `volume N` (`d1a71ee0`, `bc8fbf9c`, `1d891c8f`).
+- File tools: `ls`, `put` (upload), `rm`, `mv`, `cat` (e.g. `/sd/crash.log`) (`68be4278`, `eebbcce4`).
+- Bench tools: `lcd off|on`, `acap N` / `adump` (capture of the samples as submitted, to tell digital from analog artefacts) (`e3ce118a`).
+- Actions run at the frame boundary (`rg_system_tick`), app switches deferred to the main task. Driven from the host by `scripts/board_ctl.py` in the main repo.
+
+### Core library (`components/retro-go/`)
+- `rg_storage.c`: FAT `max_files` 4 -> 8 (games that keep several files open, e.g. MAME zips + samples).
+- `rg_audio.c`: `rg_audio_set_volume()` no longer asserts before `rg_audio_init()` (console `volume N` can arrive first); `RG_AUDIO_DEFAULT_VOLUME`; capture buffer for `acap`.
+- Debug HUD for every emulator: FPS / drawn / skipped / busy / free heap, plus per-app lines (SNES_PROF, GEN_PROF), toggled from the in-game menu or the console (`f9dc0a14`).
+- `rg_display_clear` syncs first (`bc8fbf9c`).
+
+### Launcher
+- "GAME BRO!" boot splash on cold boot, real-time on the board (`2a1b4fc3`, `1d891c8f`).
+- Tabs added: SG-1000 (enabled), Atari 2600, Neo Geo Pocket, Duke Nukem 3D, Wolfenstein 3D, Quake, OpenTyrian, Arcade (MAME), Neo Geo. Game & Watch and Lynx commented out until usable ROMs exist (`0e8d4715`).
+- Art for Arcade, Duke3D, SG-1000, Atari 2600, GBA, MSX, NGP from [rxbrad/es-theme-gbz35](https://github.com/rxbrad/es-theme-gbz35) (`801cbe9f`).
+
+### retro-core
+- **SNES (snes9x)** — the Phase 4 renderer work that brought most games to 60 fps: audio samples per frame from the ROM fps, 32 KB I-cache / 64 KB D-cache, z-buffer in internal SRAM, blank-tile cache, colour-math fast path, Mode 7 hoisting, `restrict` tile writers, backdrop colour and CGRAM 0-15 per line, save-state loader heap-corruption fix, Native 12-button keymap default, SNES_PROF counters (`8164755a` .. `c16ff62f`). See [snes-optimization.md](https://github.com/pjcau/esp32-emu-turbo/blob/main/website/docs/software/snes-optimization.md).
+- **SuperFX (GSU)** brought back from snes9x2005, with the GSU running on core 1: Star Fox runs (`98f88705`).
+- **Neo Geo Pocket / Color** via the libretro RACE core (`components/race`, `main_ngp.c`) (`717df408`), later moved to retro-extra.
+- SG-1000 dispatch fixed (`30df124b`); NES, GB/GBC and PC Engine draw every frame (frameskip 0) (`e733d4d3`); Game & Watch shows a message on a non-`.gw` file instead of asserting (`e324e61d`).
+
+### Other existing apps
+- **gwenesis**: YM2612 synthesis on core 1 (register writes logged with their clock, replayed one frame later); GEN_PROF profiler (`1dbfee8a`).
+- **prboom-go (DOOM)**: in-game crash fixed with a 16 KB game task stack and a PSRAM reserve for the lump cache (`66d251ed`).
+- **fmsx**: alert only for the essential `MSX.ROM`, optional BIOS files logged (`f1c9c226`).
+
+### New apps (partition table in `rg_tool.py`)
+| App | What | Source / credit | Commits |
+|-----|------|-----------------|---------|
+| `retro-extra` | Neo Geo Pocket (RACE) + Atari 2600 (Stella) | [libretro RACE](https://github.com/libretro/RACE), stella-odroid-go | `8f3f0ad1` |
+| `duke3d-go` | Duke Nukem 3D, ported to the current API, FatFs/menu/level fixes, 32 kHz audio | Chocolate Duke3D port by jkirsons (upstream `duke3d` branch) | `b75e5a38`, `704748f1`, `877b5d31` |
+| `wolf3d-go` | Wolfenstein 3D (id source license + MAME fmopl license shipped) | [pcgamer404/retro-go-pro](https://github.com/pcgamer404/retro-go-pro) (GPL) | `fac26d34`, `5e4bc37d` |
+| `quake-go` | Quake | pcgamer404/retro-go-pro (GPL) | `fac26d34` |
+| `opentyrian-go` | OpenTyrian (Tyrian 2.1), native app | [DynaMight1124/retro-go](https://github.com/DynaMight1124/retro-go) | `a4b3c228` |
+| `mame-go` | Arcade + Neo Geo, MAME 0.37b5 subset | [libretro mame2000](https://github.com/libretro/mame2000-libretro) (MAME non-commercial license) | see below |
+
+### mame-go (see [arcade.md](https://github.com/pjcau/esp32-emu-turbo/blob/main/website/docs/next-steps/arcade.md))
+- 8-bit boards first (`736add2b`); 68000 boards (Blood Bros., Aero Fighters) via a tile cache and read-only ROM regions memory-mapped from a 4 MB flash data partition `mamerom` added by `rg_tool.py` (`d4e9fd15`); idle-loop speed-ups for both (`570528c2`).
+- Neo Geo: sprites paged from the SD card (`mamego_neospr.c`, `tools/neoprep.c`) — Sonic Wings 2 runs (`d0430d65`); 30-50 MB games with sound samples paged from SD, program in flash (`memory_rebase`), `zipstream` reads, Neo Geo tab (`643adbb2`).
+- Speed: YM2610 on core 1, generic 68000/Z80 idle-loop skip, NEOPROF frame profiler (`mamego_prof.c`) (`590a63c2`); frame conversion (palette lookup + display copy) on core 1 (`88ddfac7`); scaled to fit the screen.
+- Modern ROM sets: 109 Neo Geo sets from current MAME `neogeo.cpp`, generated by [`scripts/neogeo_modern_sets.py`](https://github.com/pjcau/esp32-emu-turbo/blob/main/scripts/neogeo_modern_sets.py) in the main repo (`43108b71`, `3d1734d3`).
+
+### Partition table and build (`rg_tool.py`, target `env.py`)
+- Default app list adds `duke3d-go retro-extra mame-go wolf3d-go quake-go opentyrian-go`; launcher 1.125 MB, retro-core 1.25 MB, new partitions sized per app; `mamerom` data partition (type 1, subtype 64) when mame-go is built.
+- `env.py`: `IDF_TARGET = "esp32s3"`, `FW_FORMAT = "none"` (serial-flash `.img`).
+
+---
+
 # Table of contents
 - [Description](#description)
 - [Installation](#installation)
