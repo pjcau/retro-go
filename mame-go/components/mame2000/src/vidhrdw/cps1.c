@@ -428,6 +428,187 @@ static size_t cps1_gfx_offset;
 #define CPS1_GFX_OUT(n) cps1_gfx[n]
 #endif
 
+#ifdef MAMEGO
+/* ----------------------------------------------------------------------
+ * Graphics streamed from the zip (mame-go). The conversion below reads four
+ * quarters of the graphics ROM in step (bit planes), each sequentially, so
+ * the ROM never has to sit in memory: four readers go through the zip at
+ * once and each 64 KB block of tiles goes to the mamerom flash partition,
+ * the part that does not fit (Street Fighter II: 6 MB of tiles, 4 MB
+ * partition) to PSRAM. Drawing reads tile words below cps1_gfx_split from
+ * cps1_gfx (flash) and the rest from cps1_gfx_hi. Used when the region is
+ * plain ROM_LOADs laid end to end (all but ~25 sets); else the region is
+ * loaded as usual and converted below.
+ * ---------------------------------------------------------------------- */
+static uint32_t *cps1_gfx_hi;
+static unsigned cps1_gfx_split = ~0u;       /* in words */
+static const struct RomModule *cps1gfx_rom;
+static int cps1gfx_entries;
+
+void *mamego_romrd_open(const struct RomModule *rom);
+int mamego_romrd_read(void *r, void *buf, unsigned len);
+void mamego_romrd_close(void *r);
+
+/* readroms() pre-pass (common.c): a stub instead of loading the region */
+unsigned char *cps1gfx_region_stub(int type, const struct RomModule *first, int entries, unsigned size)
+{
+	unsigned expect = 0;
+	int i;
+	cps1gfx_rom = 0;
+	if (!Machine->drv || Machine->drv->vh_start != cps1_vh_start || type != REGION_GFX1)
+		return NULL;
+#ifndef ESP_PLATFORM
+	if (getenv("CPS1STREAM") && !strcmp(getenv("CPS1STREAM"), "0"))
+		return NULL;
+#endif
+	for (i = 0; i < entries; i++)
+	{
+		const struct RomModule *r = &first[i];
+		if (!r->name || r->name == (char *)-1 || (r->length & ROMFLAG_MASK) || r->offset != expect)
+			return NULL;
+		expect += r->length;
+	}
+	if (expect != size || size % (4 * 16384))
+		return NULL;
+	cps1gfx_rom = first;
+	cps1gfx_entries = entries;
+	return (unsigned char *)malloc(16);
+}
+
+struct cps1_rd { void *r; int idx; unsigned left; };
+
+static int cps1_rd_open(struct cps1_rd *g, unsigned offset, unsigned char *scratch, unsigned scratch_len)
+{
+	unsigned skip;
+	for (g->idx = 0; g->idx < cps1gfx_entries; g->idx++)
+		if (offset < cps1gfx_rom[g->idx].offset + cps1gfx_rom[g->idx].length)
+			break;
+	if (g->idx >= cps1gfx_entries || !(g->r = mamego_romrd_open(&cps1gfx_rom[g->idx])))
+		return -1;
+	skip = offset - cps1gfx_rom[g->idx].offset;
+	g->left = cps1gfx_rom[g->idx].length - skip;
+	while (skip)
+	{
+		unsigned k = skip < scratch_len ? skip : scratch_len;
+		if (mamego_romrd_read(g->r, scratch, k) != (int)k)
+			return -1;
+		skip -= k;
+	}
+	return 0;
+}
+
+static int cps1_rd_read(struct cps1_rd *g, unsigned char *buf, unsigned n)
+{
+	while (n)
+	{
+		unsigned k;
+		if (!g->left)
+		{
+			mamego_romrd_close(g->r);
+			g->r = 0;
+			if (++g->idx >= cps1gfx_entries || !(g->r = mamego_romrd_open(&cps1gfx_rom[g->idx])))
+				return -1;
+			g->left = cps1gfx_rom[g->idx].length;
+		}
+		k = n < g->left ? n : g->left;
+		if (mamego_romrd_read(g->r, buf, k) != (int)k)
+			return -1;
+		buf += k;
+		n -= k;
+		g->left -= k;
+	}
+	return 0;
+}
+
+#define CPS1_BLOCK 8192   /* i's per block: 16 KB per quarter, 64 KB of tiles */
+static int cps1_gfx_start_stream(int size)
+{
+	extern unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t *offset);
+	extern size_t mamego_flash_offset;
+	struct cps1_rd q[4];
+	unsigned char *in = malloc(4 * 2 * CPS1_BLOCK);
+	uint32_t *out = malloc(2 * CPS1_BLOCK * sizeof(uint32_t));
+	unsigned total = size / 4, written = 0, base, k, qn;   /* words */
+	size_t offset = mamego_flash_offset;
+	int ret = -1;
+
+	memset(q, 0, sizeof(q));
+	cps1_gfx = 0;
+	cps1_gfx_hi = 0;
+	cps1_gfx_split = ~0u;
+	if (!in || !out)
+		goto done;
+	for (qn = 0; qn < 4; qn++)
+		if (cps1_rd_open(&q[qn], qn * (size / 4), in, 2 * CPS1_BLOCK) != 0)
+			goto done;
+
+	for (base = 0; base < (unsigned)size / 8; base += CPS1_BLOCK)
+	{
+		const unsigned char *q0 = in, *q1 = in + 2 * CPS1_BLOCK, *q2 = in + 4 * CPS1_BLOCK, *q3 = in + 6 * CPS1_BLOCK;
+		for (qn = 0; qn < 4; qn++)
+			if (cps1_rd_read(&q[qn], in + qn * 2 * CPS1_BLOCK, 2 * CPS1_BLOCK) != 0)
+				goto done;
+		for (k = 0; k < CPS1_BLOCK; k++)
+		{
+			int nchar = (base + k) / 8, j;
+			uint32_t d0 = 0, d1 = 0, pens = 0;
+			for (j = 0; j < 8; j++)
+			{
+				int mask = 0x80 >> j, n0 = 0, n1 = 0;
+				if (q1[2*k] & mask)     n0 |= 1;   /* the first word: quarters 1 and 3 */
+				if (q1[2*k+1] & mask)   n0 |= 2;
+				if (q3[2*k] & mask)     n0 |= 4;
+				if (q3[2*k+1] & mask)   n0 |= 8;
+				if (q0[2*k] & mask)     n1 |= 1;   /* the second: quarters 0 and 2 */
+				if (q0[2*k+1] & mask)   n1 |= 2;
+				if (q2[2*k] & mask)     n1 |= 4;
+				if (q2[2*k+1] & mask)   n1 |= 8;
+				d0 |= n0 << (28 - j * 4);
+				d1 |= n1 << (28 - j * 4);
+				pens |= (1 << n0) | (1 << n1);
+			}
+			out[2*k] = d0;
+			out[2*k+1] = d1;
+			cps1_char_pen_usage[nchar] |= pens;
+			cps1_tile16_pen_usage[nchar/2] |= pens;
+			cps1_tile32_pen_usage[nchar/8] |= pens;
+		}
+		/* 64 KB of tiles: to flash while it has room, then to PSRAM */
+		if (!cps1_gfx_hi)
+		{
+			uint32_t *p = (uint32_t *)mamego_flash_store((unsigned char *)out, 2 * CPS1_BLOCK * 4, &offset);
+			if (p && (!cps1_gfx || p == cps1_gfx + written))
+			{
+				if (!cps1_gfx)
+					cps1_gfx = p;
+				written += 2 * CPS1_BLOCK;
+				continue;
+			}
+			cps1_gfx_split = written;
+			if (!(cps1_gfx_hi = malloc((size_t)(total - written) * 4)))
+				goto done;
+		}
+		memcpy(cps1_gfx_hi + (written - cps1_gfx_split), out, 2 * CPS1_BLOCK * 4);
+		written += 2 * CPS1_BLOCK;
+	}
+	mamego_flash_offset = offset;
+	if (cps1_gfx_split == ~0u)
+		printf("cps1: %u KB of tiles streamed to flash\n", total * 4 / 1024);
+	else
+		printf("cps1: %u KB of tiles streamed: %u KB in flash, %u KB in PSRAM\n",
+			total * 4 / 1024, cps1_gfx_split * 4 / 1024, (total - cps1_gfx_split) * 4 / 1024);
+	ret = 0;
+done:
+	for (qn = 0; qn < 4; qn++)
+		mamego_romrd_close(q[qn].r);
+	free(in);
+	free(out);
+	if (ret)
+		printf("cps1: streaming the graphics failed\n");
+	return ret;
+}
+#endif
+
 int cps1_gfx_start(void)
 {
 	uint32_t dwval;
@@ -443,6 +624,19 @@ int cps1_gfx_start(void)
 	cps1_max_tile32=(gfxsize/16)/8;
 
 #ifdef MAMEGO
+	if (cps1gfx_rom)
+	{
+		/* streamed: pen usage arrays first, then the tiles */
+		cps1_char_pen_usage=(int*)calloc(cps1_max_char, sizeof(int));
+		cps1_tile16_pen_usage=(int*)calloc(cps1_max_tile16, sizeof(int));
+		cps1_tile32_pen_usage=(int*)calloc(cps1_max_tile32, sizeof(int));
+		if (!cps1_char_pen_usage || !cps1_tile16_pen_usage || !cps1_tile32_pen_usage)
+			return -1;
+		cps1_gfx_flash = 1; /* cps1_gfx is not ours to free (flash) */
+		if (cps1_gfx_start_stream(size) != 0)
+			return -1;
+		goto free_rom;
+	}
 	/* mame-go: the decoded tiles are read-only once built, so they go to the
 	   mamerom flash partition 64 KB at a time instead of a second PSRAM copy
 	   of the graphics (Final Fight, King of Dragons: 2-4 MB). The ROM region
@@ -572,6 +766,7 @@ int cps1_gfx_start(void)
 		cps1_gfx_chunk = 0;
 		printf("cps1: %d KB of decoded tiles served from flash\n", gfxsize*4/1024);
 	}
+free_rom:
 	{
 		/* the ROM is not read again: free it now rather than after vh_start
 		   (REGIONFLAG_DISPOSE), before the 2 MB scroll2 bitmap is allocated */
@@ -594,6 +789,11 @@ void cps1_gfx_stop(void)
 	if (cps1_gfx_flash)
 		cps1_gfx = 0; /* in flash */
 	cps1_gfx_flash = 0;
+	if (cps1_gfx_hi)
+		free(cps1_gfx_hi);
+	cps1_gfx_hi = 0;
+	cps1_gfx_split = ~0u;
+	cps1gfx_rom = 0;
 #endif
 	if (cps1_gfx)
 	{
@@ -2105,7 +2305,16 @@ void cps1_eof_callback(void)
 	}
 
 	paldata=&gfx->colortable[gfx->color_granularity * color];
+#ifdef MAMEGO
+	{
+		/* streamed tiles: the first part in flash, the rest in PSRAM (a tile
+		   never straddles: the split is a multiple of 64 KB) */
+		uint32_t w = code*delta;
+		src = w < cps1_gfx_split ? cps1_gfx + w : cps1_gfx_hi + (w - cps1_gfx_split);
+	}
+#else
 	src = cps1_gfx+code*delta;
+#endif
 
 	if (Machine->orientation & ORIENTATION_SWAP_XY)
 	{

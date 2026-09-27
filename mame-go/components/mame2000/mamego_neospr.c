@@ -187,6 +187,32 @@ static void romrd_close(struct romrd *r)
 	r->f = NULL;
 }
 
+/* the same reader for other drivers (CPS1 graphics, vidhrdw/cps1.c) */
+void *mamego_romrd_open(const struct RomModule *rom)
+{
+	struct romrd *r = malloc(sizeof(*r));
+	if (r && romrd_open(r, rom) != 0)
+	{
+		free(r);
+		r = NULL;
+	}
+	return r;
+}
+
+int mamego_romrd_read(void *r, void *buf, unsigned len)
+{
+	return romrd_read((struct romrd *)r, buf, len);
+}
+
+void mamego_romrd_close(void *r)
+{
+	if (r)
+	{
+		romrd_close((struct romrd *)r);
+		free(r);
+	}
+}
+
 /* Convert the region's ROMs (ROM_LOAD_GFX_EVEN/ODD pairs) into the .spr
    file. A pair is streamed 64 KB at a time: besides the two zip entries
    the file layer keeps in memory, only a 128 KB interleave buffer is used.

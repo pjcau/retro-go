@@ -91,6 +91,7 @@ int readroms(void)
 		extern int neospr_wanted(int type);
 		extern unsigned char *neospr_region_load(int type, const struct RomModule *first, int entries, unsigned region_size);
 		extern int neosnd_wanted(int type, unsigned size);
+		extern unsigned char *cps1gfx_region_stub(int type, const struct RomModule *first, int entries, unsigned size);
 		extern unsigned char *neosnd_region_load(int type, const struct RomModule *first, int entries, unsigned region_size);
 		const struct RomModule *p = romp;
 
@@ -107,6 +108,8 @@ int readroms(void)
 				entries++;
 			if (neospr_wanted(type))
 				neospr_stub[region] = neospr_region_load(type, p + 1, entries, p->offset);
+			else if (type == REGION_GFX1 && Machine->drv && (neospr_stub[region] = cps1gfx_region_stub(type, p + 1, entries, p->offset)))
+				; /* CPS1 graphics: streamed from the zip in vh_start (vidhrdw/cps1.c) */
 			else if (neosnd_wanted(type, p->offset))
 				neospr_stub[region] = neosnd_region_load(type, p + 1, entries, p->offset);
 			p += 1 + entries;
