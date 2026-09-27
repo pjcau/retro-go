@@ -67,6 +67,7 @@ Docs: [firmware](https://pjcau.github.io/esp32-emu-turbo/docs/software/firmware)
 - Exact Neo Geo save states (driver RAM, latches, YM2610 + SSG, buffer borrowed from the sprite cache); modern `<name>m` sets get the per-game fixes of `<name>` (`ec8acd7b`).
 - 5 MB Neo Geo programs split between PSRAM (1 MB) and flash (4 MB banked part); clones of the modern sets (166 sets); Thrash Rally without its undumped link MCU (`22f16917`).
 - Neo Geo sprite renderer on core 1 in the present task, video RAM copied by dirty 256-byte blocks (`15e1790f`).
+- **Capcom CPS1** (0.37b5 driver, CPS2 left out): graphics streamed from the zip into the flash partition (+PSRAM for SF2), 69 modern sets from current MAME, partition 1.75 MB (`929fc118`, `e245fffa`).
 
 ### Partition table and build (`rg_tool.py`, target `env.py`)
 - Default app list adds `duke3d-go retro-extra mame-go wolf3d-go quake-go opentyrian-go`; launcher 1.125 MB, retro-core 1.25 MB, new partitions sized per app; `mamerom` data partition (type 1, subtype 64) when mame-go is built.
