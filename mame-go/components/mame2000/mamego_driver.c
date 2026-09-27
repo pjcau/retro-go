@@ -291,6 +291,9 @@ extern const struct GameDriver driver_fightfev;
 extern const struct GameDriver driver_pspikes2;
 extern const struct GameDriver driver_sonicwi2;
 extern const struct GameDriver driver_sonicwi2m;
+extern const struct GameDriver driver_wjammersm;
+extern const struct GameDriver driver_sonicwi3m;
+extern const struct GameDriver driver_blazstarm;
 extern const struct GameDriver driver_sonicwi3;
 extern const struct GameDriver driver_popbounc;
 extern const struct GameDriver driver_androdun;
@@ -590,6 +593,9 @@ const struct GameDriver *drivers[] = {
 	&driver_pspikes2,
 	&driver_sonicwi2,
 	&driver_sonicwi2m,
+	&driver_wjammersm,
+	&driver_sonicwi3m,
+	&driver_blazstarm,
 	&driver_sonicwi3,
 	&driver_popbounc,
 	&driver_androdun,

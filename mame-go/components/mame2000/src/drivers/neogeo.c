@@ -2847,6 +2847,82 @@ ROM_END
 
 #ifdef MAMEGO
 /* the set later MAME ships (fixed s1/sfix/sm1 dumps, 1 MB v2) */
+/* mame-go: modern MAME ROM sets (the 0.37b5 ones above are older dumps:
+   halves swapped in the 4 MB sprite ROMs, other program revisions, split
+   sample ROMs). The BIOS comes from neogeo.zip through the NEO_ macros. */
+ROM_START( wjammersm )
+	ROM_REGION( 0x100000, REGION_CPU1 )
+	ROM_LOAD_WIDE_SWAP( "065-p1.p1", 0x000000, 0x100000, 0x6692c140 )
+
+	NEO_SFIX_128K( "065-s1.s1", 0x074b5723 )
+
+	NEO_BIOS_SOUND_128K( "065-m1.m1", 0x52c23cfc )
+
+	ROM_REGION( 0x400000, REGION_SOUND1 | REGIONFLAG_SOUNDONLY )
+	ROM_LOAD( "065-v1.v1", 0x000000, 0x100000, 0xce8b3698 )
+	ROM_LOAD( "065-v2.v2", 0x100000, 0x100000, 0x659f9b96 )
+	ROM_LOAD( "065-v3.v3", 0x200000, 0x100000, 0x39f73061 )
+	ROM_LOAD( "065-v4.v4", 0x300000, 0x100000, 0x5dee7963 )
+
+	NO_DELTAT_REGION
+
+	ROM_REGION( 0x400000, REGION_GFX2 )
+	ROM_LOAD_GFX_EVEN( "065-c1.c1", 0x000000, 0x100000, 0xc7650204 ) /* Plane 0,1 */
+	ROM_LOAD_GFX_ODD ( "065-c2.c2", 0x000000, 0x100000, 0xd9f3e71d ) /* Plane 2,3 */
+	ROM_LOAD_GFX_EVEN( "065-c3.c3", 0x200000, 0x100000, 0x40986386 ) /* Plane 0,1 */
+	ROM_LOAD_GFX_ODD ( "065-c4.c4", 0x200000, 0x100000, 0x715e15ff ) /* Plane 2,3 */
+ROM_END
+
+ROM_START( sonicwi3m )
+	ROM_REGION( 0x200000, REGION_CPU1 )
+	ROM_LOAD_WIDE_SWAP( "097-p1.p1", 0x100000, 0x100000, 0x0547121d )
+	ROM_CONTINUE(                    0x000000, 0x100000 | ROMFLAG_WIDE | ROMFLAG_SWAP )
+
+	NEO_SFIX_128K( "097-s1.s1", 0x8dd66743 )
+
+	NEO_BIOS_SOUND_128K( "097-m1.m1", 0xb20e4291 )
+
+	ROM_REGION( 0x600000, REGION_SOUND1 | REGIONFLAG_SOUNDONLY )
+	ROM_LOAD( "097-v1.v1", 0x000000, 0x400000, 0x6f885152 )
+	ROM_LOAD( "097-v2.v2", 0x400000, 0x200000, 0x3359e868 )
+
+	NO_DELTAT_REGION
+
+	ROM_REGION( 0xc00000, REGION_GFX2 )
+	ROM_LOAD_GFX_EVEN( "097-c1.c1", 0x000000, 0x400000, 0x33d0d589 ) /* Plane 0,1 */
+	ROM_LOAD_GFX_ODD ( "097-c2.c2", 0x000000, 0x400000, 0x186f8b43 ) /* Plane 2,3 */
+	ROM_LOAD_GFX_EVEN( "097-c3.c3", 0x800000, 0x200000, 0xc339fff5 ) /* Plane 0,1 */
+	ROM_LOAD_GFX_ODD ( "097-c4.c4", 0x800000, 0x200000, 0x84a40c6e ) /* Plane 2,3 */
+ROM_END
+
+ROM_START( blazstarm )
+	ROM_REGION( 0x300000, REGION_CPU1 )
+	ROM_LOAD_WIDE_SWAP( "239-p1.p1",  0x000000, 0x100000, 0x183682f8 )
+	ROM_LOAD_WIDE_SWAP( "239-p2.sp2", 0x100000, 0x200000, 0x9a9f4154 )
+
+	NEO_SFIX_128K( "239-s1.s1", 0xd56cb498 )
+
+	NEO_BIOS_SOUND_128K( "239-m1.m1", 0xd31a3aea )
+
+	ROM_REGION( 0x800000, REGION_SOUND1 | REGIONFLAG_SOUNDONLY )
+	ROM_LOAD( "239-v1.v1", 0x000000, 0x400000, 0x1b8d5bf7 )
+	ROM_LOAD( "239-v2.v2", 0x400000, 0x400000, 0x74cf0a70 )
+
+	NO_DELTAT_REGION
+
+	ROM_REGION( 0x1000000, REGION_GFX2 )
+	ROM_LOAD_GFX_EVEN( "239-c1.c1", 0x0000000, 0x400000, 0x84f6d584 ) /* Plane 0,1 */
+	ROM_LOAD_GFX_ODD ( "239-c2.c2", 0x0000000, 0x400000, 0x05a0cb22 ) /* Plane 2,3 */
+	ROM_LOAD_GFX_EVEN( "239-c3.c3", 0x0800000, 0x400000, 0x5fb69c9e ) /* Plane 0,1 */
+	ROM_LOAD_GFX_ODD ( "239-c4.c4", 0x0800000, 0x400000, 0x0be028c4 ) /* Plane 2,3 */
+
+	ROM_REGION( 0x1000000, REGION_GFX3 )
+	ROM_LOAD_GFX_EVEN( "239-c5.c5", 0x0000000, 0x400000, 0x74bae5f8 ) /* Plane 0,1 */
+	ROM_LOAD_GFX_ODD ( "239-c6.c6", 0x0000000, 0x400000, 0x4e0700d2 ) /* Plane 2,3 */
+	ROM_LOAD_GFX_EVEN( "239-c7.c7", 0x0800000, 0x400000, 0x010ff4fd ) /* Plane 0,1 */
+	ROM_LOAD_GFX_ODD ( "239-c8.c8", 0x0800000, 0x400000, 0xdb60460e ) /* Plane 2,3 */
+ROM_END
+
 ROM_START( sonicwi2m )
 	ROM_REGION( 0x200000, REGION_CPU1 )
 	ROM_LOAD_WIDE_SWAP( "075-p1.p1", 0x100000, 0x100000, 0x92871738 )
@@ -4785,6 +4861,9 @@ GAME( 1994, pspikes2, neogeo,   neogeo, neogeo,  neogeo, ROT0,       "Video Syst
 GAME( 1994, sonicwi2, neogeo,   neogeo, neogeo,  neogeo, ROT0,       "Video System Co.", "Aero Fighters 2 / Sonic Wings 2" )
 #ifdef MAMEGO
 GAME( 1994, sonicwi2m, sonicwi2, neogeo, neogeo,  neogeo, ROT0,       "Video System Co.", "Aero Fighters 2 / Sonic Wings 2 (later set)" )
+GAME( 1994, wjammersm, wjammers, neogeo, neogeo,  neogeo, ROT0,       "Data East Corporation", "Windjammers / Flying Power Disc (later set)" )
+GAME( 1995, sonicwi3m, sonicwi3, neogeo, neogeo,  neogeo, ROT0,       "Video System Co.", "Aero Fighters 3 / Sonic Wings 3 (later set)" )
+GAME( 1998, blazstarm, blazstar, neogeo, neogeo,  neogeo, ROT0,       "Yumekobo", "Blazing Star (later set)" )
 #endif
 GAME( 1995, sonicwi3, neogeo,   neogeo, neogeo,  neogeo, ROT0,       "Video System Co.", "Aero Fighters 3 / Sonic Wings 3" )
 GAME( 1997, popbounc, neogeo,   neogeo, neogeo,  neogeo, ROT0_16BIT, "Video System Co.", "Pop 'n Bounce / Gapporin" )
