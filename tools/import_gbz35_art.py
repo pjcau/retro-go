@@ -26,6 +26,8 @@ BLACK_LOGOS = {"a26"}
 SYSTEMS = {
     "arcade": "arcade",
     "duke3d": "pc",  # a DOS game; the theme has no Duke Nukem entry
+    "wolf3d": "ports",  # native source ports
+    "quake": "ports",
     "sg1": "sg-1000",
     "a26": "atari2600",
     "gba": "gba",
