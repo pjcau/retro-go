@@ -346,6 +346,11 @@ static void mame_task(void *arg)
     if (rg_display_get_scaling() == RG_DISPLAY_SCALING_OFF &&
         (av.geometry.base_width > rg_display_get_width() || av.geometry.base_height > rg_display_get_height()))
         rg_display_set_scaling(RG_DISPLAY_SCALING_FIT); /* would be cropped */
+    /* Neo Geo (304x224, /roms/neogeo/): nearly full screen, the whole height
+     * with the aspect kept (434x320 on this panel). The menu can still pick
+     * another mode for the session. */
+    if (app->romPath && strstr(app->romPath, "/neogeo/"))
+        rg_display_set_scaling(RG_DISPLAY_SCALING_FIT);
 
     if (app->bootFlags & RG_BOOT_RESUME)
     {

@@ -547,17 +547,17 @@ unsigned char *neosnd_region_load(int type, const struct RomModule *first, int e
 	{
 		const struct RomModule *r = &first[i];
 		unsigned length = r->length & ~ROMFLAG_MASK;
-		if (!r->name || r->name == (char *)-1 || (r->length & ROMFLAG_MASK) || r->offset != expect)
+		/* plain ROM_LOADs in order; gaps between them are allowed (KOF '95:
+		   600000-7fffff empty) and read as zeros */
+		if (!r->name || r->name == (char *)-1 || (r->length & ROMFLAG_MASK) || r->offset < expect
+			|| r->offset + length > region_size)
 		{
 			printf("neosnd: region %d has an unsupported ROM layout\n", type);
 			return NULL;
 		}
-		expect += length;
+		expect = r->offset + length;
 		key += (uint32_t)r->crc + length;
 	}
-	if (expect != region_size)
-		return NULL;
-
 	memset(&want, 0, sizeof(want));
 	memcpy(want.magic, "NEOSND", 6);
 	want.version = NEOSPR_VERSION;
@@ -576,8 +576,19 @@ unsigned char *neosnd_region_load(int type, const struct RomModule *first, int e
 		if (f)
 			fclose(f);
 		printf("neosnd: preparing %s (one time, %u KB)\n", path, region_size / 1024);
-		if (!(f = fopen(path, "wb")) || fwrite(&want, sizeof(want), 1, f) != 1 || !(buf = malloc(NEOSPR_CHUNK)))
+		if (!(f = fopen(path, "wb")) || fwrite(&want, sizeof(want), 1, f) != 1 || !(buf = calloc(1, NEOSPR_CHUNK)))
 			goto fail;
+		{
+			/* zeros over the whole region first: the gaps between ROMs read as silence */
+			unsigned pos;
+			fseek(f, want.data_offset, SEEK_SET);
+			for (pos = 0; pos < region_size; pos += NEOSPR_CHUNK)
+			{
+				unsigned len = region_size - pos < NEOSPR_CHUNK ? region_size - pos : NEOSPR_CHUNK;
+				if (fwrite(buf, 1, len, f) != len)
+					goto fail;
+			}
+		}
 		for (i = 0; i < entries; i++)
 		{
 			struct romrd rd;
