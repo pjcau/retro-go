@@ -443,7 +443,14 @@ void app_main(void)
     {
         char pathbuf[RG_PATH_MAX + 1];
         snprintf(pathbuf, RG_PATH_MAX, "%s/%s", BiosFolder, BiosFiles[i]);
-        if (!rg_storage_exists(pathbuf))
+        if (!rg_storage_exists(pathbuf) && i > 0)
+        {
+            /* only MSX.ROM is essential: cartridge games run without the MSX2
+             * and disk ROMs (C-BIOS provides no disk ROM), so don't stop every
+             * boot with an alert for them */
+            RG_LOGW("Optional BIOS file missing: %s", pathbuf);
+        }
+        else if (!rg_storage_exists(pathbuf))
         {
             char message[512];
             snprintf(message, 512, "File: %s\nYou can find it at:\n%s",
