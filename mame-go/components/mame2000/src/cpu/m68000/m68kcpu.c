@@ -33,6 +33,7 @@ static const char* copyright_notice =
 /* ======================================================================== */
 
 #include "m68kops.h"
+#include <string.h>
 #include "m68kcpu.h"
 
 /* ======================================================================== */
@@ -885,3 +886,59 @@ void m68k_load_context(unsigned int (*load_value)(char*))
 /* ======================================================================== */
 /* ============================== END OF FILE ============================= */
 /* ======================================================================== */
+
+#ifdef MAMEGO
+uint m68ki_idle_enable, m68ki_idle_whash, m68ki_idle_io;
+uint m68ki_idle_io_lo = 1, m68ki_idle_io_hi = 0; /* empty window until a driver sets one */
+static uint idle_pc, idle_whash, idle_count, idle_regs[16];
+
+#ifndef ESP_PLATFORM
+/* PC analysis only (IDLESTAT=1): which short backward loops run, and why they are not idle */
+#include <stdlib.h>
+struct idle_stat { uint pc, ppc, n, wrote, regs, idle; };
+static struct idle_stat idle_stats[256];
+static void idle_stat_dump(void)
+{
+	int i, j;
+	for (i = 0; i < 256; i++) for (j = i + 1; j < 256; j++)
+		if (idle_stats[j].n > idle_stats[i].n) { struct idle_stat t = idle_stats[i]; idle_stats[i] = idle_stats[j]; idle_stats[j] = t; }
+	for (i = 0; i < 8 && idle_stats[i].n; i++)
+		fprintf(stderr, "IDLESTAT loop %06x<-%06x taken %u: busy writes %u, regs changed %u, idle %u\n",
+			idle_stats[i].pc, idle_stats[i].ppc, idle_stats[i].n, idle_stats[i].wrote, idle_stats[i].regs, idle_stats[i].idle);
+}
+static void idle_stat(uint wrote, uint regs, uint idle)
+{
+	static int init;
+	struct idle_stat *e = &idle_stats[(REG_PC ^ (REG_PC >> 8)) & 255];
+	if (!getenv("IDLESTAT")) return;
+	if (!init) { init = 1; atexit(idle_stat_dump); }
+	if (e->pc != REG_PC) { if (e->n > 1000) return; memset(e, 0, sizeof(*e)); e->pc = REG_PC; e->ppc = REG_PPC; }
+	e->n++; e->wrote += wrote; e->regs += regs; e->idle += idle;
+}
+#else
+#define idle_stat(w, r, i) ((void)0)
+#endif
+
+void m68ki_idle_check(void)
+{
+	uint whash = m68ki_idle_whash, io = m68ki_idle_io;
+	int same = REG_PC == idle_pc && !io && whash == idle_whash && !memcmp(idle_regs, REG_DA, sizeof(idle_regs));
+
+	m68ki_idle_whash = 0; /* hashes cover one pass of the loop */
+	m68ki_idle_io = 0;
+	idle_stat(io || (REG_PC == idle_pc && whash != idle_whash), REG_PC == idle_pc && memcmp(idle_regs, REG_DA, sizeof(idle_regs)) != 0, same && idle_count >= 2);
+	if (same)
+	{
+		if (++idle_count >= 3)
+		{
+			idle_count = 0;
+			USE_ALL_CYCLES();
+		}
+		return;
+	}
+	idle_pc = REG_PC;
+	idle_whash = whash;
+	idle_count = 0;
+	memcpy(idle_regs, REG_DA, sizeof(idle_regs));
+}
+#endif

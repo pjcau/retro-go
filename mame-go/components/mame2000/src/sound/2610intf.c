@@ -92,6 +92,16 @@ int YM2610_sh_start(const struct MachineSound *msound)
 	int  pcmsizea[YM2610_NUMBUF],pcmsizeb[YM2610_NUMBUF];
 
 	intf = (const struct YM2610interface *)msound->sound_interface;
+#ifdef MAMEGO
+	{
+		/* mame-go: synthesise the YM2610 once per frame instead of catching
+		   it up on every register write (Neo Geo, Metal Slug 2 in play:
+		   3-7 ms per frame spread over many tiny updates). Writes then take
+		   effect at frame granularity, as with MAME's -fastsound. */
+		extern int fast_sound;
+		fast_sound = 1;
+	}
+#endif
 	if( intf->num > MAX_2610 ) return 1;
 
 	if (AY8910_sh_start(msound)) return 1;
@@ -124,7 +134,17 @@ int YM2610_sh_start(const struct MachineSound *msound)
 	if (YM2610Init(intf->num,intf->baseclock,rate,
 		           pcmbufa,pcmsizea,pcmbufb,pcmsizeb,
 		           TimerHandler,IRQHandler) == 0)
+	{
+#ifdef MAMEGO
+		/* synthesis on the second core from here on (fm.c) */
+		extern void YM2610_offload(int on);
+#ifndef ESP_PLATFORM
+		if (!getenv("YMOFFLOAD") || strcmp(getenv("YMOFFLOAD"), "0"))
+#endif
+		YM2610_offload(1);
+#endif
 		return 0;
+	}
 
 	/* error */
 	return 1;
@@ -186,7 +206,13 @@ int YM2610B_sh_start(const struct MachineSound *msound)
 /************************************************/
 void YM2610_sh_stop(void)
 {
+#ifdef MAMEGO
+	{ extern void YM2610_offload(int on); YM2610_offload(0); } /* core 1 idle before the chip goes */
+#endif
 	YM2610Shutdown();
+#ifdef MAMEGO
+	{ extern int fast_sound; fast_sound = 0; } /* back to the default for the next game */
+#endif
 }
 
 /* reset */

@@ -3,6 +3,7 @@ set(COMPONENT_SRCS
     mamego_driver.c
     mamego_pick.c
     mamego_neospr.c
+    mamego_prof.c
     src/artwork.c
     src/audit.c
     src/cheat.c

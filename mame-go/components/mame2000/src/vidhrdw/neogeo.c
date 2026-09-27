@@ -103,6 +103,7 @@ void neospr_stop(void);
 void neogeo_vh_stop(void)
 {
 #ifdef MAMEGO
+	{ extern unsigned int m68ki_idle_enable; extern unsigned z80_idle_enable; m68ki_idle_enable = 0; z80_idle_enable = 0; }
 	neospr_stop();
 	{ extern void neosnd_stop(void); neosnd_stop(); }
 #endif

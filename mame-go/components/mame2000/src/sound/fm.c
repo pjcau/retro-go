@@ -2374,7 +2374,207 @@ static YM2610 *FM2610=NULL;	/* array of YM2610's */
 static int YM2610NumChips;	/* total chip */
 
 /* ---------- update one of chip (YM2610B FM6: ADPCM-A6: ADPCM-B:1) ----------- */
+#include "../mamego_prof.h"
+static void YM2610UpdateOne_(int num, int16_t **buffer, int length);
+
+#ifdef MAMEGO
+/* ------------------------------------------------------------------------
+ * mame-go: YM2610 synthesis on the second core (Neo Geo).
+ *
+ * With fast_sound the chip is synthesised once per frame, at the frame's
+ * stream update. Core 0 (Z80) keeps what it must see at once: the timer
+ * registers 0x24-0x27, the ADPCM flag control 0x1c and the SSG; every other
+ * register write is queued. At the frame's stream update core 0 takes the
+ * samples core 1 made for the previous frame and hands it this frame's
+ * queue: core 1 applies the writes and synthesises FM + ADPCM (sample ROM
+ * reads included), alone on the chip state. One frame of latency (~17 ms).
+ * On the PC the job runs at once on the same thread: same samples, one
+ * frame later, deterministic.
+ * ------------------------------------------------------------------------ */
+typedef struct { uint8_t bank, addr, val; } ym_write_t;
+#define YMQ_MAX   4096
+#define YMF_SIZE  8192                 /* output FIFO, samples per side */
+static ym_write_t ymq[2][YMQ_MAX];
+static int ymq_n[2], ymq_fill;        /* core 0 fills ymq[ymq_fill] */
+static int ym_offload, ym_job_chip, ym_job_len, ym_job_q;
+static int16_t ymf_l[YMF_SIZE], ymf_r[YMF_SIZE];
+static unsigned ymf_head, ymf_tail;   /* head: core 1 writes, tail: core 0 reads */
+static int16_t ym_job_l[2048], ym_job_r[2048];
+static int ym_queue_overflow;
+
+static void ym2610_apply(int n, const ym_write_t *w)
+{
+	YM2610 *F2610 = &(FM2610[n]);
+	FM_OPN *OPN   = &(FM2610[n].OPN);
+	if (w->bank == 0)
+	{
+		if (w->addr >= 0x10 && w->addr < 0x1c)
+			YM_DELTAT_ADPCM_Write(&F2610->deltaT, w->addr - 0x10, w->val);
+		else if ((w->addr & 0xf0) == 0x20)
+			OPNWriteMode(OPN, w->addr, w->val);
+		else
+			OPNWriteReg(OPN, w->addr, w->val);
+	}
+	else if (w->addr < 0x30)
+		FM_ADPCMAWrite(F2610, w->addr, w->val);
+	else
+		OPNWriteReg(OPN, w->addr | 0x100, w->val);
+}
+
+/* core 1: this frame's writes, then this frame's samples into the FIFO */
+static void ym2610_job(void)
+{
+	int16_t *buf[2] = {ym_job_l, ym_job_r};
+	int i;
+	for (i = 0; i < ymq_n[ym_job_q]; i++)
+		ym2610_apply(ym_job_chip, &ymq[ym_job_q][i]);
+	ymq_n[ym_job_q] = 0;
+	YM2610UpdateOne_(ym_job_chip, buf, ym_job_len);
+	for (i = 0; i < ym_job_len; i++, ymf_head++)
+	{
+		ymf_l[ymf_head % YMF_SIZE] = ym_job_l[i];
+		ymf_r[ymf_head % YMF_SIZE] = ym_job_r[i];
+	}
+}
+
+#ifdef ESP_PLATFORM
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+static TaskHandle_t ym_task;
+static SemaphoreHandle_t ym_done;
+static volatile int ym_busy;
+static void ym_task_main(void *arg)
+{
+	for (;;)
+	{
+		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+		ym2610_job();
+		__sync_synchronize();
+		ym_busy = 0;
+		xSemaphoreGive(ym_done);
+	}
+}
+static void ym_wait(void)
+{
+	if (ym_busy)
+		xSemaphoreTake(ym_done, portMAX_DELAY);
+}
+static void ym_start(void)
+{
+	if (!ym_task)
+	{
+		ym_done = xSemaphoreCreateBinary();
+		xTaskCreatePinnedToCore(ym_task_main, "ym2610", 4096, NULL, 5, &ym_task, 1);
+	}
+	ym_busy = 1;
+	__sync_synchronize();
+	xTaskNotifyGive(ym_task);
+}
+#else
+static void ym_wait(void) {}
+static void ym_start(void) { ym2610_job(); }
+#endif
+
+void YM2610_offload(int on)
+{
+	ym_wait();
+	ym_offload = on;
+	ymq_n[0] = ymq_n[1] = 0;
+	ymq_fill = 0;
+	ymf_head = ymf_tail = 0;
+}
+
+/* core 0, frame end: previous frame's samples out, this frame's job in */
+static void ym2610_offload_update(int num, int16_t **buffer, int length)
+{
+	int i;
+	ym_wait();
+	for (i = 0; i < length; i++)
+	{
+		if (ymf_tail != ymf_head)
+		{
+			buffer[0][i] = ymf_l[ymf_tail % YMF_SIZE];
+			buffer[1][i] = ymf_r[ymf_tail % YMF_SIZE];
+			ymf_tail++;
+		}
+		else /* first frame, or the chip is a sample short: hold the level */
+		{
+			buffer[0][i] = i ? buffer[0][i - 1] : 0;
+			buffer[1][i] = i ? buffer[1][i - 1] : 0;
+		}
+	}
+	if (length > 2048)
+		length = 2048;
+	ym_job_chip = num;
+	ym_job_len = length;
+	ym_job_q = ymq_fill;
+	ymq_fill ^= 1;
+	ymq_n[ymq_fill] = 0;
+	ym_start();
+}
+
+static int ym2610_offload_write(int n, int a, uint8_t v)
+{
+	YM2610 *F2610 = &(FM2610[n]);
+	FM_OPN *OPN   = &(FM2610[n].OPN);
+	ym_write_t *w;
+	int addr;
+
+	switch (a & 3)
+	{
+	case 0: /* address port 0 */
+		OPN->ST.address = v & 0xff;
+		if (v < 16) SSGWrite(n, 0, v);
+		return OPN->ST.irq;
+	case 1: /* data port 0 */
+		addr = OPN->ST.address;
+		if (addr < 0x10) { SSGWrite(n, a, v); return OPN->ST.irq; }
+		if (addr >= 0x24 && addr <= 0x27) { OPNWriteMode(OPN, addr, v); return OPN->ST.irq; }
+		if (addr == 0x1c)
+		{
+			uint8_t statusmask = ~v;
+			int ch;
+			for (ch = 0; ch < 6; ch++)
+				F2610->adpcm[ch].flagMask = statusmask & (1 << ch);
+			F2610->deltaT.flagMask = statusmask & 0x80;
+			F2610->adpcm_arrivedEndAddress &= statusmask & 0x3f;
+			F2610->deltaT.arrivedFlag &= F2610->deltaT.flagMask;
+			return OPN->ST.irq;
+		}
+		break;
+	case 2: /* address port 1 */
+		F2610->address1 = v & 0xff;
+		return OPN->ST.irq;
+	case 3: /* data port 1 */
+		addr = F2610->address1;
+		break;
+	}
+	if (ymq_n[ymq_fill] >= YMQ_MAX)
+	{
+		ym_queue_overflow++;
+		return OPN->ST.irq;
+	}
+	w = &ymq[ymq_fill][ymq_n[ymq_fill]++];
+	w->bank = (a & 3) == 3;
+	w->addr = addr;
+	w->val = v;
+	return OPN->ST.irq;
+}
+#endif /* MAMEGO */
+
 void YM2610UpdateOne(int num, int16_t **buffer, int length)
+{
+	PROF_PUSH(PROF_YM);
+#ifdef MAMEGO
+	if (ym_offload)
+		ym2610_offload_update(num, buffer, length);
+	else
+#endif
+	YM2610UpdateOne_(num, buffer, length);
+	PROF_POP();
+}
+static void YM2610UpdateOne_(int num, int16_t **buffer, int length)
 {
 	YM2610 *F2610 = &(FM2610[num]);
 	FM_OPN *OPN   = &(FM2610[num].OPN);
@@ -2616,6 +2816,10 @@ void YM2610ResetChip(int num)
 {
 	int i;
 	YM2610 *F2610 = &(FM2610[num]);
+#ifdef MAMEGO
+	if (ym_offload)
+		YM2610_offload(1); /* wait for core 1, drop queued writes and samples */
+#endif
 	FM_OPN *OPN   = &(FM2610[num].OPN);
 	YM_DELTAT *DELTAT = &(FM2610[num].deltaT);
 
@@ -2679,6 +2883,11 @@ int YM2610Write(int n, int a,uint8_t v)
 	FM_OPN *OPN   = &(FM2610[n].OPN);
 	int addr;
 	int ch;
+
+#ifdef MAMEGO
+	if (ym_offload)
+		return ym2610_offload_write(n, a, v);
+#endif
 
 	switch( a&3 ){
 	case 0:	/* address port 0 */
@@ -2793,6 +3002,13 @@ int YM2610TimerOver(int n,int c)
 	}
 	else
 	{	/* Timer A */
+#ifdef MAMEGO
+		if (ym_offload)
+		{	/* the chip belongs to core 1: timer only (CSM is not used by the Neo Geo) */
+			TimerAOver( &(F2610->OPN.ST) );
+			return F2610->OPN.ST.irq;
+		}
+#endif
 		YM2610UpdateReq(n);
 		/* timer update */
 		TimerAOver( &(F2610->OPN.ST) );

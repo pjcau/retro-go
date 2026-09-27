@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include "driver.h"
+#include "mamego_prof.h"
 #include "ui_text.h" /* LBO 042400 */
 #include "artwork.h"
 
@@ -672,6 +673,7 @@ int need_to_clear_bitmap;	/* set by the user interface */
 
 int updatescreen(void)
 {
+	PROF_FRAME();
 	/* Substitute silence for sound_update() while the game is paused:
 	 * pause_action_generic() (running on behalf of mame_run_one_frame())
 	 * skips cpu_run_step(), so the sound chips have not advanced and
@@ -726,7 +728,9 @@ void draw_screen(int _bitmap_dirty)
 {
 	if (_bitmap_dirty)  overlay_remap();
 
+	PROF_PUSH(PROF_VIDEO);
 	(*Machine->drv->vh_update)(Machine->scrbitmap,_bitmap_dirty);  /* update screen */
+	PROF_POP();
 
 	if (artwork_overlay)
 	{

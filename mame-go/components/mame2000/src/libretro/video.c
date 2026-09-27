@@ -1,4 +1,5 @@
 #include "driver.h"
+#include "../mamego_prof.h"
 #include <math.h>
 #include "vidhrdw/vector.h"
 #include "dirty.h"
@@ -815,7 +816,14 @@ int osd_skip_this_frame(void)
 }
 
 /* Update the display. */
+static void osd_update_video_and_audio_(struct osd_bitmap *bitmap);
 void osd_update_video_and_audio(struct osd_bitmap *bitmap)
+{
+	PROF_PUSH(PROF_BLIT);
+	osd_update_video_and_audio_(bitmap);
+	PROF_POP();
+}
+static void osd_update_video_and_audio_(struct osd_bitmap *bitmap)
 {
 	int i;
 	int have_to_clear_bitmap = 0;

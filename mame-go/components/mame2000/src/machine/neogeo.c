@@ -95,6 +95,27 @@ void neogeo_init_machine(void)
 void init_neogeo(void)
 {
 	unsigned char *RAM = memory_region(REGION_CPU1);
+#ifdef MAMEGO
+	{
+		/* generic idle-loop skip for every Neo Geo game (m68kcpu.c) */
+		extern unsigned int m68ki_idle_enable, m68ki_idle_io_lo, m68ki_idle_io_hi;
+		m68ki_idle_enable = 1;
+		m68ki_idle_io_lo = 0x300000; /* I/O: controllers, sound latch, watchdog, video */
+		m68ki_idle_io_hi = 0x3fffff;
+		{
+			extern unsigned z80_idle_enable; /* same rule on the sound CPU (z80.c) */
+			z80_idle_enable = 1;
+#ifndef ESP_PLATFORM
+			if (getenv("Z80IDLE") && !strcmp(getenv("Z80IDLE"), "0"))
+				z80_idle_enable = 0;
+#endif
+		}
+#ifndef ESP_PLATFORM
+		if (getenv("M68KIDLE") && !strcmp(getenv("M68KIDLE"), "0")) /* PC A/B runs */
+			m68ki_idle_enable = 0;
+#endif
+	}
+#endif
 	extern struct YM2610interface neogeo_ym2610_interface;
 
 	if (memory_region(REGION_SOUND2))

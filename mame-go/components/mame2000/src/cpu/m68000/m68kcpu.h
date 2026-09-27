@@ -939,18 +939,32 @@ static INLINE uint m68ki_read_32_fc(uint address, uint fc)
 	return m68k_read_memory_32(ADDRESS_68K(address));
 }
 
+#ifdef MAMEGO
+/* mame-go generic idle-loop skip (Neo Geo), see m68ki_idle_check(): each
+   write folds (address, value) into a hash; a write into the I/O window
+   (side effects even with the same value) marks the iteration as busy */
+extern uint m68ki_idle_enable, m68ki_idle_whash, m68ki_idle_io, m68ki_idle_io_lo, m68ki_idle_io_hi;
+#define M68KI_COUNT_WRITE(A, V) do { m68ki_idle_whash = (m68ki_idle_whash ^ (A) ^ ((V) << 7)) * 16777619u; \
+	if ((uint)((A) & 0xffffff) - m68ki_idle_io_lo <= m68ki_idle_io_hi - m68ki_idle_io_lo) m68ki_idle_io = 1; } while (0)
+#else
+#define M68KI_COUNT_WRITE(A, V) ((void)0)
+#endif
+
 static INLINE void m68ki_write_8_fc(uint address, uint fc, uint value)
 {
+	M68KI_COUNT_WRITE(address, value);
 	m68ki_set_fc(fc);
 	m68k_write_memory_8(ADDRESS_68K(address), value);
 }
 static INLINE void m68ki_write_16_fc(uint address, uint fc, uint value)
 {
+	M68KI_COUNT_WRITE(address, value);
 	m68ki_set_fc(fc);
 	m68k_write_memory_16(ADDRESS_68K(address), value);
 }
 static INLINE void m68ki_write_32_fc(uint address, uint fc, uint value)
 {
+	M68KI_COUNT_WRITE(address, value);
 	m68ki_set_fc(fc);
 	m68k_write_memory_32(ADDRESS_68K(address), value);
 }
@@ -1198,14 +1212,30 @@ static INLINE void m68ki_jump_vector(uint vector)
 
 
  /* So far it's been safe to not call m68ki_jump() for branch byte and word. */
+#ifdef MAMEGO
+/* Generic idle-loop skip. A short backward branch taken again and again to
+ * the same place, with the same 16 registers and each pass writing the same
+ * values to the same RAM (e.g. BCLR on a flag that is still clear), is a
+ * loop waiting for something outside the CPU (the vblank interrupt, a sound
+ * CPU reply): what MAME's hand-written per-game speed-ups detect. Its
+ * remaining cycles in this timeslice are given away; the other CPU and the
+ * timers run, and the loop resumes in the next slice as it would have. */
+void m68ki_idle_check(void);
+#define M68KI_IDLE_CHECK() do { if (m68ki_idle_enable && REG_PC < REG_PPC && REG_PPC - REG_PC <= 32) m68ki_idle_check(); } while (0)
+#else
+#define M68KI_IDLE_CHECK() ((void)0)
+#endif
+
 static INLINE void m68ki_branch_8(uint offset)
 {
 	REG_PC += MAKE_INT_8(offset);
+	M68KI_IDLE_CHECK();
 }
 
 static INLINE void m68ki_branch_16(uint offset)
 {
 	REG_PC += MAKE_INT_16(offset);
+	M68KI_IDLE_CHECK();
 }
 
 static INLINE void m68ki_branch_32(uint offset)

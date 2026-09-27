@@ -66,6 +66,7 @@
 #include "cpuintrf.h"
 #include "state.h"
 #include "z80.h"
+#include <string.h>
 #include <retro_inline.h>
 
 /****************************************************************************/
@@ -474,7 +475,15 @@ static INLINE void BURNODD(int cycles, int opcodes, int cyclesum)
 /***************************************************************
  * Output a byte to given I/O port
  ***************************************************************/
+#ifdef MAMEGO
+/* mame-go generic idle-loop skip, see z80_idle_check() */
+unsigned z80_idle_enable;
+static unsigned z80_idle_whash, z80_idle_io;
+static INLINE void z80_out(unsigned port, unsigned value) { z80_idle_io = 1; cpu_writeport(port, value); }
+#define OUT(port,value) z80_out(port,value)
+#else
 #define OUT(port,value) cpu_writeport(port,value)
+#endif
 
 /***************************************************************
  * Read a byte from given memory location
@@ -493,7 +502,16 @@ static INLINE void RM16( uint32_t addr, PAIR *r )
 /***************************************************************
  * Write a byte to given memory location
  ***************************************************************/
+#ifdef MAMEGO
+static INLINE void z80_wm(unsigned addr, unsigned value) /* arguments evaluated once */
+{
+	z80_idle_whash = (z80_idle_whash ^ addr ^ (value << 16)) * 16777619u;
+	cpu_writemem16(addr, value);
+}
+#define WM(addr,value) z80_wm(addr,value)
+#else
 #define WM(addr,value) cpu_writemem16(addr,value)
+#endif
 
 /***************************************************************
  * Write a word to given memory location
@@ -594,11 +612,48 @@ static INLINE uint32_t ARG16(void)
  * JP_COND
  ***************************************************************/
 
+#ifdef MAMEGO
+/* Generic idle-loop skip (Neo Geo sound CPU): a short backward jump taken
+ * again and again to the same place with the same registers, the same RAM
+ * writes per pass and no OUT (port writes reach the sound chip) is a loop
+ * waiting for an NMI/IRQ or a 68000 command. Its remaining cycles in this
+ * timeslice are burnt; the loop resumes in the next slice as it would have. */
+void z80_burn(int cycles);
+static unsigned z80_idle_pc, z80_idle_hash, z80_idle_count, z80_idle_regs[7];
+static void z80_idle_check(unsigned from)
+{
+	unsigned whash = z80_idle_whash, io = z80_idle_io;
+	unsigned regs[7] = {_AFD, _BCD, _DED, _HLD, _IXD, _IYD, _SPD};
+	z80_idle_whash = 0;
+	z80_idle_io = 0;
+	if (_PCD >= from || from - _PCD > 32)
+		return;
+	if (_PCD == z80_idle_pc && !io && whash == z80_idle_hash && !memcmp(regs, z80_idle_regs, sizeof(regs)))
+	{
+		if (++z80_idle_count >= 3 && !after_EI)
+		{
+			z80_idle_count = 0;
+			z80_burn(z80_ICount);
+		}
+		return;
+	}
+	z80_idle_pc = _PCD;
+	z80_idle_hash = whash;
+	z80_idle_count = 0;
+	memcpy(z80_idle_regs, regs, sizeof(regs));
+}
+#define Z80_IDLE_CHECK(from) do { if (z80_idle_enable) z80_idle_check(from); } while (0)
+#else
+#define Z80_IDLE_CHECK(from) do {} while (0)
+#endif
+
 #define JP_COND(cond)											\
 	if( cond )													\
 	{															\
+		unsigned from_ = _PCD - 1;								\
 		_PCD = ARG16(); 										\
 		change_pc16(_PCD);										\
+		Z80_IDLE_CHECK(from_);									\
 	}															\
 	else														\
 	{															\
@@ -650,10 +705,12 @@ static INLINE uint32_t ARG16(void)
 #define JR_COND(cond,opcode)									\
 	if( cond )													\
 	{															\
+		unsigned from_ = _PCD - 1;								\
 		int8_t arg = (int8_t)ARG(); /* ARG() also increments _PC */ \
 		_PC += arg; 			/* so don't do _PC += ARG() */  \
 		CC(ex,opcode);											\
 		change_pc16(_PCD);										\
+		Z80_IDLE_CHECK(from_);									\
 	}															\
 	else _PC++; 												\
 

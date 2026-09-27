@@ -1,4 +1,5 @@
 #include "driver.h"
+#include "mamego_prof.h"
 
 
 /***************************************************************************
@@ -895,6 +896,7 @@ void sound_stop(void)
 void sound_update(void)
 {
 	int totalsound = 0;
+	PROF_PUSH(PROF_MIXER);
 
 
 	profiler_mark(PROFILER_SOUND);
@@ -913,6 +915,7 @@ void sound_update(void)
 	timer_reset(sound_update_timer,TIME_NEVER);
 
 	profiler_mark(PROFILER_END);
+	PROF_POP();
 }
 
 

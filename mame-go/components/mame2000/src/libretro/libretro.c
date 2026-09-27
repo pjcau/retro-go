@@ -7,6 +7,7 @@
 #if (HAS_DRZ80 || HAS_CYCLONE)
 #include "frontend_list.h"
 #endif
+#include "../mamego_prof.h"
 
 #include <stdarg.h>
 #include <sys/time.h>
@@ -856,6 +857,7 @@ void retro_run(void)
     * audio(), which calls hook_video_done() to raise yield_pending. */
    mame_run_one_frame();
 
+   PROF_PUSH(PROF_OUT);
    if (should_skip_frame)
       video_cb(NULL, gfx_width, gfx_height, gfx_width * 2);
    else if (mame2000_direct_frame_data != 0)
@@ -868,6 +870,7 @@ void retro_run(void)
                mame2000_direct_frame_pitch);
    else
       video_cb(gp2x_screen15, gfx_width, gfx_height, gfx_width * 2);
+   PROF_POP();
 
    /* Restore the core-owned buffer for the next frame so allocation
     * lifetimes stay sane regardless of whether the frontend grants a

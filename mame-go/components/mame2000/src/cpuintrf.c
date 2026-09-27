@@ -10,6 +10,7 @@
 
 /*#include <signal.h>*/
 #include "driver.h"
+#include "mamego_prof.h"
 #include "timer.h"
 #include "state.h"
 #include "hiscore.h"
@@ -876,7 +877,9 @@ void cpu_run_step(void)
 
 			/* run for the requested number of cycles */
 			profiler_mark(PROFILER_CPU1 + cpunum);
+			PROF_PUSH(activecpu == 0 ? PROF_CPU0 : PROF_CPU1);
 			ran = EXECUTE(activecpu, cycles_running);
+			PROF_POP();
 			profiler_mark(PROFILER_END);
 
 			/* update based on how many cycles we really ran */
