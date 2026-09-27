@@ -200,6 +200,10 @@ void nes_main(void)
     };
 
     app = rg_system_reinit(AUDIO_SAMPLE_RATE, &handlers, NULL);
+    // Draw every frame: these cores have CPU to spare (30-55% busy at 30 drawn),
+    // and at 60 drawn the display-synchronous buzz is a 60 Hz hum instead of
+    // 30 Hz knocks (remediation/audio). rg_system raises it again if needed.
+    app->frameskip = 0;
 
     overscan = rg_settings_get_number(NS_APP, SETTING_OVERSCAN, 1);
     autocrop = rg_settings_get_number(NS_APP, SETTING_AUTOCROP, 0);

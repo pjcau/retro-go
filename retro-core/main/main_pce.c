@@ -247,7 +247,10 @@ void pce_main(void)
     }
 
     rg_system_set_tick_rate(60);
-    app->frameskip = 1;
+    // Draw every frame: these cores have CPU to spare (30-55% busy at 30 drawn),
+    // and at 60 drawn the display-synchronous buzz is a 60 Hz hum instead of
+    // 30 Hz knocks (remediation/audio). rg_system raises it again if needed.
+    app->frameskip = 0;
 
     emulationPaused = false;
     RunPCE();
