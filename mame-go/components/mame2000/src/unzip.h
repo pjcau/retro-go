@@ -124,4 +124,13 @@ int /* error */ checksum_zipped_file (const char *zipfile, const char *filename,
 
 void unzip_cache_clear(void);
 
+#ifdef MAMEGO
+/* mame-go: read one entry a piece at a time (Neo Geo sprite/sample ROMs of
+   8 MB and more never fit in memory whole). Found by name, else by CRC. */
+struct zipstream;
+struct zipstream *zipstream_open(const char *zipfile, const char *name, uint32_t crc, uint32_t *size);
+int zipstream_read(struct zipstream *s, void *buf, unsigned len);
+void zipstream_close(struct zipstream *s);
+#endif
+
 #endif

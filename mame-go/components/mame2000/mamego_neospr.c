@@ -16,6 +16,7 @@
  * with the full length, so the driver's tile count is unchanged).
  */
 #include "driver.h"
+#include "unzip.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,8 @@ struct neospr_region
 };
 
 static struct neospr_region regions[NEOSPR_MAX_REGIONS];
+static int neosnd_alloc(void);
+unsigned neosnd_take_misses(void);
 static int region_count;
 
 static unsigned char *cache;
@@ -148,6 +151,42 @@ static void *open_rom(const struct RomModule *romp)
 	return f;
 }
 
+/* A ROM read a piece at a time: streamed from the zip picked in the launcher
+   (8 MB sprite ROMs never fit in memory whole), else through the file layer,
+   which unzips the whole file (fine for the small ones / parent zips). */
+struct romrd
+{
+	struct zipstream *zs;
+	void *f;
+};
+
+static int romrd_open(struct romrd *r, const struct RomModule *rom)
+{
+	extern char mamego_zip_path[];
+	r->zs = NULL;
+	r->f = NULL;
+	if (mamego_zip_path[0])
+		r->zs = zipstream_open(mamego_zip_path, rom->name, rom->crc, NULL);
+	if (!r->zs)
+		r->f = open_rom(rom);
+	return (r->zs || r->f) ? 0 : -1;
+}
+
+static int romrd_read(struct romrd *r, void *buf, unsigned len)
+{
+	return r->zs ? zipstream_read(r->zs, buf, len) : osd_fread(r->f, buf, len);
+}
+
+static void romrd_close(struct romrd *r)
+{
+	if (r->zs)
+		zipstream_close(r->zs);
+	if (r->f)
+		osd_fclose(r->f);
+	r->zs = NULL;
+	r->f = NULL;
+}
+
 /* Convert the region's ROMs (ROM_LOAD_GFX_EVEN/ODD pairs) into the .spr
    file. A pair is streamed 64 KB at a time: besides the two zip entries
    the file layer keeps in memory, only a 128 KB interleave buffer is used.
@@ -166,7 +205,7 @@ static int build_file(FILE *out, const struct RomModule *first, int entries, uin
 	for (i = 0; i < entries; i++)
 	{
 		const struct RomModule *group[8];
-		void *files[8];
+		struct romrd files[8];
 		unsigned base, length, pos, t;
 		int n = 0, k;
 
@@ -178,10 +217,10 @@ static int build_file(FILE *out, const struct RomModule *first, int entries, uin
 		{
 			if (done[j] || (first[j].offset & ~1) != base || (first[j].length & ~ROMFLAG_MASK) != length)
 				continue;
-			if (!(files[n] = open_rom(&first[j])))
+			if (romrd_open(&files[n], &first[j]) != 0)
 			{
 				printf("neospr: cannot open %s\n", first[j].name);
-				while (n--) osd_fclose(files[n]);
+				while (n--) romrd_close(&files[n]);
 				goto out;
 			}
 			printf("neospr: converting %s\n", first[j].name);
@@ -202,7 +241,7 @@ static int build_file(FILE *out, const struct RomModule *first, int entries, uin
 				unsigned lane = (group[k]->offset - base) ^ 1;
 			#endif
 				unsigned b;
-				if (osd_fread(files[k], part, len) != (int)len)
+				if (romrd_read(&files[k], part, len) != (int)len)
 					memset(part, 0, len);
 				for (b = 0; b < len; b++)
 					chunk[lane + 2 * b] = part[b];
@@ -218,12 +257,12 @@ static int build_file(FILE *out, const struct RomModule *first, int entries, uin
 			if (fwrite(chunk, 1, 2 * len, out) != 2 * len)
 			{
 				printf("neospr: write failed (card full?)\n");
-				for (k = 0; k < n; k++) osd_fclose(files[k]);
+				for (k = 0; k < n; k++) romrd_close(&files[k]);
 				goto out;
 			}
 		}
 		for (k = 0; k < n; k++)
-			osd_fclose(files[k]);
+			romrd_close(&files[k]);
 	}
 
 	fseek(out, sizeof(struct neospr_header), SEEK_SET);
@@ -326,6 +365,8 @@ int neospr_start(uint32_t *pen_usage, unsigned total_tiles)
 		n += regions[r].tiles;
 	}
 
+	if (neosnd_alloc() != 0) /* the samples get their share first */
+		return -1;
 #ifdef ESP_PLATFORM
 	{
 		size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
@@ -420,7 +461,7 @@ void neospr_frame(void)
 	frame++;
 	if (++frames_total % 600 == 0)
 	{
-		printf("neospr: %u page reads in the last 600 frames, worst frame %u\n", misses_total, worst_frame);
+		printf("neospr: %u page reads in the last 600 frames, worst frame %u; samples: %u page reads\n", misses_total, worst_frame, neosnd_take_misses());
 		misses_total = worst_frame = 0;
 	}
 }
@@ -440,4 +481,245 @@ void neospr_stop(void)
 	cache = NULL; page_slot = slot_page = NULL; slot_used = NULL;
 	total_pages = cache_slots = 0;
 	misses_frame = misses_total = frames_total = worst_frame = next_victim = 0;
+}
+
+/* ------------------------------------------------------------------------
+ * Neo Geo sample ROMs (YM2610 ADPCM-A/B) paged from the SD card.
+ *
+ * Sample regions up to NEOSND_FLASH_MAX go to the mamerom flash partition
+ * (common.c, fastest). Bigger ones (Metal Slug 2: 8 MB; the partition is
+ * 4 MB and the flash is full) are copied once to
+ *     <core_sys_directory>/neospr/<game>_snd<n>.pcm   (header | raw bytes)
+ * and the chip's two byte reads (fm.c ADPCM-A, ymdeltat.c ADPCM-B) go
+ * through a PSRAM cache of 4 KB pages. The chip reads each sample
+ * sequentially: a page is ~0.4 s of one voice, so misses are rare.
+ * ------------------------------------------------------------------------ */
+#define NEOSND_PAGE        4096
+#define NEOSND_FLASH_MAX   (3584 * 1024)
+#define NEOSND_MAX_REGIONS 2
+
+struct neosnd_region
+{
+	FILE *f;
+	unsigned char *stub;
+	uint32_t size;
+	uint32_t data_offset;
+	uint32_t first_page;
+};
+
+static struct neosnd_region snd_regions[NEOSND_MAX_REGIONS];
+static int snd_count;
+int neosnd_active;                    /* read by fm.c / ymdeltat.c */
+static unsigned char *snd_cache;
+static int snd_slots;
+static int16_t *snd_page_slot;
+static int32_t *snd_slot_page;
+static uint32_t *snd_slot_used, snd_clock, snd_pages;
+static unsigned snd_misses;
+
+int neosnd_wanted(int type, unsigned size)
+{
+	if (type < REGION_SOUND1 || type > REGION_SOUND8)
+		return 0;
+	if (!Machine->drv || Machine->drv->vh_start != neogeo_mvs_vh_start || snd_count >= NEOSND_MAX_REGIONS)
+		return 0;
+#ifndef ESP_PLATFORM
+	if (getenv("NEOSND")) /* PC tests: 1 = always page, 0 = never */
+		return atoi(getenv("NEOSND"));
+#endif
+	return size > NEOSND_FLASH_MAX;
+}
+
+/* Plain ROM_LOADs laid end to end, copied into the .pcm file as they are. */
+unsigned char *neosnd_region_load(int type, const struct RomModule *first, int entries, unsigned region_size)
+{
+	struct neosnd_region *reg = &snd_regions[snd_count];
+	struct neospr_header h, want;
+	unsigned char *buf = NULL;
+	uint32_t key = region_size, expect = 0;
+	char path[1024];
+	FILE *f;
+	int i;
+
+	for (i = 0; i < entries; i++)
+	{
+		const struct RomModule *r = &first[i];
+		unsigned length = r->length & ~ROMFLAG_MASK;
+		if (!r->name || r->name == (char *)-1 || (r->length & ROMFLAG_MASK) || r->offset != expect)
+		{
+			printf("neosnd: region %d has an unsupported ROM layout\n", type);
+			return NULL;
+		}
+		expect += length;
+		key += (uint32_t)r->crc + length;
+	}
+	if (expect != region_size)
+		return NULL;
+
+	memset(&want, 0, sizeof(want));
+	memcpy(want.magic, "NEOSND", 6);
+	want.version = NEOSPR_VERSION;
+	want.region_size = region_size;
+	want.rom_key = key;
+	want.data_offset = 4096;
+
+	snprintf(path, sizeof(path), "%s/neospr", core_sys_directory);
+	mkdir(path, 0777);
+	snprintf(path, sizeof(path), "%s/neospr/%s_snd%d.pcm", core_sys_directory, Machine->gamedrv->name,
+		type - REGION_SOUND1 + 1);
+
+	f = fopen(path, "rb");
+	if (!f || fread(&h, sizeof(h), 1, f) != 1 || memcmp(&h, &want, sizeof(h)) != 0)
+	{
+		if (f)
+			fclose(f);
+		printf("neosnd: preparing %s (one time, %u KB)\n", path, region_size / 1024);
+		if (!(f = fopen(path, "wb")) || fwrite(&want, sizeof(want), 1, f) != 1 || !(buf = malloc(NEOSPR_CHUNK)))
+			goto fail;
+		for (i = 0; i < entries; i++)
+		{
+			struct romrd rd;
+			unsigned length = first[i].length & ~ROMFLAG_MASK, pos;
+			if (romrd_open(&rd, &first[i]) != 0)
+			{
+				printf("neosnd: cannot open %s\n", first[i].name);
+				goto fail;
+			}
+			printf("neosnd: copying %s\n", first[i].name);
+			fseek(f, want.data_offset + first[i].offset, SEEK_SET);
+			for (pos = 0; pos < length; pos += NEOSPR_CHUNK)
+			{
+				unsigned len = length - pos < NEOSPR_CHUNK ? length - pos : NEOSPR_CHUNK;
+				if (romrd_read(&rd, buf, len) != (int)len || fwrite(buf, 1, len, f) != len)
+				{
+					romrd_close(&rd);
+					goto fail;
+				}
+			}
+			romrd_close(&rd);
+		}
+		free(buf);
+		buf = NULL;
+		fclose(f); /* FAT records the size on close */
+		if (!(f = fopen(path, "rb")))
+			return NULL;
+	}
+
+	reg->f = f;
+	reg->size = region_size;
+	reg->data_offset = want.data_offset;
+	reg->first_page = snd_pages;
+	reg->stub = malloc(16);
+	snd_pages += (region_size + NEOSND_PAGE - 1) / NEOSND_PAGE;
+	snd_count++;
+	neosnd_active = 1;
+	printf("neosnd: %s, %u KB of samples paged from the card\n", path, region_size / 1024);
+	return reg->stub;
+
+fail:
+	free(buf);
+	if (f)
+		fclose(f);
+	remove(path);
+	return NULL;
+}
+
+int neosnd_owns(const unsigned char *region)
+{
+	int i;
+	for (i = 0; i < snd_count; i++)
+		if (snd_regions[i].stub == region)
+			return 1;
+	return 0;
+}
+
+/* Called before the sprite cache is sized: the samples get their share first. */
+static int neosnd_alloc(void)
+{
+	size_t bytes;
+	uint32_t i;
+
+	if (!snd_count || snd_cache)
+		return 0;
+	/* Metal Slug 2 on the PC harness: <= 60 page reads per 600 frames with
+	   256 KB already; 512 KB leaves the sprites and the program the rest */
+#ifdef ESP_PLATFORM
+	bytes = 512 * 1024;
+#else
+	bytes = getenv("NEOSND_CACHE_KB") ? (size_t)atoi(getenv("NEOSND_CACHE_KB")) * 1024 : 512 * 1024;
+#endif
+	snd_slots = bytes / NEOSND_PAGE;
+	snd_cache = malloc((size_t)snd_slots * NEOSND_PAGE);
+	snd_page_slot = malloc(snd_pages * sizeof(int16_t));
+	snd_slot_page = malloc(snd_slots * sizeof(int32_t));
+	snd_slot_used = calloc(snd_slots, sizeof(uint32_t));
+	if (!snd_cache || !snd_page_slot || !snd_slot_page || !snd_slot_used)
+		return -1;
+	for (i = 0; i < snd_pages; i++)
+		snd_page_slot[i] = -1;
+	for (i = 0; i < (uint32_t)snd_slots; i++)
+		snd_slot_page[i] = -1;
+	printf("neosnd: sample cache %d KB (%d pages)\n", snd_slots * NEOSND_PAGE / 1024, snd_slots);
+	return 0;
+}
+
+uint8_t neosnd_read(const uint8_t *base, uint32_t offset)
+{
+	struct neosnd_region *reg = NULL;
+	uint32_t page;
+	int slot, i;
+
+	for (i = 0; i < snd_count; i++)
+		if (snd_regions[i].stub == base)
+			reg = &snd_regions[i];
+	if (!reg)
+		return base[offset];
+	if (offset >= reg->size || (!snd_cache && neosnd_alloc() != 0))
+		return 0;
+
+	page = reg->first_page + offset / NEOSND_PAGE;
+	slot = snd_page_slot[page];
+	if (slot < 0)
+	{
+		/* least recently used page */
+		uint32_t oldest = ~0u;
+		int s;
+		slot = 0;
+		for (s = 0; s < snd_slots; s++)
+		{
+			if (snd_slot_page[s] < 0) { slot = s; break; }
+			if (snd_slot_used[s] < oldest) { oldest = snd_slot_used[s]; slot = s; }
+		}
+		if (snd_slot_page[slot] >= 0)
+			snd_page_slot[snd_slot_page[slot]] = -1;
+		fseek(reg->f, reg->data_offset + (offset & ~(NEOSND_PAGE - 1)), SEEK_SET);
+		if (fread(snd_cache + (size_t)slot * NEOSND_PAGE, 1, NEOSND_PAGE, reg->f) == 0)
+			memset(snd_cache + (size_t)slot * NEOSND_PAGE, 0, NEOSND_PAGE);
+		snd_slot_page[slot] = page;
+		snd_page_slot[page] = slot;
+		snd_misses++;
+	}
+	snd_slot_used[slot] = ++snd_clock;
+	return snd_cache[(size_t)slot * NEOSND_PAGE + (offset & (NEOSND_PAGE - 1))];
+}
+
+unsigned neosnd_take_misses(void)
+{
+	unsigned m = snd_misses;
+	snd_misses = 0;
+	return m;
+}
+
+void neosnd_stop(void)
+{
+	int i;
+	for (i = 0; i < snd_count; i++)
+		if (snd_regions[i].f)
+			fclose(snd_regions[i].f);
+	memset(snd_regions, 0, sizeof(snd_regions));
+	snd_count = 0;
+	neosnd_active = 0;
+	free(snd_cache); free(snd_page_slot); free(snd_slot_page); free(snd_slot_used);
+	snd_cache = NULL; snd_page_slot = NULL; snd_slot_page = NULL; snd_slot_used = NULL;
+	snd_pages = snd_slots = snd_clock = snd_misses = 0;
 }

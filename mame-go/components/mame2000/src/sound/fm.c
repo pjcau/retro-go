@@ -1768,7 +1768,16 @@ static INLINE void OPNB_ADPCM_CALC_CHA( YM2610 *F2610, ADPCM_CH *ch )
 			if( ch->now_addr&1 ) data = ch->now_data & 0x0f;
 			else
 			{
+#ifdef MAMEGO
+				{
+					/* samples may be paged from the SD card (mamego_neospr.c) */
+					extern int neosnd_active;
+					extern uint8_t neosnd_read(const uint8_t *base, uint32_t offset);
+					ch->now_data = neosnd_active ? neosnd_read(pcmbufA, ch->now_addr>>1) : *(pcmbufA+(ch->now_addr>>1));
+				}
+#else
 				ch->now_data = *(pcmbufA+(ch->now_addr>>1));
+#endif
 				data = (ch->now_data >> 4)&0x0f;
 			}
 			ch->now_addr++;

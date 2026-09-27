@@ -104,6 +104,7 @@ void neogeo_vh_stop(void)
 {
 #ifdef MAMEGO
 	neospr_stop();
+	{ extern void neosnd_stop(void); neosnd_stop(); }
 #endif
    	if (pal_bank1) free(pal_bank1);
 	if (pal_bank2) free(pal_bank2);

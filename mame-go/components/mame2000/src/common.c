@@ -87,6 +87,8 @@ int readroms(void)
 		   program and sample ROMs are about to take. */
 		extern int neospr_wanted(int type);
 		extern unsigned char *neospr_region_load(int type, const struct RomModule *first, int entries, unsigned region_size);
+		extern int neosnd_wanted(int type, unsigned size);
+		extern unsigned char *neosnd_region_load(int type, const struct RomModule *first, int entries, unsigned region_size);
 		const struct RomModule *p = romp;
 
 		memset(neospr_stub, 0, sizeof(neospr_stub));
@@ -98,6 +100,8 @@ int readroms(void)
 				entries++;
 			if (neospr_wanted(type))
 				neospr_stub[region] = neospr_region_load(type, p + 1, entries, p->offset);
+			else if (neosnd_wanted(type, p->offset))
+				neospr_stub[region] = neosnd_region_load(type, p + 1, entries, p->offset);
 			p += 1 + entries;
 		}
 	}
@@ -1121,14 +1125,29 @@ void mamego_regions_to_flash(void)
 			continue;
 		{
 			extern int neospr_owns(const unsigned char *region);
-			if (neospr_owns(Machine->memory_region[i])) /* a 16-byte stub, the tiles are on the card */
+			extern int neosnd_owns(const unsigned char *region);
+			/* 16-byte stubs: the tiles / samples are on the card */
+			if (neospr_owns(Machine->memory_region[i]) || neosnd_owns(Machine->memory_region[i]))
 				continue;
 		}
 		if (!((type >= REGION_GFX1 && type <= REGION_GFX8) || (type >= REGION_SOUND1 && type <= REGION_SOUND8)))
-			continue;
+		{
+			/* Neo Geo program ROM (Metal Slug 2: 3 MB): read-only once the
+			   driver init has patched it, and the partition is free when the
+			   samples are paged from the card */
+			extern int neogeo_mvs_vh_start(void);
+			if (type != REGION_CPU1 || Machine->drv->vh_start != neogeo_mvs_vh_start
+				|| Machine->memory_region_length[i] < 1024 * 1024)
+				continue;
+		}
 		copy = mamego_flash_store(Machine->memory_region[i], Machine->memory_region_length[i], &offset);
 		if (!copy)
 			continue;
+		if (type == REGION_CPU1)
+		{
+			extern void memory_rebase(const unsigned char *old, size_t len, unsigned char *copy);
+			memory_rebase(Machine->memory_region[i], Machine->memory_region_length[i], copy);
+		}
 		free(Machine->memory_region[i]);
 		Machine->memory_region[i] = copy;
 		mamego_region_flash[i] = 1;

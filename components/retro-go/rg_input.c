@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <math.h>
 
 #ifdef ESP_PLATFORM
@@ -458,6 +459,21 @@ static void console_exec(char *line)
         char path[RG_PATH_MAX + 1];
         snprintf(path, sizeof(path), "%s%s%s%s%s", arg1, arg2 ? " " : "", arg2 ? arg2 : "", rest ? " " : "", rest ? rest : "");
         printf("CTL rm %s %s\n", rg_storage_delete(path) ? "done" : "failed", path);
+    }
+    else if (strcmp(cmd, "mv") == 0 && arg1)
+    {
+        // mv <from>|<to> : rename/move on the card ('|' because paths hold spaces);
+        // the destination folder is created if needed
+        char line[2 * RG_PATH_MAX + 2], *sep;
+        snprintf(line, sizeof(line), "%s%s%s%s%s", arg1, arg2 ? " " : "", arg2 ? arg2 : "", rest ? " " : "", rest ? rest : "");
+        if ((sep = strchr(line, '|')))
+        {
+            *sep = 0;
+            rg_storage_mkdir(rg_dirname(sep + 1));
+            printf("CTL mv %s %s -> %s\n", rename(line, sep + 1) == 0 ? "done" : "failed", line, sep + 1);
+        }
+        else
+            printf("CTL mv failed: use mv <from>|<to>\n");
     }
     else if ((strcmp(cmd, "launch") == 0 || strncmp(cmd, "resume", 6) == 0) && arg1 && arg2 && rest)
     {

@@ -75,6 +75,10 @@ void neogeo_init_machine(void)
 	}
 
 	time(&ltime);
+#if defined(MAMEGO) && !defined(ESP_PLATFORM)
+	if (getenv("FIXEDTIME")) /* PC A/B runs: the RTC feeds the game, freeze it */
+		ltime = 1000000000;
+#endif
 	today = localtime(&ltime);
 
 	seconds = ((today->tm_sec/10)<<4) + (today->tm_sec%10);

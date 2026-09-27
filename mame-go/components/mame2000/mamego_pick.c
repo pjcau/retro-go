@@ -40,7 +40,7 @@ static int roms_score(const struct GameDriver *drv, const struct zipent *list, i
         if (!r->name || r->name == (char *)-1)
             continue; /* region start, continue or reload */
         int has = zip_has(list, n, r->name, r->crc);
-        if (!has && !(r->crc & ROMFLAG_OPTIONAL))
+        if (!has && !(r->length & ROMFLAG_OPTIONAL)) /* the flag lives in the length */
             return -1;
         score += has == 2;
     }
@@ -73,6 +73,28 @@ int mamego_pick_driver(const char *zip_path, const char *base_name)
         closezip(zip);
     }
 
+    /* Neo Geo sets often leave the BIOS to a separate neogeo.zip (the parent
+       set) next to the game: count its files too, the loader finds them there
+       through the driver's clone_of chain. */
+    {
+        char bios[256];
+        const char *slash = strrchr(zip_path, '/');
+        int dir = slash ? (int)(slash - zip_path) + 1 : 0;
+        snprintf(bios, sizeof(bios), "%.*sneogeo.zip", dir, zip_path);
+        if (strcasecmp(bios, zip_path) != 0 && (zip = openzip(bios)))
+        {
+            struct zipent *ent;
+            while ((ent = readzip(zip)) && n < MAX_ENTRIES)
+            {
+                list[n] = *ent;
+                snprintf(names[n], sizeof(names[n]), "%s", ent->name);
+                list[n].name = names[n];
+                n++;
+            }
+            closezip(zip);
+        }
+    }
+
     const struct GameDriver *family = 0;
     for (int i = 0; drivers[i]; i++)
         if (!strcasecmp(drivers[i]->name, base_name))
@@ -87,6 +109,8 @@ int mamego_pick_driver(const char *zip_path, const char *base_name)
         int best = -1, best_score = -1;
         for (int i = 0; drivers[i]; i++)
         {
+            if (drivers[i]->flags & NOT_A_DRIVER) /* e.g. the Neo Geo BIOS set */
+                continue;
             int score = roms_score(drivers[i], list, n);
             if (score > best_score)
                 best = i, best_score = score;

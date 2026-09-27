@@ -373,6 +373,26 @@ static int memory_allocate_ext (void)
 }
 
 
+#ifdef MAMEGO
+/* mame-go: a CPU region moved to flash after memory_init() (common.c):
+   every pointer taken into the old copy follows it to the new one. */
+void memory_rebase(const unsigned char *old, size_t len, unsigned char *copy)
+{
+#define REBASE(p) do { if ((p) >= old && (p) < old + len) (p) = copy + ((p) - old); } while (0)
+	int i;
+	for (i = 0; i < MAX_CPU; i++)
+	{
+		REBASE(ramptr[i]);
+		REBASE(romptr[i]);
+	}
+	for (i = 0; i <= HT_BANKMAX; i++)
+		REBASE(cpu_bankbase[i]);
+	REBASE(OP_RAM);
+	REBASE(OP_ROM);
+#undef REBASE
+}
+#endif
+
 unsigned char *findmemorychunk(int cpu, int offset, int *chunkstart, int *chunkend)
 {
 	int region = REGION_CPU1+cpu;

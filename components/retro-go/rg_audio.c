@@ -207,9 +207,10 @@ int rg_audio_get_volume(void)
 
 void rg_audio_set_volume(int percent)
 {
-    RG_ASSERT(audio.driver != NULL, "Audio device not ready!");
+    // No assert: the console's "volume N" can arrive before rg_audio_init()
+    // (launcher, app start). Keep the value; rg_audio_init() applies it.
     audio.volume = RG_MIN(RG_MAX(percent, 0), 100);
-    if (audio.driver->set_volume)
+    if (audio.driver && audio.driver->set_volume)
         audio.driver->set_volume(audio.volume);
     rg_settings_set_number(NS_GLOBAL, SETTING_VOLUME, audio.volume);
     RG_LOGI("Volume set to %d%%\n", audio.volume);

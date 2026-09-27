@@ -224,7 +224,16 @@ static INLINE void YM_DELTAT_ADPCM_CALC(YM_DELTAT *DELTAT)
 			if( DELTAT->now_addr&1 ) data = DELTAT->now_data & 0x0f;
 			else
 			{
+#ifdef MAMEGO
+				{
+					/* samples may be paged from the SD card (mamego_neospr.c) */
+					extern int neosnd_active;
+					extern uint8_t neosnd_read(const uint8_t *base, uint32_t offset);
+					DELTAT->now_data = neosnd_active ? neosnd_read(ym_deltat_memory, DELTAT->now_addr>>1) : *(ym_deltat_memory+(DELTAT->now_addr>>1));
+				}
+#else
 				DELTAT->now_data = *(ym_deltat_memory+(DELTAT->now_addr>>1));
+#endif
 				data = DELTAT->now_data >> 4;
 			}
 			DELTAT->now_addr++;

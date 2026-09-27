@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <strings.h>
 #include <assert.h>
 #include "zlib/zlib.h"
 
@@ -877,3 +878,98 @@ int /* error */ checksum_zipped_file (const char *zipfile, const char *filename,
 	cache_suspendzip(zip);
 	return -1;
 }
+
+#ifdef MAMEGO
+struct zipstream
+{
+	ZIP *zip;
+	z_stream z;
+	int stored;
+	unsigned in_left;   /* compressed bytes not read from the file yet */
+	unsigned out_left;  /* uncompressed bytes not returned yet */
+	unsigned char in[INFLATE_INPUT_BUFFER_MAX + 1];
+};
+
+struct zipstream *zipstream_open(const char *zipfile, const char *name, uint32_t crc, uint32_t *size)
+{
+	struct zipstream *s;
+	struct zipent *ent, found;
+	int have = 0;
+	ZIP *zip = openzip(zipfile);
+
+	if (!zip)
+		return NULL;
+	while ((ent = readzip(zip)) != NULL)
+	{
+		const char *base = strrchr(ent->name, '/');
+		base = base ? base + 1 : ent->name;
+		if (name && !strcasecmp(base, name)) { found = *ent; have = 2; break; }
+		if (crc && ent->crc32 == crc && !have) { found = *ent; have = 1; }
+	}
+	if (!have || seekcompresszip(zip, &found) != 0
+		|| (found.compression_method != 0 && found.compression_method != 8)
+		|| !(s = calloc(1, sizeof(*s))))
+	{
+		closezip(zip);
+		return NULL;
+	}
+	s->zip = zip;
+	s->stored = found.compression_method == 0;
+	s->in_left = found.compressed_size;
+	s->out_left = found.uncompressed_size;
+	if (!s->stored && inflateInit2(&s->z, -MAX_WBITS) != Z_OK)
+	{
+		closezip(zip);
+		free(s);
+		return NULL;
+	}
+	if (size)
+		*size = found.uncompressed_size;
+	return s;
+}
+
+int zipstream_read(struct zipstream *s, void *buf, unsigned len)
+{
+	if (len > s->out_left)
+		len = s->out_left;
+	if (s->stored)
+	{
+		len = fread(buf, 1, len, s->zip->fp);
+		s->out_left -= len;
+		return len;
+	}
+	s->z.next_out = buf;
+	s->z.avail_out = len;
+	while (s->z.avail_out)
+	{
+		int err;
+		if (!s->z.avail_in && s->in_left)
+		{
+			unsigned n = s->in_left < INFLATE_INPUT_BUFFER_MAX ? s->in_left : INFLATE_INPUT_BUFFER_MAX;
+			s->z.next_in = s->in;
+			s->z.avail_in = fread(s->in, 1, n, s->zip->fp);
+			s->in_left -= n;
+			if (!s->in_left)
+				s->z.avail_in++; /* raw deflate wants a dummy byte at the end */
+		}
+		err = inflate(&s->z, Z_NO_FLUSH);
+		if (err == Z_STREAM_END)
+			break;
+		if (err != Z_OK)
+			return -1;
+	}
+	len -= s->z.avail_out;
+	s->out_left -= len;
+	return len;
+}
+
+void zipstream_close(struct zipstream *s)
+{
+	if (!s)
+		return;
+	if (!s->stored)
+		inflateEnd(&s->z);
+	closezip(s->zip);
+	free(s);
+}
+#endif
