@@ -24,6 +24,8 @@ Prepared for public release: 03/21/2003 - Charlie Wiederhold, 3D Realms
 */
 //-------------------------------------------------------------------------
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "duke3d.h"
 #include "filesystem.h"
 #include "game.h"
@@ -994,7 +996,8 @@ void newgame(uint8_t  vn,uint8_t  ln,uint8_t  sk)
     short i;
 
     if(globalskillsound >= 0)
-        while(Sound[globalskillsound].lock>=200);
+        while(Sound[globalskillsound].lock>=200) /* the skill voice still playing */
+            vTaskDelay(1); /* the audio task on core 1 releases it */
     globalskillsound = -1;
 
     waitforeverybody();

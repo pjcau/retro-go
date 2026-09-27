@@ -229,7 +229,7 @@ void CONFIG_SetDefaults( void )
    NumVoices = 32;
    NumChannels = 1;
    NumBits = 16;
-   MixRate = 11000;
+   MixRate = SAMPLERATE; /* retro-go: SDL_audio.h */
 
    // mouse
    mouseSensitivity_X = 16;
@@ -737,7 +737,7 @@ void CONFIG_ReadSetup( void )
    SCRIPT_GetNumber( scripthandle, "Sound Setup", "NumBits",&NumBits);
    NumBits = 16;
    SCRIPT_GetNumber( scripthandle, "Sound Setup", "MixRate",&MixRate);
-   MixRate = 11000;
+   MixRate = SAMPLERATE; /* retro-go: SDL_audio.h, doubled to 32 kHz on output */
    SCRIPT_GetNumber( scripthandle, "Sound Setup", "MidiPort",&MidiPort);
    SCRIPT_GetNumber( scripthandle, "Sound Setup", "BlasterAddress",&dummy);
    BlasterConfig.Address = dummy;

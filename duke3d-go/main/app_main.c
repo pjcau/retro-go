@@ -1,6 +1,7 @@
 #include <rg_system.h>
 
 #include "game.h"
+#include "SDL_audio.h" /* SAMPLERATE, OUTPUT_RATE */
 
 // Duke Nukem 3D (Chocolate Duke3D via jkirsons' ESP32 port) for esp32-emu-turbo.
 // The ROM picked in the launcher is the .grp file; the game runs on its own
@@ -16,7 +17,7 @@ static void dukeTask(void *pvParameters)
 void app_main(void)
 {
     const rg_handlers_t handlers = {0};
-    rg_app_t *app = rg_system_init(11025, &handlers, NULL);
+    rg_app_t *app = rg_system_init(OUTPUT_RATE, &handlers, NULL); /* 32 kHz, SDL/SDL_audio.h */
     RG_LOGI("Duke3D start, rom=%s", app->romPath ? app->romPath : "(none)");
     rg_task_create("dukeTask", &dukeTask, NULL, 16 * 1024, RG_TASK_PRIORITY_5, 0);
     // The main task idles; the game task owns the frame loop.

@@ -359,7 +359,7 @@ extern int32_t movefifosendplc;
 typedef struct
 {
     uint8_t  *ptr;
-    uint8_t  lock;
+    volatile uint8_t  lock;	/* changed by the audio task on the other core: the game spin-waits on it */
     int  length, num;
 } SAMPLE;
 

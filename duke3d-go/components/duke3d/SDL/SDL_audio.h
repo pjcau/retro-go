@@ -9,7 +9,10 @@
 
 // Needed for calling the actual sound output.
 #define SAMPLECOUNT		256
-#define SAMPLERATE		11025 * 1	// Hz
+/* The game mixes at 16 kHz; updateTask doubles it to retro-go's 32 kHz, the
+ * rate every app uses (the PDM sink misbehaves at other rates). */
+#define SAMPLERATE		16000	// Hz, the game's mix rate
+#define OUTPUT_RATE		(SAMPLERATE * 2)	// Hz, to retro-go
 #define SAMPLESIZE		2   	// 16bit
 
 typedef struct{

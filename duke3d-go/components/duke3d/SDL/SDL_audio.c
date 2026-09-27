@@ -7,12 +7,14 @@ bool locked = false;
 SemaphoreHandle_t xSemaphoreAudio = NULL;
 
 // The game's callback fills SAMPLECOUNT mono 16-bit samples at SAMPLERATE
-// (11025 Hz, rg_system_init rate); retro-go wants stereo frames and blocks
-// in rg_audio_submit until they are queued, which paces this task.
+// (16 kHz); retro-go runs at OUTPUT_RATE (32 kHz, app_main.c), so each sample
+// becomes two stereo frames, the second halfway to the next sample. retro-go
+// blocks in rg_audio_submit until they are queued, which paces this task.
 static void updateTask(void *arg)
 {
   static int16_t mono[SAMPLECOUNT];
-  static rg_audio_sample_t stereo[SAMPLECOUNT];
+  static rg_audio_sample_t stereo[SAMPLECOUNT * 2];
+  static int16_t prev;
   while (1)
   {
     if (!paused && !locked && as.callback)
@@ -20,8 +22,13 @@ static void updateTask(void *arg)
       memset(mono, 0, sizeof(mono));
       (*as.callback)(NULL, (Uint8 *)mono, SAMPLECOUNT * SAMPLESIZE);
       for (int i = 0; i < SAMPLECOUNT; i++)
-        stereo[i].left = stereo[i].right = mono[i];
-      rg_audio_submit(stereo, SAMPLECOUNT);
+      {
+        int16_t mid = (prev + mono[i]) / 2;
+        stereo[2 * i].left = stereo[2 * i].right = mid;
+        stereo[2 * i + 1].left = stereo[2 * i + 1].right = mono[i];
+        prev = mono[i];
+      }
+      rg_audio_submit(stereo, SAMPLECOUNT * 2);
     }
     else
       rg_task_delay(5);
