@@ -1064,6 +1064,12 @@ static unsigned char *mamego_sound_to_flash(const struct RomModule *region_hdr, 
 
 	if (type < REGION_SOUND1 || type > REGION_SOUND8 || region_size < 256 * 1024)
 		return NULL;
+	{
+		/* CPS1: the flash partition is for its decoded tiles (vidhrdw/cps1.c) */
+		extern int cps1_vh_start(void);
+		if (Machine->drv->vh_start == cps1_vh_start)
+			return NULL;
+	}
 #ifndef ESP_PLATFORM
 	if (getenv("SNDFLASH") && !strcmp(getenv("SNDFLASH"), "0")) /* PC A/B runs */
 		return NULL;
@@ -1130,6 +1136,12 @@ void mamego_regions_to_flash(void)
 
 		if (!Machine->memory_region[i] || Machine->memory_region_length[i] < 256 * 1024 || mamego_region_flash[i])
 			continue;
+		{
+			/* CPS1: its graphics ROM is converted in vh_start, the result goes to flash */
+			extern int cps1_vh_start(void);
+			if (Machine->drv->vh_start == cps1_vh_start)
+				continue;
+		}
 		{
 			extern int neospr_owns(const unsigned char *region);
 			extern int neosnd_owns(const unsigned char *region);

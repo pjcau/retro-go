@@ -26,8 +26,8 @@ PROJECT_APPS = {
   'gwenesis':     [0, 16, 1048576],
   'fmsx':         [0, 16, 589824],
   'duke3d-go':    [0, 16, 1048576],
-  'retro-extra':  [0, 16, 1835008],
-  'mame-go':      [0, 16, 1572864],
+  'retro-extra':  [0, 16, 1572864],  # was 1.75 MB: 256 KB moved to mame-go (CPS1), binary 1.43 MB
+  'mame-go':      [0, 16, 1835008],  # 1.75 MB since CPS1 (was 1.5 MB)
   'wolf3d-go':    [0, 16, 655360],
   'quake-go':     [0, 16, 786432],
   'opentyrian-go': [0, 16, 655360],

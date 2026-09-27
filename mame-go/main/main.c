@@ -369,7 +369,8 @@ static void mame_task(void *arg)
     /* Default to 1:1: these boards are at most 224-256 lines and a non-integer
      * upscale (Pac-Man 288 -> 320 lines) doubles every ninth line of the maze.
      * "DispScaling" is rg_display.c's per-app key; absent = never chosen. */
-    if (rg_settings_get_number(NS_APP, "DispScaling", -1) == -1)
+    bool scaling_never_chosen = rg_settings_get_number(NS_APP, "DispScaling", -1) == -1;
+    if (scaling_never_chosen)
         rg_display_set_scaling(RG_DISPLAY_SCALING_OFF);
     if (rg_display_get_scaling() == RG_DISPLAY_SCALING_OFF &&
         (av.geometry.base_width > rg_display_get_width() || av.geometry.base_height > rg_display_get_height()))
@@ -378,6 +379,11 @@ static void mame_task(void *arg)
      * with the aspect kept (434x320 on this panel). The menu can still pick
      * another mode for the session. */
     if (app->romPath && strstr(app->romPath, "/neogeo/"))
+        rg_display_set_scaling(RG_DISPLAY_SCALING_FIT);
+    /* Wide 16-bit boards (CPS1: 384x224) fit 1:1 but leave a third of the
+     * panel empty: the whole width with the aspect kept (480x280). Only when
+     * the user never chose a mode for mame-go. */
+    else if (av.geometry.base_width >= 384 && scaling_never_chosen)
         rg_display_set_scaling(RG_DISPLAY_SCALING_FIT);
 
     if (app->bootFlags & RG_BOOT_RESUME)

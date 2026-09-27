@@ -28,6 +28,7 @@ set(COMPONENT_SRCS
     src/drivers/galaga.c
     src/drivers/galaxian.c
     src/drivers/neogeo.c
+    src/drivers/cps1.c
     src/drivers/pacman.c
     src/drivers/scramble.c
     src/drivers/starfire.c
@@ -51,6 +52,7 @@ set(COMPONENT_SRCS
     src/machine/6821pia.c
     src/machine/8255ppi.c
     src/machine/eeprom.c
+    src/machine/kabuki.c
     src/machine/mathbox.c
     src/machine/ticket.c
     src/machine/z80fmly.c
@@ -77,6 +79,8 @@ set(COMPONENT_SRCS
     src/sound/namco.c
     src/sound/nes_apu.c
     src/sound/qsound.c
+    src/sound/2151intf.c
+    src/sound/ym2151.c
     src/sound/samples.c
     src/sound/sn76496.c
     src/sound/streams.c
@@ -119,5 +123,5 @@ rg_setup_compile_options(
     -D__LIBRETRO__ -DLSB_FIRST -DMAMEGO
     -DHAS_Z80=1 -DHAS_M68000=1 -DHAS_M6502=1 -DHAS_M65C02=1 -DHAS_N2A03=1 -DHAS_I8035=1 -DHAS_S2650=1
     -DHAS_NAMCO=1 -DHAS_CUSTOM=1 -DHAS_SN76496=1 -DHAS_AY8910=1 -DHAS_YM2203=1 -DHAS_YM2610=1 -DHAS_YM3812=1 -DHAS_QSOUND=1
-    -DHAS_DAC=1 -DHAS_SAMPLES=1 -DHAS_HC55516=1 -DHAS_ASTROCADE=1 -DHAS_TMS5220=1 -DHAS_NES=1 -DHAS_OKIM6295=1 -DHAS_ADPCM=1
+    -DHAS_DAC=1 -DHAS_SAMPLES=1 -DHAS_HC55516=1 -DHAS_ASTROCADE=1 -DHAS_TMS5220=1 -DHAS_NES=1 -DHAS_OKIM6295=1 -DHAS_ADPCM=1 -DHAS_YM2151=1
 )
