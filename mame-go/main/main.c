@@ -308,7 +308,25 @@ static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, un
 
 static bool screenshot_handler(const char *filename, int width, int height)
 {
-    return rg_surface_save_image_file(updates[current ^ 1], filename, width, height);
+    const rg_surface_t *s = updates[current ^ 1];
+    if (!s)
+        return false;
+    size_t n = strlen(filename);
+    if (n > 4 && !strcmp(filename + n - 4, ".raw"))
+    {
+        /* bench (console `shot`): the frame as is, RGB565 with a width/height
+           header, no PNG encoder (it needs memory the big games do not leave) */
+        FILE *fp = fopen(filename, "wb");
+        if (!fp)
+            return false;
+        uint16_t wh[2] = {(uint16_t)s->width, (uint16_t)s->height};
+        fwrite(wh, 2, 2, fp);
+        for (int y = 0; y < s->height; y++)
+            fwrite((const uint8_t *)s->data + s->offset + y * s->stride, 2, s->width, fp);
+        fclose(fp);
+        return true;
+    }
+    return rg_surface_save_image_file(s, filename, width, height);
 }
 
 /* Big read-only ROM regions (gfx, sound samples) live in the "mamerom" flash

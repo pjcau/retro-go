@@ -415,6 +415,7 @@ static void console_exec(char *line)
         const uint8_t *p = (const uint8_t *)rg_audio_cap_buf;
         size_t n = rg_audio_cap_buf ? rg_audio_cap_pos * sizeof(int16_t) : 0;
         char line[97];
+        flockfile(stdout); /* keep other tasks' log lines out of the base64 */
         for (size_t i = 0; i < n;)
         {
             int o = 0;
@@ -430,6 +431,46 @@ static void console_exec(char *line)
             printf("CTL a %s\n", line);
         }
         printf("CTL adump done %u %d\n", (unsigned)(n / 2), rg_audio_get_sample_rate());
+        funlockfile(stdout);
+    }
+    else if (strcmp(cmd, "shot") == 0 && arg1)
+    {
+        // shot <path> : screenshot of the running emulator (PNG), for `get`
+        bool ok = rg_emu_screenshot(arg1, 0, 0);
+        printf("CTL shot %s %s\n", ok ? "done" : "failed", arg1);
+    }
+    else if (strcmp(cmd, "get") == 0 && arg1)
+    {
+        // get <path> [offset length] : a file (or a piece) as base64, "CTL g <chunk>"
+        // lines, then "CTL get done <bytes>"; the host re-asks pieces that arrive short
+        static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        FILE *fp = fopen(arg1, "rb");
+        uint8_t in[72];
+        char line[97];
+        size_t total = 0, n, left = rest ? (size_t)atol(rest) : (size_t)-1;
+        if (fp && arg2)
+            fseek(fp, atol(arg2), SEEK_SET);
+        flockfile(stdout); /* other tasks' log lines would land inside the base64 */
+        while (fp && left && (n = fread(in, 1, left < sizeof(in) ? left : sizeof(in), fp)) > 0)
+        {
+            int o = 0;
+            for (size_t i = 0; i < n; i += 3)
+            {
+                uint32_t v = in[i] << 16 | (i + 1 < n ? in[i + 1] << 8 : 0) | (i + 2 < n ? in[i + 2] : 0);
+                line[o++] = b64[v >> 18 & 63];
+                line[o++] = b64[v >> 12 & 63];
+                line[o++] = i + 1 < n ? b64[v >> 6 & 63] : '=';
+                line[o++] = i + 2 < n ? b64[v & 63] : '=';
+            }
+            line[o] = 0;
+            printf("CTL g %s\n", line);
+            total += n;
+            left -= n;
+        }
+        printf("CTL get %s %u\n", fp ? "done" : "failed", (unsigned)total);
+        funlockfile(stdout);
+        if (fp)
+            fclose(fp);
     }
     else if (strcmp(cmd, "lcd") == 0 && arg1)
     {

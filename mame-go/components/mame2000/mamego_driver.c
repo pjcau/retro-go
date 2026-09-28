@@ -611,12 +611,15 @@ extern const struct GameDriver driver_varthum;
 extern const struct GameDriver driver_varthjr;
 extern const struct GameDriver driver_wofm;
 extern const struct GameDriver driver_wofu;
+extern const struct GameDriver driver_sf2hf;
+extern const struct GameDriver driver_sf2hfu;
 extern const struct GameDriver driver_dinou;
 extern const struct GameDriver driver_dinoa;
 extern const struct GameDriver driver_punisheru;
 extern const struct GameDriver driver_punisherh;
 extern const struct GameDriver driver_slammastu;
 extern const struct GameDriver driver_mbomberjm;
+extern const struct GameDriver driver_mbombrdjm;
 
 const struct GameDriver *drivers[] = {
 	&driver_pacman,
@@ -1224,11 +1227,14 @@ const struct GameDriver *drivers[] = {
 	&driver_varthjr,
 	&driver_wofm,
 	&driver_wofu,
+	&driver_sf2hf,
+	&driver_sf2hfu,
 	&driver_dinou,
 	&driver_dinoa,
 	&driver_punisheru,
 	&driver_punisherh,
 	&driver_slammastu,
 	&driver_mbomberjm,
+	&driver_mbombrdjm,
 	0
 };

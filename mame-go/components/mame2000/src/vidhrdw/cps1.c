@@ -2279,7 +2279,9 @@ void cps1_eof_callback(void)
 	uint32_t n;
 	DATATYPE *bm;
 
-	if ( code > max || (tpens & pusage[code])==0)
+	/* max is the tile count: code == max is one past the end (harmless in
+	   RAM, a fault past the end of the flash mapping on mame-go) */
+	if ( code >= max || (tpens & pusage[code])==0)
 	{
 		/* Do not draw blank object */
 		return;

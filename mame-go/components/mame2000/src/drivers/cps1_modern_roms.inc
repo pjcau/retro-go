@@ -1798,6 +1798,62 @@ ROM_START( wofu )
 	ROM_LOAD( "tk2_q4.rom",     0x180000, 0x80000, 0x36642e88 )
 ROM_END
 
+ROM_START( sf2hf )
+	ROM_REGION( CODE_SIZE, REGION_CPU1 )      /* 68000 code */
+	ROM_LOAD_WIDE_SWAP( "s2te_23.8f", 0x000000, 0x80000, 0x2dd72514 )
+	ROM_LOAD_WIDE_SWAP( "s2te_22.7f", 0x080000, 0x80000, 0xaea6e035 )
+	ROM_LOAD_WIDE_SWAP( "s2te_21.6f", 0x100000, 0x80000, 0xfd200288 )
+	ROM_REGION( 0x600000, REGION_GFX1 | REGIONFLAG_DISPOSE )
+	ROM_LOAD( "sf2.02",       0x000000, 0x80000, 0xcdb5f027 )
+	ROM_LOAD( "sf2.06",       0x080000, 0x80000, 0x21e3f87d )
+	ROM_LOAD( "sf2.11",       0x100000, 0x80000, 0xd6ec9a0a )
+	ROM_LOAD( "sf2.01",       0x180000, 0x80000, 0x03b0d852 )
+	ROM_LOAD( "sf2.05",       0x200000, 0x80000, 0xba8a2761 )
+	ROM_LOAD( "sf2.10",       0x280000, 0x80000, 0x960687d5 )
+	ROM_LOAD( "sf2.04",       0x300000, 0x80000, 0xe2799472 )
+	ROM_LOAD( "sf2.08",       0x380000, 0x80000, 0xbefc47df )
+	ROM_LOAD( "sf2.13",       0x400000, 0x80000, 0xed2c67f6 )
+	ROM_LOAD( "sf2.03",       0x480000, 0x80000, 0x840289ec )
+	ROM_LOAD( "sf2.07",       0x500000, 0x80000, 0xe584bfb5 )
+	ROM_LOAD( "sf2.12",       0x580000, 0x80000, 0x978ecd18 )
+
+	ROM_REGION( 0x18000, REGION_CPU2 ) /* 64k for the audio CPU (+banks) */
+	ROM_LOAD( "sf2.09",        0x00000, 0x08000, 0x08f6b60e )
+	ROM_CONTINUE(              0x10000, 0x08000 )
+
+	ROM_REGION( 0x40000, REGION_SOUND1 )	/* Samples */
+	ROM_LOAD( "sf2.18",       0x00000, 0x20000, 0x7f162009 )
+	ROM_LOAD( "sf2.19",       0x20000, 0x20000, 0xbeade53f )
+ROM_END
+
+ROM_START( sf2hfu )
+	ROM_REGION( CODE_SIZE, REGION_CPU1 )      /* 68000 code */
+	ROM_LOAD_WIDE_SWAP( "s2tu_23.8f", 0x000000, 0x80000, 0x89a1fc38 )
+	ROM_LOAD_WIDE_SWAP( "s2tu_22.7f", 0x080000, 0x80000, 0xaea6e035 )
+	ROM_LOAD_WIDE_SWAP( "s2tu_21.6f", 0x100000, 0x80000, 0xfd200288 )
+	ROM_REGION( 0x600000, REGION_GFX1 | REGIONFLAG_DISPOSE )
+	ROM_LOAD( "sf2.02",       0x000000, 0x80000, 0xcdb5f027 )
+	ROM_LOAD( "sf2.06",       0x080000, 0x80000, 0x21e3f87d )
+	ROM_LOAD( "sf2.11",       0x100000, 0x80000, 0xd6ec9a0a )
+	ROM_LOAD( "sf2.01",       0x180000, 0x80000, 0x03b0d852 )
+	ROM_LOAD( "sf2.05",       0x200000, 0x80000, 0xba8a2761 )
+	ROM_LOAD( "sf2.10",       0x280000, 0x80000, 0x960687d5 )
+	ROM_LOAD( "sf2.04",       0x300000, 0x80000, 0xe2799472 )
+	ROM_LOAD( "sf2.08",       0x380000, 0x80000, 0xbefc47df )
+	ROM_LOAD( "sf2.13",       0x400000, 0x80000, 0xed2c67f6 )
+	ROM_LOAD( "sf2.03",       0x480000, 0x80000, 0x840289ec )
+	ROM_LOAD( "sf2.07",       0x500000, 0x80000, 0xe584bfb5 )
+	ROM_LOAD( "sf2.12",       0x580000, 0x80000, 0x978ecd18 )
+
+	ROM_REGION( 0x18000, REGION_CPU2 ) /* 64k for the audio CPU (+banks) */
+	ROM_LOAD( "sf2.09",        0x00000, 0x08000, 0x08f6b60e )
+	ROM_CONTINUE(              0x10000, 0x08000 )
+
+	ROM_REGION( 0x40000, REGION_SOUND1 )	/* Samples */
+	ROM_LOAD( "sf2.18",       0x00000, 0x20000, 0x7f162009 )
+	ROM_LOAD( "sf2.19",       0x20000, 0x20000, 0xbeade53f )
+ROM_END
+
 ROM_START( dinou )
 	ROM_REGION( CODE_SIZE, REGION_CPU1 )      /* 68000 code */
 	ROM_LOAD_WIDE_SWAP( "cdu_23a.8f", 0x000000, 0x80000, 0x7c2543cd )
@@ -1953,6 +2009,50 @@ ROM_START( mbomberjm )
 	ROM_LOAD_WIDE_SWAP( "mbj_22b.7f", 0x080000, 0x80000, 0xacd38478 )
 	ROM_LOAD_WIDE_SWAP( "mbj_21a.6f", 0x100000, 0x80000, 0xd5007b05 )
 	ROM_LOAD_WIDE_SWAP( "mbj_20a.5f", 0x180000, 0x80000, 0xaeb557b0 )
+	ROM_REGION( 0x600000, REGION_GFX1 | REGIONFLAG_DISPOSE )
+	ROM_LOAD( "mb03",           0x000000, 0x80000, 0xcb866c2f )
+	ROM_LOAD( "mb_gfx06.rom",   0x080000, 0x80000, 0xb76c70e9 )
+	ROM_LOAD( "mb_gfx11.rom",   0x100000, 0x80000, 0x8fb94743 )
+	ROM_LOAD( "mb01",           0x180000, 0x80000, 0xa53b1c81 )
+	ROM_LOAD( "mb_gfx05.rom",   0x200000, 0x80000, 0x506b9dc9 )
+	ROM_LOAD( "mb_gfx10.rom",   0x280000, 0x80000, 0x97976ff5 )
+	ROM_LOAD( "mb04",           0x300000, 0x80000, 0xc9143e75 )
+	ROM_LOAD( "mb_gfx08.rom",   0x380000, 0x80000, 0xe60c9556 )
+	ROM_LOAD( "mb_gfx13.rom",   0x400000, 0x80000, 0xda810d5f )
+	ROM_LOAD( "mb02",           0x480000, 0x80000, 0x23fe10f6 )
+	ROM_LOAD( "mb_gfx07.rom",   0x500000, 0x80000, 0xaff8c2fb )
+	ROM_LOAD( "mb_gfx12.rom",   0x580000, 0x80000, 0xb350a840 )
+
+	ROM_REGION( 2*0x28000, REGION_CPU2 ) /* QSound Z80 code + space for decrypted opcodes */
+	ROM_LOAD( "mb_qa.rom",      0x00000, 0x08000, 0xe21a03c4 )
+	ROM_CONTINUE(               0x10000, 0x18000 )
+
+	ROM_REGION( 0x8000, REGION_USER1 )
+	/* the encrypted Z80 ROM will be copied here, where the main CPU can read it. */
+
+	ROM_REGION( 0x400000, REGION_SOUND1 ) /* QSound samples */
+	ROM_LOAD( "mb_q1.rom",      0x000000, 0x80000, 0x0630c3ce )
+	ROM_LOAD( "mb_q2.rom",      0x080000, 0x80000, 0x354f9c21 )
+	ROM_LOAD( "mb_q3.rom",      0x100000, 0x80000, 0x7838487c )
+	ROM_LOAD( "mb_q4.rom",      0x180000, 0x80000, 0xab66e087 )
+	ROM_LOAD( "mb_q5.rom",      0x200000, 0x80000, 0xc789fef2 )
+	ROM_LOAD( "mb_q6.rom",      0x280000, 0x80000, 0xecb81b61 )
+	ROM_LOAD( "mb_q7.rom",      0x300000, 0x80000, 0x041e49ba )
+	ROM_LOAD( "mb_q8.rom",      0x380000, 0x80000, 0x59fe702a )
+ROM_END
+
+ROM_START( mbombrdjm )
+	ROM_REGION( CODE_SIZE, REGION_CPU1 )      /* 68000 code */
+	ROM_LOAD_EVEN( "mbdj_26.11e", 0x00000, 0x20000, 0x72b7451c )
+	ROM_LOAD_ODD ( "mbdj_30.11f", 0x00000, 0x20000, 0xbeff31cf )
+	ROM_LOAD_EVEN( "mbdj_27.12e", 0x40000, 0x20000, 0x4086f534 )
+	ROM_LOAD_ODD ( "mbdj_31.12f", 0x40000, 0x20000, 0x085f47f0 )
+	ROM_LOAD_EVEN( "mbdj_24.9e", 0x80000, 0x20000, 0xc20895a5 )
+	ROM_LOAD_ODD ( "mbdj_28.9f", 0x80000, 0x20000, 0x2618d5e1 )
+	ROM_LOAD_EVEN( "mbdj_25.10e", 0xc0000, 0x20000, 0x9bdb6b11 )
+	ROM_LOAD_ODD ( "mbdj_29.10f", 0xc0000, 0x20000, 0x3f52d5e5 )
+	ROM_LOAD_WIDE_SWAP( "mbdj_21.6f", 0x100000, 0x80000, 0x690c026a )
+	ROM_LOAD_WIDE_SWAP( "mbdj_20.5f", 0x180000, 0x80000, 0xb8b2139b )
 	ROM_REGION( 0x600000, REGION_GFX1 | REGIONFLAG_DISPOSE )
 	ROM_LOAD( "mb03",           0x000000, 0x80000, 0xcb866c2f )
 	ROM_LOAD( "mb_gfx06.rom",   0x080000, 0x80000, 0xb76c70e9 )
