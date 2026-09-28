@@ -395,6 +395,12 @@ static void *state_buffer(size_t size, bool *borrowed)
     return buf;
 }
 
+size_t mamego_psram_free(size_t *largest)
+{
+    *largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    return heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+}
+
 void mamego_mem_report(const char *where)
 {
     printf("mem %s: internal %u KB (largest %u), PSRAM %u KB (largest %u)\n", where,

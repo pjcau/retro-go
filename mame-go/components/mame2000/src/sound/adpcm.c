@@ -200,7 +200,7 @@ static void generate_adpcm(struct ADPCMVoice *voice, int16_t *buffer, int sample
 static void adpcm_update(int num, int16_t *buffer, int length)
 {
 	struct ADPCMVoice *voice = &adpcm[num];
-	int16_t sample_data[MAX_SAMPLE_CHUNK], *curr_data = sample_data;
+	int16_t sample_data[MAX_SAMPLE_CHUNK + 1], *curr_data = sample_data;
 	int16_t prev = voice->last_sample, curr = voice->curr_sample;
 	uint32_t final_pos;
 	uint32_t new_samples;
@@ -231,6 +231,13 @@ static void adpcm_update(int num, int16_t *buffer, int length)
 
 	/* generate them into our buffer */
 	generate_adpcm(voice, sample_data, new_samples);
+#ifdef MAMEGO
+	/* the interpolation below can step one sample past the ones generated
+	   when the update ends on a sample boundary: hold the last one instead
+	   of reading the stack (a random click, with the CPS1 sound board's
+	   update boundaries) */
+	sample_data[new_samples] = new_samples ? sample_data[new_samples - 1] : curr;
+#endif
 	prev = curr;
 	curr = *curr_data++;
 

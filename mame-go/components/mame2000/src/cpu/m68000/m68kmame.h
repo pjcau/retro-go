@@ -31,7 +31,13 @@
 #define M68K_INSTRUCTION_HOOK       OPT_SPECIFY_HANDLER
 #define M68K_INSTRUCTION_CALLBACK()
 
+#ifdef MAMEGO
+/* the prefetch model costs a compare and a 32-bit refill per fetch; only
+   code that rewrites the next instruction can tell the difference */
+#define M68K_EMULATE_PREFETCH       OPT_OFF
+#else
 #define M68K_EMULATE_PREFETCH       OPT_ON
+#endif
 
 #define M68K_LOG_ENABLE             OPT_OFF
 #define M68K_LOG_1010_1111          OPT_OFF

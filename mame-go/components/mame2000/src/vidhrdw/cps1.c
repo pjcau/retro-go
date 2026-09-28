@@ -249,6 +249,21 @@ static void cps1_init_machine(void)
 		}
 		pCFG++;
 	}
+#ifdef MAMEGO
+	/* modern sets (scripts/cps1_modern_sets.py) are not in the table: their
+	   parent is the 0.37 set with the same chips, hence the same CPS-B board.
+	   Without this they got the empty entry (every layer masked off: the
+	   Street Fighter II' stages had no background) */
+	{
+		const struct GameDriver *d = Machine->gamedrv;
+		while (!pCFG->name && (d = d->clone_of) != NULL)
+			for (pCFG = &cps1_config_table[0]; pCFG->name; pCFG++)
+				if (strcmp(pCFG->name, d->name) == 0)
+					break;
+		if (!pCFG->name)
+			printf("cps1: no board configuration for %s\n", gamename);
+	}
+#endif
 	cps1_game_config=pCFG;
 
 	if (strcmp(gamename, "sf2rb" )==0)
@@ -545,6 +560,26 @@ static int cps1_gfx_start_stream(int size)
 	cps1_gfx_split = ~0u;
 	if (!in || !out)
 		goto done;
+	{
+		/* tiles in PSRAM when they leave room for the rest (scroll-2 bitmap,
+		   frame surfaces: ~2.5 MB): reading them from the flash mapping is
+		   slower (Final Fight, Carrier Air Wing: 2 MB of tiles) */
+		size_t need = (size_t)total * 4;
+#ifdef ESP_PLATFORM
+		extern size_t mamego_psram_free(size_t *largest);
+		size_t largest = 0, freemem = mamego_psram_free(&largest);
+		int fits = largest >= need && freemem >= need + 2000 * 1024;
+		printf("cps1: PSRAM %u KB free (largest %u) for %u KB of tiles: %s\n", (unsigned)(freemem / 1024),
+			(unsigned)(largest / 1024), (unsigned)(need / 1024), fits ? "PSRAM" : "flash");
+#else
+		int fits = !getenv("CPS1FLASH");
+#endif
+		if (fits && (cps1_gfx_hi = malloc(need)) != NULL)
+		{
+			cps1_gfx_split = 0;
+			printf("cps1: %u KB of tiles in PSRAM\n", (unsigned)(need / 1024));
+		}
+	}
 	for (qn = 0; qn < 4; qn++)
 		if (cps1_rd_open(&q[qn], qn * (size / 4), in, 2 * CPS1_BLOCK) != 0)
 			goto done;
@@ -599,7 +634,9 @@ static int cps1_gfx_start_stream(int size)
 		written += 2 * CPS1_BLOCK;
 	}
 	mamego_flash_offset = offset;
-	if (cps1_gfx_split == ~0u)
+	if (cps1_gfx_split == 0)
+		;
+	else if (cps1_gfx_split == ~0u)
 		printf("cps1: %u KB of tiles streamed to flash\n", total * 4 / 1024);
 	else
 		printf("cps1: %u KB of tiles streamed: %u KB in flash, %u KB in PSRAM\n",
@@ -821,6 +858,33 @@ void cps1_gfx_stop(void)
 }
 
 
+#ifdef MAMEGO
+void cps1_draw_gfx_opaque(
+	struct osd_bitmap *dest,const struct GfxElement *gfx,
+	unsigned int code,
+	int color,
+	int flipx,int flipy,
+	int sx,int sy,
+	int tpens,
+	cps1_pen_t *pusage,
+	const int size,
+	const int max,
+	const int delta,
+	const int srcdelta);
+void cps1_draw_gfx_opaque16(
+	struct osd_bitmap *dest,const struct GfxElement *gfx,
+	unsigned int code,
+	int color,
+	int flipx,int flipy,
+	int sx,int sy,
+	int tpens,
+	cps1_pen_t *pusage,
+	const int size,
+	const int max,
+	const int delta,
+	const int srcdelta);
+#endif
+
 void cps1_draw_gfx(
 	struct osd_bitmap *dest,const struct GfxElement *gfx,
 	unsigned int code,
@@ -834,6 +898,14 @@ void cps1_draw_gfx(
 	const int delta,
 	const int srcdelta)
 {
+#ifdef MAMEGO
+	/* a tile that uses no transparent pen needs no per-pixel test */
+	if (code < max && (pusage[code] & ~tpens & 0xffff) == 0)
+	{
+		cps1_draw_gfx_opaque(dest,gfx,code,color,flipx,flipy,sx,sy,tpens,pusage,size,max,delta,srcdelta);
+		return;
+	}
+#endif
 	#define DATATYPE unsigned char
 	#define IF_NOT_TRANSPARENT(n,x,y) if (tpens & (0x01 << n))
 	#define SELF_INCLUDE
@@ -856,6 +928,14 @@ void cps1_draw_gfx16(
 	const int delta,
 	const int srcdelta)
 {
+#ifdef MAMEGO
+	/* a tile that uses no transparent pen needs no per-pixel test */
+	if (code < max && (pusage[code] & ~tpens & 0xffff) == 0)
+	{
+		cps1_draw_gfx_opaque16(dest,gfx,code,color,flipx,flipy,sx,sy,tpens,pusage,size,max,delta,srcdelta);
+		return;
+	}
+#endif
 	#define DATATYPE unsigned short
 	#define IF_NOT_TRANSPARENT(n,x,y) if (tpens & (0x01 << n))
 	#define SELF_INCLUDE
@@ -934,9 +1014,11 @@ void cps1_draw_gfx_opaque(
 {
 	#define DATATYPE unsigned char
 	#define IF_NOT_TRANSPARENT(n,x,y)
+	#define DW_OPAQUE
 	#define SELF_INCLUDE
 	#include "cps1.c"
 	#undef SELF_INCLUDE
+	#undef DW_OPAQUE
 	#undef DATATYPE
 	#undef IF_NOT_TRANSPARENT
 }
@@ -956,9 +1038,11 @@ void cps1_draw_gfx_opaque16(
 {
 	#define DATATYPE unsigned short
 	#define IF_NOT_TRANSPARENT(n,x,y)
+	#define DW_OPAQUE
 	#define SELF_INCLUDE
 	#include "cps1.c"
 	#undef SELF_INCLUDE
+	#undef DW_OPAQUE
 	#undef DATATYPE
 	#undef IF_NOT_TRANSPARENT
 }
@@ -2316,6 +2400,15 @@ void cps1_eof_callback(void)
 
 	paldata=&gfx->colortable[gfx->color_granularity * color];
 #ifdef MAMEGO
+	/* 8 pixels all in the transparent pen draw nothing: CPS1 tiles are
+	   mostly edges of that pen (15, sometimes 0) */
+#ifdef DW_OPAQUE
+#define DW_SKIP(d) 0
+#else
+	const int dwskip = !(tpens & 0x8000) || !(tpens & 1);
+	const uint32_t dwskipval = !(tpens & 0x8000) ? 0xffffffffu : 0;
+#define DW_SKIP(d) (dwskip && (d) == dwskipval)
+#endif
 	{
 		/* streamed tiles: the first part in flash, the rest in PSRAM (a tile
 		   never straddles: the split is a multiple of 64 KB) */
@@ -2324,6 +2417,7 @@ void cps1_eof_callback(void)
 	}
 #else
 	src = cps1_gfx+code*delta;
+#define DW_SKIP(d) 0
 #endif
 
 	if (Machine->orientation & ORIENTATION_SWAP_XY)
@@ -2345,30 +2439,33 @@ void cps1_eof_callback(void)
 			for (j=0; j<size/8; j++)
 			{
 				dwval=*src;
-				n=(dwval>>28)&0x0f;
-				bm = (DATATYPE *)dest->line[ny]+sx;
-				IF_NOT_TRANSPARENT(n,sx,ny) bm[0]=paldata[n];
-				n=(dwval>>24)&0x0f;
-				bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
-				IF_NOT_TRANSPARENT(n,sx,ny+dir) bm[0]=paldata[n];
-				n=(dwval>>20)&0x0f;
-				bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
-				IF_NOT_TRANSPARENT(n,sx,ny+2*dir) bm[0]=paldata[n];
-				n=(dwval>>16)&0x0f;
-				bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
-				IF_NOT_TRANSPARENT(n,sx,ny+3*dir) bm[0]=paldata[n];
-				n=(dwval>>12)&0x0f;
-				bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
-				IF_NOT_TRANSPARENT(n,sx,ny+4*dir) bm[0]=paldata[n];
-				n=(dwval>>8)&0x0f;
-				bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
-				IF_NOT_TRANSPARENT(n,sx,ny+5*dir) bm[0]=paldata[n];
-				n=(dwval>>4)&0x0f;
-				bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
-				IF_NOT_TRANSPARENT(n,sx,ny+6*dir) bm[0]=paldata[n];
-				n=dwval&0x0f;
-				bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
-				IF_NOT_TRANSPARENT(n,sx,ny+7*dir) bm[0]=paldata[n];
+				if (!DW_SKIP(dwval))
+				{
+					n=(dwval>>28)&0x0f;
+					bm = (DATATYPE *)dest->line[ny]+sx;
+					IF_NOT_TRANSPARENT(n,sx,ny) bm[0]=paldata[n];
+					n=(dwval>>24)&0x0f;
+					bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
+					IF_NOT_TRANSPARENT(n,sx,ny+dir) bm[0]=paldata[n];
+					n=(dwval>>20)&0x0f;
+					bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
+					IF_NOT_TRANSPARENT(n,sx,ny+2*dir) bm[0]=paldata[n];
+					n=(dwval>>16)&0x0f;
+					bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
+					IF_NOT_TRANSPARENT(n,sx,ny+3*dir) bm[0]=paldata[n];
+					n=(dwval>>12)&0x0f;
+					bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
+					IF_NOT_TRANSPARENT(n,sx,ny+4*dir) bm[0]=paldata[n];
+					n=(dwval>>8)&0x0f;
+					bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
+					IF_NOT_TRANSPARENT(n,sx,ny+5*dir) bm[0]=paldata[n];
+					n=(dwval>>4)&0x0f;
+					bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
+					IF_NOT_TRANSPARENT(n,sx,ny+6*dir) bm[0]=paldata[n];
+					n=dwval&0x0f;
+					bm = (DATATYPE *)(((unsigned char *)bm) + bmdelta);
+					IF_NOT_TRANSPARENT(n,sx,ny+7*dir) bm[0]=paldata[n];
+				}
 				if (flipy) ny-=8;
 				else ny+=8;
 				src++;
@@ -2394,22 +2491,25 @@ void cps1_eof_callback(void)
 				for (j=0; j<size/8; j++)
 				{
 					dwval=*src;
-					n=(dwval>>28)&0x0f;
-					IF_NOT_TRANSPARENT(n,x-1,y) bm[-1]=paldata[n];
-					n=(dwval>>24)&0x0f;
-					IF_NOT_TRANSPARENT(n,x-2,y) bm[-2]=paldata[n];
-					n=(dwval>>20)&0x0f;
-					IF_NOT_TRANSPARENT(n,x-3,y) bm[-3]=paldata[n];
-					n=(dwval>>16)&0x0f;
-					IF_NOT_TRANSPARENT(n,x-4,y) bm[-4]=paldata[n];
-					n=(dwval>>12)&0x0f;
-					IF_NOT_TRANSPARENT(n,x-5,y) bm[-5]=paldata[n];
-					n=(dwval>>8)&0x0f;
-					IF_NOT_TRANSPARENT(n,x-6,y) bm[-6]=paldata[n];
-					n=(dwval>>4)&0x0f;
-					IF_NOT_TRANSPARENT(n,x-7,y) bm[-7]=paldata[n];
-					n=dwval&0x0f;
-					IF_NOT_TRANSPARENT(n,x-8,y) bm[-8]=paldata[n];
+					if (!DW_SKIP(dwval))
+					{
+						n=(dwval>>28)&0x0f;
+						IF_NOT_TRANSPARENT(n,x-1,y) bm[-1]=paldata[n];
+						n=(dwval>>24)&0x0f;
+						IF_NOT_TRANSPARENT(n,x-2,y) bm[-2]=paldata[n];
+						n=(dwval>>20)&0x0f;
+						IF_NOT_TRANSPARENT(n,x-3,y) bm[-3]=paldata[n];
+						n=(dwval>>16)&0x0f;
+						IF_NOT_TRANSPARENT(n,x-4,y) bm[-4]=paldata[n];
+						n=(dwval>>12)&0x0f;
+						IF_NOT_TRANSPARENT(n,x-5,y) bm[-5]=paldata[n];
+						n=(dwval>>8)&0x0f;
+						IF_NOT_TRANSPARENT(n,x-6,y) bm[-6]=paldata[n];
+						n=(dwval>>4)&0x0f;
+						IF_NOT_TRANSPARENT(n,x-7,y) bm[-7]=paldata[n];
+						n=dwval&0x0f;
+						IF_NOT_TRANSPARENT(n,x-8,y) bm[-8]=paldata[n];
+					}
 					bm-=8;
 					x-=8;
 					src++;
@@ -2429,22 +2529,25 @@ void cps1_eof_callback(void)
 				for (j=0; j<size/8; j++)
 				{
 					dwval=*src;
-					n=(dwval>>28)&0x0f;
-					IF_NOT_TRANSPARENT(n,x+0,y) bm[0]=paldata[n];
-					n=(dwval>>24)&0x0f;
-					IF_NOT_TRANSPARENT(n,x+1,y) bm[1]=paldata[n];
-					n=(dwval>>20)&0x0f;
-					IF_NOT_TRANSPARENT(n,x+2,y) bm[2]=paldata[n];
-					n=(dwval>>16)&0x0f;
-					IF_NOT_TRANSPARENT(n,x+3,y) bm[3]=paldata[n];
-					n=(dwval>>12)&0x0f;
-					IF_NOT_TRANSPARENT(n,x+4,y) bm[4]=paldata[n];
-					n=(dwval>>8)&0x0f;
-					IF_NOT_TRANSPARENT(n,x+5,y) bm[5]=paldata[n];
-					n=(dwval>>4)&0x0f;
-					IF_NOT_TRANSPARENT(n,x+6,y) bm[6]=paldata[n];
-					n=dwval&0x0f;
-					IF_NOT_TRANSPARENT(n,x+7,y) bm[7]=paldata[n];
+					if (!DW_SKIP(dwval))
+					{
+						n=(dwval>>28)&0x0f;
+						IF_NOT_TRANSPARENT(n,x+0,y) bm[0]=paldata[n];
+						n=(dwval>>24)&0x0f;
+						IF_NOT_TRANSPARENT(n,x+1,y) bm[1]=paldata[n];
+						n=(dwval>>20)&0x0f;
+						IF_NOT_TRANSPARENT(n,x+2,y) bm[2]=paldata[n];
+						n=(dwval>>16)&0x0f;
+						IF_NOT_TRANSPARENT(n,x+3,y) bm[3]=paldata[n];
+						n=(dwval>>12)&0x0f;
+						IF_NOT_TRANSPARENT(n,x+4,y) bm[4]=paldata[n];
+						n=(dwval>>8)&0x0f;
+						IF_NOT_TRANSPARENT(n,x+5,y) bm[5]=paldata[n];
+						n=(dwval>>4)&0x0f;
+						IF_NOT_TRANSPARENT(n,x+6,y) bm[6]=paldata[n];
+						n=dwval&0x0f;
+						IF_NOT_TRANSPARENT(n,x+7,y) bm[7]=paldata[n];
+					}
 					bm+=8;
 					x+=8;
 					src++;
@@ -2454,4 +2557,5 @@ void cps1_eof_callback(void)
 		}
 	}
 }
+#undef DW_SKIP
 #endif	/* SELF_INCLUDE */
