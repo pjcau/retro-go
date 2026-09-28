@@ -25,7 +25,13 @@
 #include "adpcm.h"
 
 
+#ifdef MAMEGO
+/* on the stack of adpcm_update(): a frame needs ~130 OKI samples; 10000
+   (20 KB) overflowed the CPS1 sound task on core 1 */
+#define MAX_SAMPLE_CHUNK	2048
+#else
 #define MAX_SAMPLE_CHUNK	10000
+#endif
 
 #define FRAC_BITS			14
 #define FRAC_ONE			(1 << FRAC_BITS)
@@ -807,6 +813,9 @@ READ_HANDLER( OKIM6295_status_1_r )
 
 WRITE_HANDLER( OKIM6295_data_0_w )
 {
+#if defined(MAMEGO) && !defined(ESP_PLATFORM)
+	if (getenv("LATCHLOG")) fprintf(stderr, "OKI f=%d v=%02x\n", cpu_getcurrentframe(), data & 0xff);
+#endif
 	OKIM6295_data_w(0, data);
 }
 

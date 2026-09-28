@@ -60,8 +60,20 @@ static WRITE_HANDLER( cps1_snd_bankswitch_w )
 	//if (data & 0xfe) logerror("%04x: write %02x to f004\n",cpu_get_pc(),data);
 }
 
+#ifdef MAMEGO
+static int cps1snd_core1;
+static void cps1snd_event(int kind, int value);
+#endif
+
 static WRITE_HANDLER( cps1_sound_fade_w )
 {
+#ifdef MAMEGO
+	if (cps1snd_core1)
+	{
+		cps1snd_event(1, data & 0xff);
+		return;
+	}
+#endif
 	cps1_sound_fade_timer=data;
 }
 
@@ -139,8 +151,286 @@ WRITE_HANDLER( cpsq_coinctrl2_w )
     }
 }
 
+#ifdef MAMEGO
+/* ----------------------------------------------------------------------
+ * The CPS1 sound board on core 1 (mame-go), as for the Neo Geo
+ * (drivers/neogeo.c): the Z80 + YM2151 + OKI6295 only hear from the 68000
+ * through two latches (command at 0x800180, fade at 0x800188) and never
+ * answer, so the whole board runs one frame behind on core 1: a private Z80
+ * (cpu/z80/z80snd.c) on this board's map, the YM2151's timers counted in Z80
+ * cycles, and MAME's own sound streams, updated from core 1 with the Z80's
+ * position as their clock (sndintrf.c mamego_snd_pos). Core 0 only mixes
+ * them at the frame end, after waiting for the job (mamego_sndboard_pre).
+ * ---------------------------------------------------------------------- */
+#include "sound/fm.h"
+extern int z80snd_execute(int cycles);
+extern void z80snd_reset(void *param);
+extern void z80snd_set_context(void *src);
+extern unsigned z80snd_get_context(void *dst);
+extern void z80snd_set_irq_line(int irqline, int state);
+extern void z80snd_set_irq_callback(int (*callback)(int irqline));
+extern int z80snd_ICount;
+extern unsigned z80snd_idle_enable;
+extern unsigned z80_get_context(void *dst);
+extern unsigned (*sndz80_rm)(unsigned); extern void (*sndz80_wm)(unsigned, unsigned);
+extern unsigned (*sndz80_in)(unsigned); extern void (*sndz80_out)(unsigned, unsigned);
+extern volatile int mamego_snd_pos;
+extern void (*mamego_sndboard_pre)(void);
+extern void (*mamego_sndboard_post)(void);
+extern void (*mamego_soundlatch_hook)(int data);
+extern void (*ym2151_timer_hook)(int c, int count, timer_tm step);
+extern void YM2151_timers_to_host(void);
+extern void streams_fill_to_end(void);
+extern unsigned char *cpu_bankbase[];
+
+#define CPS1SND_CLOCK 4000000
+#define CPS1SND_EVQ   256
+struct cps1snd_event { int32_t at; uint8_t kind, value; };
+static struct cps1snd_event cps1snd_evq[2][CPS1SND_EVQ];
+static int cps1snd_evn[2], cps1snd_evfill, cps1snd_job_q;
+static int32_t cps1snd_cpf, cps1snd_now, cps1snd_seg_start, cps1snd_seg_len;
+static int cps1snd_timer_on[2];
+static int32_t cps1snd_timer_at[2];
+static float cps1snd_t0, cps1snd_frame_len;
+static unsigned char *cps1snd_mem;
+static int cps1snd_bank, cps1snd_banklen, cps1snd_latch;
+
+static int32_t cps1snd_time(void)
+{
+	return cps1snd_seg_start + (cps1snd_seg_len - z80snd_ICount);
+}
+
+static void cps1snd_sync_streams(void)   /* the streams' clock = the Z80's */
+{
+	int32_t t = cps1snd_time();
+	if (t < 0) t = 0;
+	if (t > cps1snd_cpf) t = cps1snd_cpf;
+	mamego_snd_pos = (int)(((int64_t)t << 16) / cps1snd_cpf);
+}
+
+static unsigned cps1snd_rm(unsigned a)
+{
+	a &= 0xffff;
+	if (a < 0x8000) return cps1snd_mem[a];
+	if (a < 0xc000) return cps1snd_mem[0x10000 + cps1snd_bank + a - 0x8000];
+	if (a >= 0xd000 && a < 0xd800) return cps1snd_mem[a];
+	switch (a)
+	{
+		case 0xf001: cps1snd_sync_streams(); return YM2151_status_port_0_r(0);
+		case 0xf002: cps1snd_sync_streams(); return OKIM6295_status_0_r(0);
+		case 0xf008: return cps1snd_latch;
+		case 0xf00a: return cps1_sound_fade_timer;
+	}
+	return cps1snd_mem[a]; /* unmapped: MAME's mrh_error reads the region */
+}
+
+static void cps1snd_wm(unsigned a, unsigned v)
+{
+	a &= 0xffff;
+	if (a >= 0xd000 && a < 0xd800) { cps1snd_mem[a] = v; return; }
+	switch (a)
+	{
+		case 0xf000: cps1snd_sync_streams(); YM2151_register_port_0_w(0, v); break;
+		case 0xf001: cps1snd_sync_streams(); YM2151_data_port_0_w(0, v); break;
+		case 0xf002: cps1snd_sync_streams(); OKIM6295_data_0_w(0, v); break;
+		case 0xf004: cps1snd_bank = (v * 0x4000) & (cps1snd_banklen - 1); break;
+	}
+}
+
+static unsigned cps1snd_in(unsigned p) { return 0; }
+static void cps1snd_out(unsigned p, unsigned v) {}
+static int cps1snd_irq_ack(int irqline) { return 0xff; }
+
+static void cps1snd_timer(int c, int count, timer_tm step)
+{
+	if (!count)
+		cps1snd_timer_on[c] = 0;
+	else if (!cps1snd_timer_on[c])
+	{
+		cps1snd_timer_on[c] = 1;
+		cps1snd_timer_at[c] = cps1snd_time() + (int32_t)((int64_t)count * step * (CPS1SND_CLOCK / 1000) / (TIME_ONE_SEC / 1000));
+	}
+}
+
+/* core 1: one frame of the board */
+static void cps1snd_job(void)
+{
+	int q = cps1snd_job_q, ev = 0, n = cps1snd_evn[q], c;
+	while (cps1snd_now < cps1snd_cpf)
+	{
+		int32_t target = cps1snd_cpf;
+		if (ev < n && cps1snd_evq[q][ev].at < target)
+			target = cps1snd_evq[q][ev].at;
+		for (c = 0; c < 2; c++)
+			if (cps1snd_timer_on[c] && cps1snd_timer_at[c] < target)
+				target = cps1snd_timer_at[c];
+		if (target > cps1snd_now + cps1snd_cpf / 16)
+			target = cps1snd_now + cps1snd_cpf / 16;
+		if (target > cps1snd_now)
+		{
+			cps1snd_seg_start = cps1snd_now;
+			cps1snd_seg_len = target - cps1snd_now;
+			z80snd_ICount = cps1snd_seg_len;
+			cps1snd_now += z80snd_execute(cps1snd_seg_len);
+			cps1snd_seg_start = cps1snd_now;
+			cps1snd_seg_len = 0;
+			z80snd_ICount = 0;
+		}
+		while (ev < n && cps1snd_evq[q][ev].at <= cps1snd_now)
+		{
+			if (cps1snd_evq[q][ev].kind == 0)
+				cps1snd_latch = cps1snd_evq[q][ev].value;
+			else
+				cps1_sound_fade_timer = cps1snd_evq[q][ev].value;
+			ev++;
+		}
+		for (c = 0; c < 2; c++)
+			if (cps1snd_timer_on[c] && cps1snd_timer_at[c] <= cps1snd_now)
+			{
+				cps1snd_timer_on[c] = 0;
+				cps1snd_sync_streams();
+				YM2151TimerOver(0, c);
+			}
+	}
+	mamego_snd_pos = 65536;
+	streams_fill_to_end();
+	mamego_snd_pos = -1;
+	cps1snd_now -= cps1snd_cpf;
+	for (c = 0; c < 2; c++)
+		cps1snd_timer_at[c] -= cps1snd_cpf;
+	cps1snd_evn[q] = 0;
+}
+
+#ifdef ESP_PLATFORM
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+static TaskHandle_t cps1snd_task;
+static SemaphoreHandle_t cps1snd_done;
+static volatile int cps1snd_busy;
+static void cps1snd_task_main(void *arg)
+{
+	for (;;)
+	{
+		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+		cps1snd_job();
+		__sync_synchronize();
+		cps1snd_busy = 0;
+		xSemaphoreGive(cps1snd_done);
+	}
+}
+static void cps1snd_wait(void) { if (cps1snd_busy) xSemaphoreTake(cps1snd_done, portMAX_DELAY); }
+static int cps1snd_start_task(void)
+{
+	cps1snd_done = xSemaphoreCreateBinary();
+	return cps1snd_done && xTaskCreatePinnedToCore(cps1snd_task_main, "cps1_sound", 12288, NULL, 5, &cps1snd_task, 1) == pdPASS;
+}
+static void cps1snd_start(void) { cps1snd_busy = 1; __sync_synchronize(); xTaskNotifyGive(cps1snd_task); }
+#else
+static void cps1snd_wait(void) {}
+static int cps1snd_start_task(void) { return 1; }
+static void cps1snd_start(void) { cps1snd_job(); }
+#endif
+
+/* 68000, core 0: a latch write, timed within this frame */
+static void cps1snd_event(int kind, int value)
+{
+	int f = cps1snd_evfill;
+	int32_t at = (int32_t)((timer_get_time() - cps1snd_t0) / cps1snd_frame_len * cps1snd_cpf);
+	if (at < 0) at = 0;
+	if (at >= cps1snd_cpf) at = cps1snd_cpf - 1;
+	if (cps1snd_evn[f] && at < cps1snd_evq[f][cps1snd_evn[f] - 1].at)
+		at = cps1snd_evq[f][cps1snd_evn[f] - 1].at;
+	if (cps1snd_evn[f] < CPS1SND_EVQ)
+	{
+		cps1snd_evq[f][cps1snd_evn[f]].at = at;
+		cps1snd_evq[f][cps1snd_evn[f]].kind = kind;
+		cps1snd_evq[f][cps1snd_evn[f]].value = value;
+		cps1snd_evn[f]++;
+	}
+}
+static void cps1snd_latch_hook(int data) { cps1snd_event(0, data & 0xff); }
+
+/* core 0, sound_update: before the mix, after it */
+static void cps1snd_pre(void) { cps1snd_wait(); }
+static void cps1snd_post(void)
+{
+	cps1snd_job_q = cps1snd_evfill;
+	cps1snd_evfill ^= 1;
+	cps1snd_evn[cps1snd_evfill] = 0;
+	cps1snd_t0 = timer_get_time();
+	cps1snd_start();
+}
+
+void cps1snd_sync(void) { if (cps1snd_core1) cps1snd_wait(); }
+
+static void cps1snd_enable(void)
+{
+	unsigned char ctx[1024];
+	extern uint8_t *z80_shared_SZHVC_add, *z80_shared_SZHVC_sub;
+#ifndef ESP_PLATFORM
+	if (getenv("CPS1SND1") && !strcmp(getenv("CPS1SND1"), "0"))
+		return;
+#else
+	{
+		FILE *f = fopen("/sd/retro-go/mame/cps1_nosnd1", "r");
+		if (f) { fclose(f); printf("cps1: sound board stays on core 0 (cps1_nosnd1)\n"); return; }
+	}
+#endif
+	if (Machine->drv->sound[0].sound_type != SOUND_YM2151 || !z80_shared_SZHVC_add || !z80_shared_SZHVC_sub
+		|| z80_get_context(NULL) > sizeof(ctx) || !cps1snd_start_task())
+		return; /* Q-Sound boards stay as they are */
+	cps1snd_mem = memory_region(REGION_CPU2);
+	cps1snd_banklen = memory_region_length(REGION_CPU2) - 0x10000;
+	cps1snd_bank = cpu_bankbase[1] ? (int)(cpu_bankbase[1] - (cps1snd_mem + 0x10000)) : 0;
+	if (cps1snd_bank < 0 || cps1snd_bank >= cps1snd_banklen)
+		cps1snd_bank = 0;
+	cps1snd_cpf = CPS1SND_CLOCK / Machine->drv->frames_per_second;
+	cps1snd_frame_len = 1.0f / Machine->drv->frames_per_second;
+	cps1snd_t0 = timer_get_time();
+	sndz80_rm = cps1snd_rm; sndz80_wm = cps1snd_wm; sndz80_in = cps1snd_in; sndz80_out = cps1snd_out;
+	z80snd_reset(NULL);
+	z80_get_context(ctx);
+	z80snd_set_context(ctx);
+	z80snd_set_irq_callback(cps1snd_irq_ack);
+	z80snd_idle_enable = 0;      /* the chips are memory-mapped: see cps1_vh_start */
+	z80snd_ICount = 0;
+	cps1snd_latch = soundlatch_r(0);
+	cps1snd_now = 0;
+	timer_suspendcpu(1, 1, SUSPEND_REASON_DISABLE);
+	ym2151_timer_hook = cps1snd_timer;
+	cps1snd_core1 = 1;
+	YM2151_timers_to_host();
+	mamego_soundlatch_hook = cps1snd_latch_hook;
+	mamego_sndboard_pre = cps1snd_pre;
+	mamego_sndboard_post = cps1snd_post;
+	printf("cps1: sound board (Z80 + YM2151 + OKI) on the second core\n");
+}
+
+void cps1snd_disable(void)
+{
+	if (!cps1snd_core1)
+		return;
+	cps1snd_wait();
+	mamego_sndboard_pre = mamego_sndboard_post = 0;
+	mamego_soundlatch_hook = 0;
+	ym2151_timer_hook = 0;
+	cps1snd_core1 = 0;
+}
+#endif
+
 static int cps1_interrupt(void)
 {
+#ifdef MAMEGO
+	{
+		static int tried;
+		if (!tried && cpu_getcurrentframe() > 2)
+		{
+			tried = 1;
+			cps1snd_enable();
+		}
+	}
+#endif
 	/* Strider also has a IRQ4 handler. It is input port related, but the game */
 	/* works without it (maybe it's used to multiplex controls). It is the */
 	/* *only* game to have that. */
@@ -3480,6 +3770,13 @@ static struct GfxDecodeInfo cps1_gfxdecodeinfo[] =
 
 static void cps1_irq_handler_mus(int irq)
 {
+#ifdef MAMEGO
+	if (cps1snd_core1)
+	{
+		z80snd_set_irq_line(0, irq ? ASSERT_LINE : CLEAR_LINE);
+		return;
+	}
+#endif
 	cpu_set_irq_line(1,0,irq ? ASSERT_LINE : CLEAR_LINE);
 }
 

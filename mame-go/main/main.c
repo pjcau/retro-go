@@ -216,10 +216,13 @@ int64_t mamego_display_busy_us(void)
 
 static int present_indexed(const void *pix, int bits, int width, int height, int pitch, const void *palette, int colors)
 {
+    static bool no_memory;
     if (present_busy)
         xSemaphoreTake(present_done, portMAX_DELAY);
     if (!pix) /* the core only waits for the previous frame */
         return 1;
+    if (no_memory) /* declined once for memory: the core's own path from now on */
+        return 0;
     if (!present_task)
     {
         present_done = xSemaphoreCreateBinary();
@@ -238,10 +241,20 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
     {
         /* PSRAM: with the YM2610 and present tasks on core 1 there is no
            room for 2 x 136 KB of internal RAM (the core 1 task writes it) */
+        if (updates[1] != updates[0])
+            rg_surface_free(updates[1]);
+        rg_surface_free(updates[0]);
+        updates[0] = updates[1] = NULL;
         for (int i = 0; i < 2; i++)
-        {
-            rg_surface_free(updates[i]);
             updates[i] = rg_surface_create(width, height, RG_PIXEL_565_LE, MEM_SLOW);
+        if (!updates[0] || !updates[1])
+        {
+            /* no room for two frames (SF2): stay on the core's path */
+            rg_surface_free(updates[0]);
+            rg_surface_free(updates[1]);
+            updates[0] = updates[1] = NULL;
+            no_memory = true;
+            return 0;
         }
     }
     if (bits == 16)

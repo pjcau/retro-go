@@ -1321,6 +1321,7 @@ int cps1_vh_start(void)
 void cps1_vh_stop(void)
 {
 #ifdef MAMEGO
+	{ extern void cps1snd_disable(void); cps1snd_disable(); }
 	{ extern unsigned int m68ki_idle_enable; extern unsigned z80_idle_enable; m68ki_idle_enable = 0; z80_idle_enable = 0; }
 #endif
 	if (cps1_old_palette)

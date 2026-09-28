@@ -3979,6 +3979,19 @@ void OPMSetPortHander(int n,mem_write_handler PortWrite)
 	FMOPM[n].PortWrite = PortWrite;
 }
 
+#ifdef MAMEGO
+/* running timers re-armed through the chip's timer handler (a sound board
+   taking over its timers, drivers/cps1.c) */
+void OPM_rearm_timers(int n)
+{
+	FM_ST *ST = &FMOPM[n].ST;
+	if (!ST->Timer_Handler)
+		return;
+	if (ST->mode & 0x01) ST->Timer_Handler(n, 0, ST->TAC, ST->TimerBase);
+	if (ST->mode & 0x02) ST->Timer_Handler(n, 1, ST->TBC, ST->TimerBase);
+}
+#endif
+
 int YM2151TimerOver(int n,int c)
 {
 	YM2151 *F2151 = &(FMOPM[n]);

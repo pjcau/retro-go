@@ -1131,6 +1131,12 @@ void neosnd_enable(void)
 		if (!z80_shared_SZHVC_add || !z80_shared_SZHVC_sub)
 			return;
 	}
+	{
+		extern unsigned (*sndz80_rm)(unsigned); extern void (*sndz80_wm)(unsigned, unsigned);
+		extern unsigned (*sndz80_in)(unsigned); extern void (*sndz80_out)(unsigned, unsigned);
+		sndz80_rm = neosnd_z80_rm; sndz80_wm = neosnd_z80_wm;
+		sndz80_in = neosnd_z80_in; sndz80_out = neosnd_z80_out;
+	}
 	z80snd_reset(NULL);
 	z80_get_context(ctx);           /* MAME's Z80 as it is now */
 	z80snd_set_context(ctx);

@@ -14,6 +14,18 @@
 
 static int cleared_value = 0x00;
 
+#ifdef MAMEGO
+/* A sound board run on core 1 (drivers/cps1.c): while its job runs, the
+   streams' "now" is its CPU's position in the frame (0..65536), not the
+   scheduler's clock. -1 = the scheduler's. */
+volatile int mamego_snd_pos = -1;
+/* frame end, core 0: pre waits for the board's job, post starts the next */
+void (*mamego_sndboard_pre)(void);
+void (*mamego_sndboard_post)(void);
+/* soundlatch_w() goes to the board instead (a command timed in the frame) */
+void (*mamego_soundlatch_hook)(int data);
+#endif
+
 static int latch;
 
 static int64_t fps;
@@ -35,6 +47,16 @@ int soundlatch_state(int *value, int mode)
 
 WRITE_HANDLER( soundlatch_w )
 {
+#if defined(MAMEGO) && !defined(ESP_PLATFORM)
+	if (getenv("LATCHLOG")) fprintf(stderr, "LATCH f=%d v=%02x\n", cpu_getcurrentframe(), data & 0xff);
+#endif
+#ifdef MAMEGO
+	if (mamego_soundlatch_hook)
+	{
+		mamego_soundlatch_hook(data);
+		return;
+	}
+#endif
 	/* make all the CPUs synchronize, and only AFTER that write the new command to the latch */
 	timer_set(TIME_NOW,data,soundlatch_callback);
 }
@@ -908,6 +930,10 @@ void sound_update(void)
 	int totalsound = 0;
 	PROF_PUSH(PROF_MIXER);
 
+#ifdef MAMEGO
+	if (mamego_sndboard_pre)
+		mamego_sndboard_pre();
+#endif
 
 	profiler_mark(PROFILER_SOUND);
 
@@ -923,6 +949,10 @@ void sound_update(void)
 	mixer_sh_update();
 
 	timer_reset(sound_update_timer,TIME_NEVER);
+#ifdef MAMEGO
+	if (mamego_sndboard_post)
+		mamego_sndboard_post();
+#endif
 
 	profiler_mark(PROFILER_END);
 	PROF_POP();
@@ -972,6 +1002,10 @@ int sound_clock(const struct MachineSound *msound)
 
 int sound_scalebufferpos(int value)
 {
+#ifdef MAMEGO
+	if (mamego_snd_pos >= 0)
+		return (int)(((int64_t)mamego_snd_pos * value) >> 16);
+#endif
 	int result = ( ((int64_t)timer_timeelapsed(sound_update_timer)) * fps * ((int64_t)value) ) / ((int64_t)TIME_ONE_SEC);
 	if (value >= 0) return (result < value) ? result : value;
 	else return (result > value) ? result : value;

@@ -861,6 +861,9 @@ static int mamego_present_frame(struct osd_bitmap *bitmap)
 		bits = 8;
 	else
 		return 0;
+	/* Neo Geo only. CPS1 was tried (2026-09-28): the conversion left core 0
+	   but its PSRAM traffic slowed the 68000/Z80/video by as much (Final
+	   Fight 41 -> 38 fps). */
 	if (!mamego_present_indexed || Machine->drv->vh_start != neogeo_mvs_vh_start || bitmap != Machine->scrbitmap)
 		return 0;
 	if (mamego_bitmaps[0] && bitmap != mamego_bitmaps[0] && bitmap != mamego_bitmaps[1])

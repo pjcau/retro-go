@@ -12,21 +12,23 @@
 #include "state.h"
 
 #ifdef MAMEGO
-unsigned neosnd_z80_rm(unsigned addr);
-void neosnd_z80_wm(unsigned addr, unsigned value);
-unsigned neosnd_z80_in(unsigned port);
-void neosnd_z80_out(unsigned port, unsigned value);
+/* the sound board's memory and ports, set by the driver that uses this Z80
+   (Neo Geo: drivers/neogeo.c, CPS1: drivers/cps1.c) */
+unsigned (*sndz80_rm)(unsigned addr);
+void (*sndz80_wm)(unsigned addr, unsigned value);
+unsigned (*sndz80_in)(unsigned port);
+void (*sndz80_out)(unsigned port, unsigned value);
 
 #undef cpu_readop
 #undef cpu_readop_arg
 #undef change_pc
 #undef change_pc16
-#define cpu_readmem16(a)       neosnd_z80_rm(a)
-#define cpu_writemem16(a, v)   neosnd_z80_wm(a, v)
-#define cpu_readop(a)          neosnd_z80_rm(a)
-#define cpu_readop_arg(a)      neosnd_z80_rm(a)
-#define cpu_readport(p)        neosnd_z80_in(p)
-#define cpu_writeport(p, v)    neosnd_z80_out(p, v)
+#define cpu_readmem16(a)       sndz80_rm(a)
+#define cpu_writemem16(a, v)   sndz80_wm(a, v)
+#define cpu_readop(a)          sndz80_rm(a)
+#define cpu_readop_arg(a)      sndz80_rm(a)
+#define cpu_readport(p)        sndz80_in(p)
+#define cpu_writeport(p, v)    sndz80_out(p, v)
 #define change_pc(pc)          do {} while (0)
 #define change_pc16(pc)        do {} while (0)
 

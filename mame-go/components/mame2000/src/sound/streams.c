@@ -110,6 +110,18 @@ void streams_sh_stop(void)
 }
 
 
+#ifdef MAMEGO
+/* every stream brought up to the end of its frame buffer (a sound board on
+   core 1 finishing its frame, drivers/cps1.c) */
+void streams_fill_to_end(void)
+{
+	int channel;
+	for (channel = 0; channel < MIXER_MAX_CHANNELS; channel += stream_joined_channels[channel] ? stream_joined_channels[channel] : 1)
+		if (stream_buffer[channel])
+			stream_update(channel, 0);
+}
+#endif
+
 void streams_sh_update(void)
 {
 	int channel,i;

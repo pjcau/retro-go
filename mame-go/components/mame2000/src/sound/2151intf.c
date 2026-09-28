@@ -42,9 +42,33 @@ static void timer_callback_2151(int param)
 	YM2151TimerOver(n,c);
 }
 
+#ifdef MAMEGO
+/* a sound board on core 1 counts the timers itself (drivers/cps1.c) */
+void (*ym2151_timer_hook)(int c, int count, timer_tm step);
+void YM2151_timers_to_host(void)
+{
+	extern void OPM_rearm_timers(int n);
+	int c;
+	for (c = 0; c < 2; c++)
+		if (Timer[0][c])
+		{
+			timer_remove(Timer[0][c]);
+			Timer[0][c] = 0;
+		}
+	OPM_rearm_timers(0);
+}
+#endif
+
 /* TimerHandler from fm.c */
 static void TimerHandler(int n,int c,int count,timer_tm stepTime)
 {
+#ifdef MAMEGO
+	if (ym2151_timer_hook)
+	{
+		ym2151_timer_hook(c, count, stepTime);
+		return;
+	}
+#endif
 	if( count == 0 )
 	{	/* Reset FM Timer */
 		if( Timer[n][c] )
@@ -286,6 +310,9 @@ WRITE_HANDLER( YM2151_register_port_2_w )
 
 WRITE_HANDLER( YM2151_data_port_0_w )
 {
+#if defined(MAMEGO) && !defined(ESP_PLATFORM)
+	if (getenv("LATCHLOG")) fprintf(stderr, "YM f=%d v=%02x\n", cpu_getcurrentframe(), data & 0xff);
+#endif
 	switch(FMMode)
 	{
 #if (HAS_YM2151)
