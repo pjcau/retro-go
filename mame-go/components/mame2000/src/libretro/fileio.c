@@ -39,6 +39,9 @@ typedef enum
 	kPlainFile,
 	kRAMFile,
 	kZippedFile
+#ifdef MAMEGO
+	, kZipStream  /* a big ROM read straight from the zip (mame-go) */
+#endif
 }	eFileType;
 
 typedef struct
@@ -49,7 +52,53 @@ typedef struct
 	unsigned int length;
 	eFileType type;
 	unsigned int crc;
+#ifdef MAMEGO
+	struct zipstream *zs;
+	char zs_zip[256], zs_name[64];
+#endif
 }	FakeFileHandle;
+
+#ifdef MAMEGO
+/* ROMs of 1 MB and more are read from the zip as the loader asks for them
+   instead of being inflated whole first: a 4 MB Neo Geo program next to its
+   5 MB region does not fit the PSRAM twice (Shock Troopers). */
+#define ZIPSTREAM_MIN (1024 * 1024)
+static int open_zipstream(FakeFileHandle *f, const char *zip, const char *name)
+{
+	uint32_t size = 0;
+	struct zipstream *zs = zipstream_open(zip, name, 0, &size);
+	if (!zs)
+		return -1;
+	if (size < ZIPSTREAM_MIN)
+	{
+		zipstream_close(zs);
+		return -1;
+	}
+	f->type = kZipStream;
+	f->zs = zs;
+	f->length = size;
+	f->offset = 0;
+	f->crc = zipstream_crc(zs);
+	snprintf(f->zs_zip, sizeof(f->zs_zip), "%s", zip);
+	snprintf(f->zs_name, sizeof(f->zs_name), "%s", name);
+	return 0;
+}
+
+static int zs_skip(FakeFileHandle *f, unsigned n)
+{
+	unsigned char tmp[1024];
+	while (n)
+	{
+		unsigned k = n < sizeof(tmp) ? n : sizeof(tmp);
+		int r = zipstream_read(f->zs, tmp, k);
+		if (r <= 0)
+			return -1;
+		f->offset += r;
+		n -= r;
+	}
+	return 0;
+}
+#endif
 
 //extern unsigned int crc32 (unsigned int crc, const unsigned char *buf, unsigned int len);
 static int checksum_file (const char *file, unsigned char **p, unsigned int *size, unsigned int *crc);
@@ -457,6 +506,11 @@ void *osd_fopen (const char *game, const char *filename, int filetype, int _writ
                LOG(("Trying %s file\n", name));
                if( cache_stat (name, &stat_buffer) == 0 )
                {
+#ifdef MAMEGO
+                  if( filetype == OSD_FILETYPE_ROM && open_zipstream(f, name, filename) == 0 )
+                     found = 1;
+                  else
+#endif
                   if( load_zipped_file (name, filename, &f->data, &f->length) == 0 )
                   {
                      LOG(("Using (osd_fopen) zip file for %s\n", filename));
@@ -473,7 +527,9 @@ void *osd_fopen (const char *game, const char *filename, int filetype, int _writ
             {
                /* the zip picked in the launcher, whatever its name (mamego_pick.c) */
                extern char mamego_zip_path[];
-               if( mamego_zip_path[0] && load_zipped_file (mamego_zip_path, filename, &f->data, &f->length) == 0 )
+               if( mamego_zip_path[0] && open_zipstream(f, mamego_zip_path, filename) == 0 )
+                  found = 1;
+               else if( mamego_zip_path[0] && load_zipped_file (mamego_zip_path, filename, &f->data, &f->length) == 0 )
                {
                   f->type = kZippedFile;
                   f->offset = 0;
@@ -1083,6 +1139,18 @@ int osd_fread (void *file, void *buffer, int length)
    {
       case kPlainFile:
          return fread (buffer, 1, length, f->file);
+#ifdef MAMEGO
+      case kZipStream:
+      {
+         int r;
+         if( length + f->offset > f->length )
+            length = f->length - f->offset;
+         r = zipstream_read(f->zs, buffer, length);
+         if( r > 0 )
+            f->offset += r;
+         return r < 0 ? 0 : r;
+      }
+#endif
       case kZippedFile:
       case kRAMFile:
          /* reading from the RAM image of a file */
@@ -1201,6 +1269,25 @@ int osd_fread_scatter (void *file, void *buffer, int length, int increment)
             length -= r;
          }
          return totread;
+#ifdef MAMEGO
+      case kZipStream:
+         totread = 0;
+         while (length)
+         {
+            r = length > 4096 ? 4096 : length;
+            r = osd_fread (f, tempbuf, r);
+            if( r <= 0 )
+               return totread;
+            for( i = 0; i < r; i++ )
+            {
+               *buf = tempbuf[i];
+               buf += increment;
+            }
+            totread += r;
+            length -= r;
+         }
+         return totread;
+#endif
       case kZippedFile:
       case kRAMFile:
          /* reading from the RAM image of a file */
@@ -1233,6 +1320,22 @@ int osd_fseek (void *file, int offset, int whence)
    {
       case kPlainFile:
          return fseek (f->file, offset, whence);
+#ifdef MAMEGO
+      case kZipStream:
+      {
+         unsigned to = whence == SEEK_SET ? offset : whence == SEEK_CUR ? f->offset + offset : f->length + offset;
+         if( to < f->offset )
+         {
+            /* backwards: from the start again */
+            zipstream_close(f->zs);
+            f->zs = zipstream_open(f->zs_zip, f->zs_name, 0, NULL);
+            f->offset = 0;
+            if( !f->zs )
+               return -1;
+         }
+         return zs_skip(f, to - f->offset);
+      }
+#endif
       case kZippedFile:
       case kRAMFile:
          /* seeking within the RAM image of a file */
@@ -1264,6 +1367,12 @@ void osd_fclose (void *file)
       case kPlainFile:
          fclose (f->file);
          break;
+#ifdef MAMEGO
+      case kZipStream:
+         if( f->zs )
+            zipstream_close(f->zs);
+         break;
+#endif
       case kZippedFile:
       case kRAMFile:
          if( f->data )
@@ -1412,7 +1521,11 @@ int osd_fsize (void *file)
 {
 	FakeFileHandle *f = (FakeFileHandle *) file;
 
-	if( f->type == kRAMFile || f->type == kZippedFile )
+	if( f->type == kRAMFile || f->type == kZippedFile
+#ifdef MAMEGO
+		|| f->type == kZipStream
+#endif
+		)
 		return f->length;
 
 	if( f->file )

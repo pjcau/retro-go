@@ -131,6 +131,7 @@ struct zipstream;
 struct zipstream *zipstream_open(const char *zipfile, const char *name, uint32_t crc, uint32_t *size);
 int zipstream_read(struct zipstream *s, void *buf, unsigned len);
 void zipstream_close(struct zipstream *s);
+uint32_t zipstream_crc(struct zipstream *s);
 #endif
 
 #endif

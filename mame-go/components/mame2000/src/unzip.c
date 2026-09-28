@@ -887,8 +887,11 @@ struct zipstream
 	int stored;
 	unsigned in_left;   /* compressed bytes not read from the file yet */
 	unsigned out_left;  /* uncompressed bytes not returned yet */
+	uint32_t crc;       /* of the entry, from the zip directory */
 	unsigned char in[INFLATE_INPUT_BUFFER_MAX + 1];
 };
+
+uint32_t zipstream_crc(struct zipstream *s) { return s->crc; }
 
 struct zipstream *zipstream_open(const char *zipfile, const char *name, uint32_t crc, uint32_t *size)
 {
@@ -917,6 +920,7 @@ struct zipstream *zipstream_open(const char *zipfile, const char *name, uint32_t
 	s->stored = found.compression_method == 0;
 	s->in_left = found.compressed_size;
 	s->out_left = found.uncompressed_size;
+	s->crc = found.crc32;
 	if (!s->stored && inflateInit2(&s->z, -MAX_WBITS) != Z_OK)
 	{
 		closezip(zip);

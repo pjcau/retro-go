@@ -403,6 +403,7 @@ int init_machine(void)
 	if (gamedrv->driver_init) (*gamedrv->driver_init)();
 #ifdef MAMEGO
 	mamego_regions_to_flash();
+	{ extern void mamego_mem_report(const char *where); mamego_mem_report("after regions to flash"); }
 #endif
 
 	return 0;
@@ -578,7 +579,10 @@ static int vh_open(void)
 				vh_close();
 
 				bailing = 1;
-				printf("Out of memory decoding gfx\n");
+				printf("Out of memory decoding gfx (element %d, %d tiles)\n", i, glcopy.total);
+#ifdef MAMEGO
+				{ extern void mamego_mem_report(const char *where); mamego_mem_report("gfx decode"); }
+#endif
 
 				return 1;
 			}

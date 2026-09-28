@@ -99,6 +99,7 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <esp_timer.h>
+#include <esp_heap_caps.h>
 static struct
 {
     const void *pix;
@@ -334,6 +335,15 @@ static void *state_buffer(size_t size, bool *borrowed)
     if (!buf && size && (buf = neospr_borrow(size)))
         *borrowed = true;
     return buf;
+}
+
+void mamego_mem_report(const char *where)
+{
+    printf("mem %s: internal %u KB (largest %u), PSRAM %u KB (largest %u)\n", where,
+           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
 }
 
 static bool save_state_handler(const char *filename)

@@ -1100,7 +1100,32 @@ static unsigned char *mamego_sound_to_flash(const struct RomModule *region_hdr, 
 			goto fail;
 		printf("loading %-12s (to flash)\n", r->name);
 		data = osd_fdata(f, &got);
-		copy = (data && got >= length) ? mamego_flash_store(data, length, &mamego_flash_offset) : NULL;
+		if (data)
+			copy = got >= length ? mamego_flash_store(data, length, &mamego_flash_offset) : NULL;
+		else
+		{
+			/* a big file read straight from the zip: to flash 64 KB at a time
+			   (each store lands right after the previous one) */
+			unsigned char *chunk = malloc(0x10000);
+			unsigned done = 0;
+			copy = NULL;
+			while (chunk && done < length)
+			{
+				unsigned k = length - done < 0x10000 ? length - done : 0x10000;
+				unsigned char *p;
+				if (osd_fread(f, chunk, k) != (int)k)
+					break;
+				p = mamego_flash_store(chunk, k, &mamego_flash_offset);
+				if (!p || (copy && p != copy + done))
+					break;
+				if (!copy)
+					copy = p;
+				done += k;
+			}
+			free(chunk);
+			if (done < length)
+				copy = NULL;
+		}
 		osd_fclose(f);
 		if (!copy || (base && copy != base + r->offset))
 			goto fail;
@@ -1117,6 +1142,9 @@ fail:
 /* Implemented by the host app (mame-go main.c) on a flash partition: store
  * len bytes at *offset, return the memory-mapped copy and advance *offset, or
  * NULL to keep the region in RAM. This default (PC test builds) keeps it. */
+/* host hook: free memory in the log (mame-go main.c); nothing on the PC */
+__attribute__((weak)) void mamego_mem_report(const char *where) { (void)where; }
+
 __attribute__((weak)) unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t *offset)
 {
 	(void)data; (void)len; (void)offset;
@@ -1172,15 +1200,22 @@ void mamego_regions_to_flash(void)
 			size_t len = Machine->memory_region_length[i];
 			extern void memory_rebase(const unsigned char *old, size_t len, unsigned char *copy);
 			copy = mamego_flash_store(old + 0x100000, len - 0x100000, &offset);
-			if (!copy || !(lo = malloc(0x100000)))
+			if (!copy)
+			{
+				printf("mamego: program split failed (flash offset %u KB, partition full)\n", (unsigned)(offset / 1024));
 				continue;
-			memcpy(lo, old, 0x100000);
+			}
 			memory_rebase(old + 0x100000, len - 0x100000, copy);
-			memory_rebase(old, 0x100000, lo);
-			free(old);
+			/* shrink in place: there is no free 1 MB block for a copy while
+			   the 5 MB region is still there */
+			lo = realloc(old, 0x100000);
+			if (!lo)
+				lo = old; /* keeps the 5 MB; the banked part is read from flash anyway */
+			else if (lo != old)
+				memory_rebase(old, 0x100000, lo);
 			Machine->memory_region[i] = lo;
 			mamego_prog_hi = copy;
-			logerror("mamego: program split, 1 MB in RAM + %u KB served from flash\n", (unsigned)((len - 0x100000) / 1024));
+			printf("mamego: program split, 1 MB in RAM + %u KB served from flash\n", (unsigned)((len - 0x100000) / 1024));
 			continue;
 		}
 		copy = mamego_flash_store(Machine->memory_region[i], Machine->memory_region_length[i], &offset);
@@ -1194,7 +1229,7 @@ void mamego_regions_to_flash(void)
 		free(Machine->memory_region[i]);
 		Machine->memory_region[i] = copy;
 		mamego_region_flash[i] = 1;
-		logerror("mamego: region type %d (%u bytes) served from flash\n", type, Machine->memory_region_length[i]);
+		printf("mamego: region type %d (%u KB) served from flash\n", type, Machine->memory_region_length[i] / 1024);
 	}
 }
 #endif
