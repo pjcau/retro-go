@@ -1112,6 +1112,12 @@ void neosnd_enable(void)
 #ifndef ESP_PLATFORM
 	if (getenv("NEOSND1") && !strcmp(getenv("NEOSND1"), "0"))
 		return;
+#else
+	{
+		/* bench switch: this file on the card keeps the sound board on core 0 */
+		FILE *f = fopen("/sd/retro-go/mame/neo_nosnd1", "r");
+		if (f) { fclose(f); printf("neogeo: sound board stays on core 0 (neo_nosnd1)\n"); return; }
+	}
 #endif
 	if (neosnd_core1 || z80_get_context(NULL) > sizeof(ctx) || !neosnd_start_task())
 		return;
@@ -1119,7 +1125,13 @@ void neosnd_enable(void)
 	neosnd_cpf = NEOSND_CLOCK / Machine->drv->frames_per_second;
 	neosnd_frame_len = 1.0f / Machine->drv->frames_per_second;
 	neosnd_frame_t0 = timer_get_time();
-	z80snd_reset(NULL);             /* builds its flag tables */
+	{
+		/* the flag tables are MAME's Z80's (shared, built by its reset) */
+		extern uint8_t *z80_shared_SZHVC_add, *z80_shared_SZHVC_sub;
+		if (!z80_shared_SZHVC_add || !z80_shared_SZHVC_sub)
+			return;
+	}
+	z80snd_reset(NULL);
 	z80_get_context(ctx);           /* MAME's Z80 as it is now */
 	z80snd_set_context(ctx);
 	z80snd_ICount = 0;

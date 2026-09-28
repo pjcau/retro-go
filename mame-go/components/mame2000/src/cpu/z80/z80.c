@@ -158,8 +158,20 @@ static uint8_t SZP[256];		/* zero, sign and parity flags */
 static uint8_t SZHV_inc[256]; /* zero, sign, half carry and overflow flags INC r8 */
 static uint8_t SZHV_dec[256]; /* zero, sign, half carry and overflow flags DEC r8 */
 
+#if defined(MAMEGO) && defined(Z80SND_INSTANCE)
+/* the Neo Geo sound Z80 (z80snd.c) shares MAME's Z80 flag tables (2 x 128 KB):
+   a second copy did not fit next to the sprite cache (Sonic Wings 2) */
+extern uint8_t *z80_shared_SZHVC_add, *z80_shared_SZHVC_sub;
+#define SZHVC_add z80_shared_SZHVC_add
+#define SZHVC_sub z80_shared_SZHVC_sub
+#elif defined(MAMEGO)
+uint8_t *z80_shared_SZHVC_add, *z80_shared_SZHVC_sub;
+#define SZHVC_add z80_shared_SZHVC_add
+#define SZHVC_sub z80_shared_SZHVC_sub
+#else
 static uint8_t *SZHVC_add = 0;
 static uint8_t *SZHVC_sub = 0;
+#endif
 
 /* tmp1 value for ini/inir/outi/otir for [C.1-0][io.1-0] */
 static uint8_t irep_tmp1[4][4] = {

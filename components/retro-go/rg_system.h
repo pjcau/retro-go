@@ -295,6 +295,7 @@ bool rg_emu_save_state(uint8_t slot);
 bool rg_emu_load_state(uint8_t slot);
 bool rg_emu_reset(bool hard);
 bool rg_emu_screenshot(const char *filename, int width, int height);
+void rg_update_check(void); /* firmware update from RG_BASE_PATH/update on the SD card */
 rg_emu_states_t *rg_emu_get_states(const char *romPath, size_t slots);
 uint8_t rg_emu_get_last_used_slot(const char *romPath);
 

@@ -537,6 +537,8 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
     rg_task_create("rg_sysmon", &system_monitor_task, NULL, 3 * 1024, RG_TASK_PRIORITY_5, -1);
     app.initialized = true;
 
+    rg_update_check(); /* firmware update from the SD card (rg_update.c) */
+
     update_memory_statistics();
     RG_LOGI("Available memory: %d/%d + %d/%d", statistics.freeMemoryInt / 1024, statistics.totalMemoryInt / 1024,
             statistics.freeMemoryExt / 1024, statistics.totalMemoryExt / 1024);

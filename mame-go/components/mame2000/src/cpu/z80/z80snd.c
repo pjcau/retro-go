@@ -56,5 +56,6 @@ void neosnd_z80_out(unsigned port, unsigned value);
 #define z80_state_save         z80snd_state_save
 #define z80_pchist             z80snd_pchist
 
+#define Z80SND_INSTANCE
 #include "z80.c"
 #endif

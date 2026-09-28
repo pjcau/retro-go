@@ -1060,7 +1060,13 @@ static void osd_update_video_and_audio_(struct osd_bitmap *bitmap)
 			   draws them and the core would have to (seen on the board: every
 			   drawn frame went that way, sprites back on core 0). */
 			extern void (*mamego_frame_render)(void);
-			if (should_skip_frame && mamego_frame_render && mamego_present_frame(bitmap))
+			static int noforce = -1;
+#ifdef ESP_PLATFORM
+			if (noforce < 0) { FILE *f = fopen("/sd/retro-go/mame/neo_noforce", "r"); noforce = f != NULL; if (f) fclose(f); }
+#else
+			noforce = 0;
+#endif
+			if (!noforce && should_skip_frame && mamego_frame_render && mamego_present_frame(bitmap))
 				mame2000_frame_presented = 1;
 		}
 #endif
