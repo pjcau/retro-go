@@ -643,6 +643,24 @@ static void z80_idle_check(unsigned from)
 	memcpy(z80_idle_regs, regs, sizeof(regs));
 }
 #define Z80_IDLE_CHECK(from) do { if (z80_idle_enable) z80_idle_check(from); } while (0)
+#ifdef PCHIST
+#include <stdio.h>
+static unsigned z80hist[0x10000 >> 4];
+static void z80_pchist_dump(void)
+{
+	unsigned long long tot = 0; unsigned i, j;
+	for (i = 0; i < 0x1000; i++) tot += z80hist[i];
+	for (j = 0; j < 12; j++) { unsigned b = 0; for (i = 0; i < 0x1000; i++) if (z80hist[i] > z80hist[b]) b = i;
+		fprintf(stderr, "Z80HIST %04x %5.1f%%\n", b << 4, 100.0 * z80hist[b] / tot); z80hist[b] = 0; }
+}
+void z80_pchist(unsigned pc)
+{
+	static int init;
+	if (!init) { init = 1; atexit(z80_pchist_dump); }
+	z80hist[(pc & 0xffff) >> 4]++;
+}
+#endif
+
 #else
 #define Z80_IDLE_CHECK(from) do {} while (0)
 #endif
@@ -1892,6 +1910,9 @@ int z80_execute(int cycles)
 		_R++;
 		
 	    op = ROP();
+#ifdef PCHIST /* PC analysis builds only: instructions per 16-byte block */
+		{ extern void z80_pchist(unsigned pc); z80_pchist(_PPC); }
+#endif
 
 	    CC(op,op);
 

@@ -13,6 +13,7 @@ set(COMPONENT_SRCS
     src/cpu/m68000/m68kmame.c
     src/cpu/s2650/s2650.c
     src/cpu/z80/z80.c
+    src/cpu/z80/z80snd.c
     src/cpuintrf.c
     src/datafile.c
     src/drawgfx.c
@@ -125,3 +126,4 @@ rg_setup_compile_options(
     -DHAS_NAMCO=1 -DHAS_CUSTOM=1 -DHAS_SN76496=1 -DHAS_AY8910=1 -DHAS_YM2203=1 -DHAS_YM2610=1 -DHAS_YM3812=1 -DHAS_QSOUND=1
     -DHAS_DAC=1 -DHAS_SAMPLES=1 -DHAS_HC55516=1 -DHAS_ASTROCADE=1 -DHAS_TMS5220=1 -DHAS_NES=1 -DHAS_OKIM6295=1 -DHAS_ADPCM=1 -DHAS_YM2151=1
 )
+

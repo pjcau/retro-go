@@ -838,7 +838,12 @@ static void mamego_render_now(void)
 	void (*render)(void) = mamego_frame_render;
 	mamego_frame_render = 0;
 	if (render)
+	{
 		render();
+#ifdef NEOPROF
+		{ extern volatile int mamego_render_count[3]; mamego_render_count[2]++; }
+#endif
+	}
 }
 
 static int mamego_present_frame(struct osd_bitmap *bitmap)
@@ -911,7 +916,14 @@ void osd_update_video_and_audio(struct osd_bitmap *bitmap)
 	PROF_PUSH(PROF_BLIT);
 	osd_update_video_and_audio_(bitmap);
 #ifdef MAMEGO
-	mamego_render_now(); /* skipped frame: keep the bitmap and the state in step */
+	{
+		/* a frame drawn but not shown: nothing to draw its sprites for */
+		extern void (*mamego_frame_render)(void);
+#ifdef NEOPROF
+		if (mamego_frame_render) { extern volatile int mamego_render_count[3]; mamego_render_count[2]++; }
+#endif
+		mamego_frame_render = 0;
+	}
 #endif
 	PROF_POP();
 }
@@ -1040,6 +1052,18 @@ static void osd_update_video_and_audio_(struct osd_bitmap *bitmap)
 				frameskip_counter = 0;
 		}
 
+#ifdef MAMEGO
+		{
+			/* The skip decision above is for the NEXT frame (osd_skip_this_frame
+			   returns it to MAME before drawing). This one was drawn with its
+			   sprites left to the host (Neo Geo): show it, or the host never
+			   draws them and the core would have to (seen on the board: every
+			   drawn frame went that way, sprites back on core 0). */
+			extern void (*mamego_frame_render)(void);
+			if (should_skip_frame && mamego_frame_render && mamego_present_frame(bitmap))
+				mame2000_frame_presented = 1;
+		}
+#endif
 		if (should_skip_frame)
 		{
 			/* Frame will be dropped: retro_run sees should_skip_frame

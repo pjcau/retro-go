@@ -2449,7 +2449,17 @@ static void ym_task_main(void *arg)
 	for (;;)
 	{
 		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+#ifdef NEOPROF
+		{
+			extern volatile int64_t mamego_core1_us[3];
+			extern int64_t mamego_prof_now(void);
+			int64_t t0 = mamego_prof_now();
+			ym2610_job();
+			mamego_core1_us[2] += mamego_prof_now() - t0;
+		}
+#else
 		ym2610_job();
+#endif
 		__sync_synchronize();
 		ym_busy = 0;
 		xSemaphoreGive(ym_done);
@@ -2633,11 +2643,29 @@ static int ym2610_offload_write(int n, int a, uint8_t v)
 }
 #endif /* MAMEGO */
 
+#ifdef MAMEGO
+void (*neosnd_update_hook)(int16_t **buffer, int length);
+void YM2610UpdateOne_direct(int num, int16_t **buffer, int length)
+{
+	YM2610UpdateOne_(num, buffer, length);
+}
+void YM2610_rearm_timers(int n)
+{
+	FM_ST *ST = &FM2610[n].OPN.ST;
+	if (!ST->Timer_Handler)
+		return;
+	if (ST->mode & 0x01) ST->Timer_Handler(n, 0, ST->TAC, ST->TimerBase);
+	if (ST->mode & 0x02) ST->Timer_Handler(n, 1, ST->TBC, ST->TimerBase);
+}
+#endif
+
 void YM2610UpdateOne(int num, int16_t **buffer, int length)
 {
 	PROF_PUSH(PROF_YM);
 #ifdef MAMEGO
-	if (ym_offload)
+	if (neosnd_update_hook)
+		neosnd_update_hook(buffer, length);
+	else if (ym_offload)
 		ym2610_offload_update(num, buffer, length);
 	else
 #endif

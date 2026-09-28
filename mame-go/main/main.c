@@ -98,6 +98,7 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
+#include <esp_timer.h>
 static struct
 {
     const void *pix;
@@ -115,8 +116,22 @@ static void present_task_main(void *arg)
     for (;;)
     {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+#ifdef NEOPROF
+        extern volatile int64_t mamego_core1_us[3];
+        int64_t t0 = esp_timer_get_time();
+#endif
         if (present.render) /* Neo Geo sprites of this frame (vidhrdw/neogeo.c) */
+        {
             present.render();
+#ifdef NEOPROF
+            extern volatile int mamego_render_count[3];
+            mamego_render_count[1]++;
+#endif
+        }
+#ifdef NEOPROF
+        int64_t t1 = esp_timer_get_time();
+        mamego_core1_us[0] += t1 - t0;
+#endif
         rg_surface_t *surface = updates[current];
         const uint16_t *pal = present.pal;
         for (int y = 0; y < present.height; y++)
@@ -136,11 +151,40 @@ static void present_task_main(void *arg)
             }
         }
         rg_display_submit(surface, 0);
+#ifdef NEOPROF
+        mamego_core1_us[1] += esp_timer_get_time() - t1;
+#endif
         current ^= 1;
         present_busy = false;
         xSemaphoreGive(present_done);
     }
 }
+
+#ifdef NEOPROF
+/* core 1 idle time: the idle hook runs back to back while core 1 has nothing
+   to do; gaps longer than 50 us mean a task ran in between */
+#include <esp_freertos_hooks.h>
+static volatile int64_t core1_idle_us, core1_idle_last;
+static bool core1_idle_hook(void)
+{
+    int64_t t = esp_timer_get_time();
+    if (core1_idle_last && t - core1_idle_last < 50)
+        core1_idle_us += t - core1_idle_last;
+    core1_idle_last = t;
+    return false; /* keep spinning, so the next call comes right away */
+}
+int64_t mamego_core1_idle_us(void)
+{
+    static bool registered;
+    if (!registered)
+        registered = esp_register_freertos_idle_hook_for_cpu(core1_idle_hook, 1) == ESP_OK;
+    return core1_idle_us;
+}
+int64_t mamego_display_busy_us(void)
+{
+    return rg_display_get_counters().busyTime;
+}
+#endif
 
 static int present_indexed(const void *pix, int bits, int width, int height, int pitch, const void *palette, int colors)
 {
@@ -370,6 +414,14 @@ static void mame_task(void *arg)
      * upscale (Pac-Man 288 -> 320 lines) doubles every ninth line of the maze.
      * "DispScaling" is rg_display.c's per-app key; absent = never chosen. */
     bool scaling_never_chosen = rg_settings_get_number(NS_APP, "DispScaling", -1) == -1;
+    /* A 2026-09-28 bench build saved "filter off" for mame-go (it looked bad
+     * at the Neo Geo's 1.43x): put the default back once. */
+    if (!rg_settings_get_number(NS_APP, "DispFilterFix", 0))
+    {
+        rg_display_set_filter(RG_DISPLAY_FILTER_BOTH);
+        rg_settings_set_number(NS_APP, "DispFilterFix", 1);
+    }
+
     if (scaling_never_chosen)
         rg_display_set_scaling(RG_DISPLAY_SCALING_OFF);
     if (rg_display_get_scaling() == RG_DISPLAY_SCALING_OFF &&

@@ -111,6 +111,7 @@ static unsigned char *vidram_r;          /* the renderer's copy of the video RAM
 void neogeo_vh_stop(void)
 {
 #ifdef MAMEGO
+	{ extern void neosnd_disable(void); neosnd_disable(); } /* core 1 done with the sound board */
 	if (mamego_frame_render || render_defer > 0)
 	{
 		/* the host may still be drawing from vidram_r and the page cache */
@@ -1345,6 +1346,9 @@ void neogeo_vh_screenrefresh(struct osd_bitmap *bitmap,int full_refresh)
 #ifndef ESP_PLATFORM
 		if (getenv("NEODEFER") && !strcmp(getenv("NEODEFER"), "0")) render_defer = 0;
 #endif
+#ifdef NEO_NO_DEFER
+		render_defer = 0;
+#endif
 		if (render_defer)
 		{
 			memcpy(vidram_r, vidram, VRAM_USED);
@@ -1363,6 +1367,9 @@ void neogeo_vh_screenrefresh(struct osd_bitmap *bitmap,int full_refresh)
 		render_job.frame_counter = neogeo_frame_counter;
 		render_job.fix_bank = fix_bank;
 		mamego_frame_render = neogeo_render_job;
+#ifdef NEOPROF
+		{ extern volatile int mamego_render_count[3]; mamego_render_count[0]++; }
+#endif
 		return;
 	}
 	if (neospr_active())

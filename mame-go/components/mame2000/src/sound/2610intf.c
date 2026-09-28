@@ -44,9 +44,23 @@ static void timer_callback_2610(int param)
 	YM2610TimerOver(n,c);
 }
 
+#ifdef MAMEGO
+/* the Neo Geo sound board on core 1 (drivers/neogeo.c) counts the timers
+   itself and renders the samples as its Z80 goes */
+void (*neosnd_timer_hook)(int c, int count, timer_tm step);
+void (*neosnd_render_hook)(void);
+#endif
+
 /* TimerHandler from fm.c */
 static void TimerHandler(int n,int c,int count,timer_tm stepTime)
 {
+#ifdef MAMEGO
+	if (neosnd_timer_hook)
+	{
+		neosnd_timer_hook(c, count, stepTime);
+		return;
+	}
+#endif
 	if( count == 0 )
 	{	/* Reset FM Timer */
 		if( Timer[n][c] )
@@ -95,8 +109,34 @@ size_t YM2610_mamego_state(unsigned char *buf, size_t size, int mode)
 #endif
 
 /* update request from fm.c */
+#ifdef MAMEGO
+/* core 0 -> the sound board on core 1: MAME's timers dropped, the chip's
+   running timers re-armed through the hook */
+void YM2610_timers_to_host(void)
+{
+	extern void YM2610_rearm_timers(int n);
+	extern void YM2610_offload(int on);
+	int c;
+	YM2610_offload(0); /* core 1 now writes the chip directly */
+	for (c = 0; c < 2; c++)
+		if (Timer[0][c])
+		{
+			timer_remove(Timer[0][c]);
+			Timer[0][c] = 0;
+		}
+	YM2610_rearm_timers(0);
+}
+#endif
+
 void YM2610UpdateRequest(int chip)
 {
+#ifdef MAMEGO
+	if (neosnd_render_hook)
+	{
+		neosnd_render_hook();
+		return;
+	}
+#endif
 	stream_update(stream[chip],100);
 }
 

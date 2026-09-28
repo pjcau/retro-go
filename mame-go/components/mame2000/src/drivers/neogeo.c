@@ -271,6 +271,18 @@ static int neogeo_interrupt(void)
 {
 
 
+#ifdef MAMEGO
+	{
+		/* the sound board goes to core 1 once MAME has started it */
+		static int tried;
+		extern void neosnd_enable(void);
+		if (!tried && cpu_getcurrentframe() > 2)
+		{
+			tried = 1;
+			neosnd_enable();
+		}
+	}
+#endif
 	/* Add a timer tick to the pd4990a */
 	addretrace();
 
@@ -365,8 +377,22 @@ static READ_HANDLER( timer_r )
 	return res;
 }
 
+#ifdef MAMEGO
+int neosnd_core1;                         /* sound board on core 1, see neosnd_update() */
+static void neosnd_command(int value);
+#endif
+
 static WRITE_HANDLER( neo_z80_w )
 {
+#ifdef MAMEGO
+	if (neosnd_core1)
+	{
+		/* to the sound board on core 1: the command, timed within this frame */
+		pending_command = 1;
+		neosnd_command((data >> 8) & 0xff);
+		return;
+	}
+#endif
 	soundlatch_w(0,(data>>8)&0xff);
 	pending_command = 1;
 	cpu_cause_interrupt(1,Z80_NMI_INT);
@@ -823,6 +849,337 @@ static WRITE_HANDLER( z80_port_w )
 }
 
 #ifdef MAMEGO
+/* ----------------------------------------------------------------------
+ * The sound board on core 1 (mame-go).
+ *
+ * The Neo Geo's Z80 + YM2610 only talk to the 68000 through two bytes: the
+ * command latch (68000 -> Z80, with an NMI) and the reply (Z80 -> 68000).
+ * So the whole board runs on core 1, one frame behind: a private Z80
+ * (cpu/z80/z80snd.c) with direct access to its ROM banks and RAM, the
+ * YM2610 written directly, its two timers counted in Z80 cycles, and the
+ * samples rendered as the Z80 goes. The 68000's commands of a frame are
+ * queued with their time in the frame and delivered at that time in the
+ * next frame; the reply the 68000 reads comes from the previous frame.
+ * MAME's own Z80 is suspended and the scheduler never runs it.
+ * ---------------------------------------------------------------------- */
+extern int z80snd_execute(int cycles);
+extern void z80snd_reset(void *param);
+extern unsigned z80snd_get_context(void *dst);
+extern void z80snd_set_context(void *src);
+extern void z80snd_set_irq_line(int irqline, int state);
+extern void z80snd_set_nmi_line(int state);
+extern void z80snd_set_irq_callback(int (*callback)(int irqline));
+extern int z80snd_ICount;
+extern unsigned z80snd_idle_enable;
+extern unsigned z80_get_context(void *dst);
+extern void (*neosnd_timer_hook)(int c, int count, timer_tm step);
+extern void (*neosnd_render_hook)(void);
+extern void (*neosnd_update_hook)(int16_t **buffer, int length);
+extern void YM2610UpdateOne_direct(int num, int16_t **buffer, int length);
+extern void YM2610_timers_to_host(void);
+#include "sound/fm.h"
+
+#define NEOSND_CLOCK 6000000
+#define NEOSND_EVQ   256
+struct neosnd_event { int32_t at; uint8_t value; };
+static struct neosnd_event neosnd_evq[2][NEOSND_EVQ];
+static int neosnd_evn[2], neosnd_evfill;
+static int neosnd_cpf;                        /* Z80 cycles per frame */
+static float neosnd_frame_t0, neosnd_frame_len;
+static unsigned char *neosnd_mem;             /* REGION_CPU2 */
+/* core 1 side */
+static int neosnd_latch, neosnd_reply, neosnd_unread;
+static int neosnd_timer_on[2];
+static int32_t neosnd_timer_at[2];
+static int32_t neosnd_now, neosnd_seg_start, neosnd_seg_len;
+static int neosnd_job_q, neosnd_job_len, neosnd_rendered, neosnd_out, neosnd_ready;
+static int16_t neosnd_buf[2][2][2048];        /* [buffer][left/right][sample] */
+
+static int32_t neosnd_time(void)              /* Z80 cycles since the frame's start */
+{
+	return neosnd_seg_start + (neosnd_seg_len - z80snd_ICount);
+}
+
+static void neosnd_render_to(int32_t t)
+{
+	int want = t <= 0 ? 0 : (int)((int64_t)t * neosnd_job_len / neosnd_cpf);
+	if (want > neosnd_job_len)
+		want = neosnd_job_len;
+	if (want > neosnd_rendered)
+	{
+		int16_t *b[2] = { neosnd_buf[neosnd_out][0] + neosnd_rendered, neosnd_buf[neosnd_out][1] + neosnd_rendered };
+		YM2610UpdateOne_direct(0, b, want - neosnd_rendered);
+		neosnd_rendered = want;
+	}
+}
+
+static void neosnd_render_now(void) { neosnd_render_to(neosnd_time()); }
+
+static void neosnd_timer(int c, int count, timer_tm step)
+{
+	if (!count)
+		neosnd_timer_on[c] = 0;
+	else if (!neosnd_timer_on[c])
+	{
+		neosnd_timer_on[c] = 1;
+		neosnd_timer_at[c] = neosnd_time() + (int32_t)((int64_t)count * step * (NEOSND_CLOCK / 1000) / (TIME_ONE_SEC / 1000));
+	}
+}
+
+static int neosnd_irq_ack(int irqline) { return 0xff; }
+
+unsigned neosnd_z80_rm(unsigned a)
+{
+	a &= 0xffff;
+	if (a < 0x8000) return neosnd_mem[a];
+	if (a < 0xc000) return neosnd_mem[bank[0] + a - 0x8000];
+	if (a < 0xe000) return neosnd_mem[bank[1] + a - 0xc000];
+	if (a < 0xf000) return neosnd_mem[bank[2] + a - 0xe000];
+	if (a < 0xf800) return neosnd_mem[bank[3] + a - 0xf000];
+	return neosnd_mem[a];
+}
+
+void neosnd_z80_wm(unsigned a, unsigned v)
+{
+	a &= 0xffff;
+	if (a >= 0xf800)
+		neosnd_mem[a] = v;
+}
+
+unsigned neosnd_z80_in(unsigned port)
+{
+	switch (port & 0xff)
+	{
+		case 0x00: neosnd_unread = 0; return neosnd_latch;
+		case 0x04: return YM2610Read(0, 0);
+		case 0x05: return YM2610Read(0, 1);
+		case 0x06: return YM2610Read(0, 2);
+		case 0x08: bank[3] = 0x0800 * ((port >> 8) & 0x7f); return 0;
+		case 0x09: bank[2] = 0x1000 * ((port >> 8) & 0x3f); return 0;
+		case 0x0a: bank[1] = 0x2000 * ((port >> 8) & 0x1f); return 0;
+		case 0x0b: bank[0] = 0x4000 * ((port >> 8) & 0x0f); return 0;
+	}
+	return 0;
+}
+
+void neosnd_z80_out(unsigned port, unsigned v)
+{
+	switch (port & 0xff)
+	{
+		case 0x04: case 0x05: case 0x06: case 0x07:
+			YM2610Write(0, (port & 0xff) - 4, v);
+			break;
+		case 0x0c:
+			neosnd_reply = v;
+			break;
+	}
+}
+
+/* core 1: one frame of the sound board */
+static void neosnd_job(void)
+{
+	int q = neosnd_job_q, ev = 0, n = neosnd_evn[q], c;
+	neosnd_rendered = 0;
+	while (neosnd_now < neosnd_cpf)
+	{
+		int32_t target = neosnd_cpf;
+		if (ev < n && neosnd_evq[q][ev].at < target)
+			target = neosnd_evq[q][ev].at;
+		for (c = 0; c < 2; c++)
+			if (neosnd_timer_on[c] && neosnd_timer_at[c] < target)
+				target = neosnd_timer_at[c];
+		if (target > neosnd_now + neosnd_cpf / 16)
+			target = neosnd_now + neosnd_cpf / 16;
+		if (target > neosnd_now)
+		{
+			neosnd_seg_start = neosnd_now;
+			neosnd_seg_len = target - neosnd_now;
+			z80snd_ICount = neosnd_seg_len;
+			neosnd_now += z80snd_execute(neosnd_seg_len);
+			neosnd_seg_start = neosnd_now;
+			neosnd_seg_len = 0;
+			z80snd_ICount = 0;
+		}
+		while (ev < n && neosnd_evq[q][ev].at <= neosnd_now)
+		{
+			neosnd_latch = neosnd_evq[q][ev++].value;
+			neosnd_unread = 1;
+			z80snd_set_nmi_line(ASSERT_LINE);
+			z80snd_set_nmi_line(CLEAR_LINE);
+		}
+		for (c = 0; c < 2; c++)
+			if (neosnd_timer_on[c] && neosnd_timer_at[c] <= neosnd_now)
+			{
+				neosnd_timer_on[c] = 0;
+				YM2610TimerOver(0, c);
+			}
+	}
+	neosnd_render_to(neosnd_cpf);
+	/* the next frame counts from 0: carry the overshoot and the timers */
+	neosnd_now -= neosnd_cpf;
+	for (c = 0; c < 2; c++)
+		neosnd_timer_at[c] -= neosnd_cpf;
+	neosnd_evn[q] = 0;
+}
+
+#ifdef ESP_PLATFORM
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+static TaskHandle_t neosnd_task;
+static SemaphoreHandle_t neosnd_done;
+static volatile int neosnd_busy;
+static void neosnd_task_main(void *arg)
+{
+	for (;;)
+	{
+		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+#ifdef NEOPROF
+		extern volatile int64_t mamego_core1_us[3];
+		extern int64_t mamego_prof_now(void);
+		int64_t t0 = mamego_prof_now();
+#endif
+		neosnd_job();
+#ifdef NEOPROF
+		mamego_core1_us[2] += mamego_prof_now() - t0;
+#endif
+		__sync_synchronize();
+		neosnd_busy = 0;
+		xSemaphoreGive(neosnd_done);
+	}
+}
+static void neosnd_wait(void) { if (neosnd_busy) xSemaphoreTake(neosnd_done, portMAX_DELAY); }
+static int neosnd_start_task(void)
+{
+	neosnd_done = xSemaphoreCreateBinary();
+	return neosnd_done && xTaskCreatePinnedToCore(neosnd_task_main, "neo_sound", 4096, NULL, 5, &neosnd_task, 1) == pdPASS;
+}
+static void neosnd_start(void) { neosnd_busy = 1; __sync_synchronize(); xTaskNotifyGive(neosnd_task); }
+#else
+static void neosnd_wait(void) {}
+static int neosnd_start_task(void) { return 1; }
+static void neosnd_start(void) { neosnd_job(); } /* PC: at once, same order, deterministic */
+#endif
+
+/* 68000, core 0: a command for the sound board at this point of the frame */
+static void neosnd_command(int value)
+{
+	int f = neosnd_evfill;
+	float t = timer_get_time() - neosnd_frame_t0;
+	int32_t at = (int32_t)(t / neosnd_frame_len * neosnd_cpf);
+	if (at < 0) at = 0;
+	if (at >= neosnd_cpf) at = neosnd_cpf - 1;
+	if (neosnd_evn[f] && at < neosnd_evq[f][neosnd_evn[f] - 1].at)
+		at = neosnd_evq[f][neosnd_evn[f] - 1].at;
+	if (neosnd_evn[f] < NEOSND_EVQ)
+	{
+		neosnd_evq[f][neosnd_evn[f]].at = at;
+		neosnd_evq[f][neosnd_evn[f]].value = value;
+		neosnd_evn[f]++;
+	}
+}
+
+/* core 0, the YM2610 stream's update at the frame end (fm.c): last frame's
+   samples out, the 68000 sees the reply, this frame's job starts */
+static void neosnd_update(int16_t **buffer, int length)
+{
+	int i, prev;
+	neosnd_wait();
+	prev = neosnd_out;
+	for (i = 0; i < length; i++)
+	{
+		int j = i < neosnd_job_len ? i : neosnd_job_len - 1;
+		buffer[0][i] = neosnd_ready && j >= 0 ? neosnd_buf[prev][0][j] : 0;
+		buffer[1][i] = neosnd_ready && j >= 0 ? neosnd_buf[prev][1][j] : 0;
+	}
+	result_code = neosnd_reply;
+	if (!neosnd_unread && !neosnd_evn[neosnd_evfill])
+		pending_command = 0;
+	neosnd_job_q = neosnd_evfill;
+	neosnd_evfill ^= 1;
+	neosnd_evn[neosnd_evfill] = 0;
+	neosnd_job_len = length > 2048 ? 2048 : length;
+	neosnd_out ^= 1;
+	neosnd_ready = 1;
+	neosnd_frame_t0 = timer_get_time();
+	neosnd_start();
+}
+
+/* first frame end: take the board over from MAME */
+void neosnd_enable(void)
+{
+	unsigned char ctx[1024];
+#ifndef ESP_PLATFORM
+	if (getenv("NEOSND1") && !strcmp(getenv("NEOSND1"), "0"))
+		return;
+#endif
+	if (neosnd_core1 || z80_get_context(NULL) > sizeof(ctx) || !neosnd_start_task())
+		return;
+	neosnd_mem = memory_region(REGION_CPU2);
+	neosnd_cpf = NEOSND_CLOCK / Machine->drv->frames_per_second;
+	neosnd_frame_len = 1.0f / Machine->drv->frames_per_second;
+	neosnd_frame_t0 = timer_get_time();
+	z80snd_reset(NULL);             /* builds its flag tables */
+	z80_get_context(ctx);           /* MAME's Z80 as it is now */
+	z80snd_set_context(ctx);
+	z80snd_ICount = 0;
+	z80snd_set_irq_callback(neosnd_irq_ack);
+	z80snd_idle_enable = 1;
+	neosnd_latch = soundlatch_r(0);
+	neosnd_reply = result_code;
+	neosnd_now = 0;
+	timer_suspendcpu(1, 1, SUSPEND_REASON_DISABLE);
+	neosnd_timer_hook = neosnd_timer;
+	neosnd_render_hook = neosnd_render_now;
+	neosnd_core1 = 1;
+	YM2610_timers_to_host();         /* MAME's YM timers -> neosnd_timer() */
+	neosnd_update_hook = neosnd_update;
+	printf("neogeo: sound board (Z80 + YM2610) on the second core\n");
+}
+
+void neosnd_disable(void)
+{
+	neosnd_wait();
+	neosnd_update_hook = 0;
+	neosnd_timer_hook = 0;
+	neosnd_render_hook = 0;
+	neosnd_core1 = 0;
+}
+
+/* save states (neogeo_mamego_state): the board as the last job left it */
+static size_t neosnd_state(unsigned char *buf, size_t size, int mode)
+{
+	size_t pos = 0;
+	unsigned char ctx[1024];
+	unsigned len = z80snd_get_context(NULL);
+#define NS_IO(ptr, l) do { size_t _l = (l); if (mode && pos + _l > size) return 0; \
+		if (mode == 1) memcpy(buf + pos, (ptr), _l); else if (mode == 2) memcpy((ptr), buf + pos, _l); pos += _l; } while (0)
+	if (mode)
+		neosnd_wait();
+	if (mode == 1)
+		z80snd_get_context(ctx);
+	NS_IO(ctx, len);
+	NS_IO(&neosnd_latch, sizeof(neosnd_latch));
+	NS_IO(&neosnd_reply, sizeof(neosnd_reply));
+	NS_IO(&neosnd_unread, sizeof(neosnd_unread));
+	NS_IO(neosnd_timer_on, sizeof(neosnd_timer_on));
+	NS_IO(neosnd_timer_at, sizeof(neosnd_timer_at));
+	NS_IO(&neosnd_now, sizeof(neosnd_now));
+	NS_IO(neosnd_evn, sizeof(neosnd_evn));
+	NS_IO(neosnd_evq, sizeof(neosnd_evq));
+	NS_IO(&neosnd_evfill, sizeof(neosnd_evfill));
+#undef NS_IO
+	if (mode == 2)
+	{
+		z80snd_set_context(ctx);
+		z80snd_set_irq_callback(neosnd_irq_ack);
+		neosnd_ready = 0;
+	}
+	return pos;
+}
+#endif
+
+#ifdef MAMEGO
 /* mame-go save state, Neo Geo part (called by mamego_state_walk() in
  * cpuintrf.c): everything the board keeps outside the CPU regions - work
  * RAM, video RAM, both palette banks, backup RAM, memory card, the driver's
@@ -865,6 +1222,13 @@ size_t neogeo_mamego_state(unsigned char *buf, size_t size, int mode) /* 0 size,
 	NG_V(latch); NG_V(bank4); NG_IO(bank, sizeof(bank));
 #undef NG_V
 #undef NG_IO
+	if (neosnd_core1)
+	{
+		size_t sl = neosnd_state(NULL, 0, 0);
+		if (mode && (pos + sl > size || !neosnd_state(buf + pos, sl, mode)))
+			return 0;
+		pos += sl;
+	}
 	ym = YM2610_mamego_state(NULL, 0, 0);
 	if (mode && (pos + ym > size || !YM2610_mamego_state(buf + pos, ym, mode)))
 		return 0;
@@ -1108,6 +1472,15 @@ static const struct GfxDecodeInfo neogeo_mvs_gfxdecodeinfo[] =
 
 static void neogeo_sound_irq( int irq )
 {
+#ifdef MAMEGO
+	if (neosnd_core1)
+	{
+		/* called by the YM2610 on core 1, inside the sound board's frame */
+		extern void z80snd_set_irq_line(int irqline, int state);
+		z80snd_set_irq_line(0, irq ? ASSERT_LINE : CLEAR_LINE);
+		return;
+	}
+#endif
 	cpu_set_irq_line(1,0,irq ? ASSERT_LINE : CLEAR_LINE);
 }
 
