@@ -411,9 +411,16 @@ CPS1 VIDEO RENDERER
 
 */
 static uint32_t *cps1_gfx;		 /* Converted GFX memory */
-static int *cps1_char_pen_usage;	/* pen usage array */
-static int *cps1_tile16_pen_usage;      /* pen usage array */
-static int *cps1_tile32_pen_usage;      /* pen usage array */
+/* pen usage: a mask of the 16 pens a tile uses. 16 bits on mame-go: the
+   three arrays are 1.25 MB as ints for Street Fighter II's 6 MB of tiles */
+#ifdef MAMEGO
+typedef uint16_t cps1_pen_t;
+#else
+typedef int cps1_pen_t;
+#endif
+static cps1_pen_t *cps1_char_pen_usage;	/* pen usage array */
+static cps1_pen_t *cps1_tile16_pen_usage;      /* pen usage array */
+static cps1_pen_t *cps1_tile32_pen_usage;      /* pen usage array */
 static int cps1_max_char;	       /* Maximum number of 8x8 chars */
 static int cps1_max_tile16;	     /* Maximum number of 16x16 tiles */
 static int cps1_max_tile32;	     /* Maximum number of 32x32 tiles */
@@ -627,9 +634,9 @@ int cps1_gfx_start(void)
 	if (cps1gfx_rom)
 	{
 		/* streamed: pen usage arrays first, then the tiles */
-		cps1_char_pen_usage=(int*)calloc(cps1_max_char, sizeof(int));
-		cps1_tile16_pen_usage=(int*)calloc(cps1_max_tile16, sizeof(int));
-		cps1_tile32_pen_usage=(int*)calloc(cps1_max_tile32, sizeof(int));
+		cps1_char_pen_usage=(cps1_pen_t*)calloc(cps1_max_char, sizeof(cps1_pen_t));
+		cps1_tile16_pen_usage=(cps1_pen_t*)calloc(cps1_max_tile16, sizeof(cps1_pen_t));
+		cps1_tile32_pen_usage=(cps1_pen_t*)calloc(cps1_max_tile32, sizeof(cps1_pen_t));
 		if (!cps1_char_pen_usage || !cps1_tile16_pen_usage || !cps1_tile32_pen_usage)
 			return -1;
 		cps1_gfx_flash = 1; /* cps1_gfx is not ours to free (flash) */
@@ -667,24 +674,24 @@ int cps1_gfx_start(void)
 		return -1;
 	}
 
-	cps1_char_pen_usage=(int*)malloc(cps1_max_char*sizeof(int));
+	cps1_char_pen_usage=(cps1_pen_t*)malloc(cps1_max_char*sizeof(cps1_pen_t));
 	if (!cps1_char_pen_usage)
 	{
 		return -1;
 	}
-	memset(cps1_char_pen_usage, 0, cps1_max_char*sizeof(int));
+	memset(cps1_char_pen_usage, 0, cps1_max_char*sizeof(cps1_pen_t));
 
-	cps1_tile16_pen_usage=(int*)malloc(cps1_max_tile16*sizeof(int));
+	cps1_tile16_pen_usage=(cps1_pen_t*)malloc(cps1_max_tile16*sizeof(cps1_pen_t));
 	if (!cps1_tile16_pen_usage)
 		return -1;
-	memset(cps1_tile16_pen_usage, 0, cps1_max_tile16*sizeof(int));
+	memset(cps1_tile16_pen_usage, 0, cps1_max_tile16*sizeof(cps1_pen_t));
 
-	cps1_tile32_pen_usage=(int*)malloc(cps1_max_tile32*sizeof(int));
+	cps1_tile32_pen_usage=(cps1_pen_t*)malloc(cps1_max_tile32*sizeof(cps1_pen_t));
 	if (!cps1_tile32_pen_usage)
 	{
 		return -1;
 	}
-	memset(cps1_tile32_pen_usage, 0, cps1_max_tile32*sizeof(int));
+	memset(cps1_tile32_pen_usage, 0, cps1_max_tile32*sizeof(cps1_pen_t));
 
 	{
 		for (i=0; i<gfxsize/2; i++)
@@ -740,9 +747,9 @@ int cps1_gfx_start(void)
 					cps1_gfx_chunk = 0;
 					cps1_gfx_flash = 0;
 					cps1_gfx = 0;
-					memset(cps1_char_pen_usage, 0, cps1_max_char*sizeof(int));
-					memset(cps1_tile16_pen_usage, 0, cps1_max_tile16*sizeof(int));
-					memset(cps1_tile32_pen_usage, 0, cps1_max_tile32*sizeof(int));
+					memset(cps1_char_pen_usage, 0, cps1_max_char*sizeof(cps1_pen_t));
+					memset(cps1_tile16_pen_usage, 0, cps1_max_tile16*sizeof(cps1_pen_t));
+					memset(cps1_tile32_pen_usage, 0, cps1_max_tile32*sizeof(cps1_pen_t));
 					logerror("cps1: tiles do not fit the flash partition, using PSRAM\n");
 					cps1_gfx=(uint32_t*)malloc(gfxsize*sizeof(uint32_t));
 					if (!cps1_gfx)
@@ -821,7 +828,7 @@ void cps1_draw_gfx(
 	int flipx,int flipy,
 	int sx,int sy,
 	int tpens,
-	int *pusage,
+	cps1_pen_t *pusage,
 	const int size,
 	const int max,
 	const int delta,
@@ -843,7 +850,7 @@ void cps1_draw_gfx16(
 	int flipx,int flipy,
 	int sx,int sy,
 	int tpens,
-	int *pusage,
+	cps1_pen_t *pusage,
 	const int size,
 	const int max,
 	const int delta,
@@ -865,7 +872,7 @@ void cps1_draw_gfx_pri(
 	int flipx,int flipy,
 	int sx,int sy,
 	int tpens,
-	int *pusage,
+	cps1_pen_t *pusage,
 	const int size,
 	const int max,
 	const int delta,
@@ -888,7 +895,7 @@ void cps1_draw_gfx16_pri(
 	int flipx,int flipy,
 	int sx,int sy,
 	int tpens,
-	int *pusage,
+	cps1_pen_t *pusage,
 	const int size,
 	const int max,
 	const int delta,
@@ -919,7 +926,7 @@ void cps1_draw_gfx_opaque(
 	int flipx,int flipy,
 	int sx,int sy,
 	int tpens,
-	int *pusage,
+	cps1_pen_t *pusage,
 	const int size,
 	const int max,
 	const int delta,
@@ -941,7 +948,7 @@ void cps1_draw_gfx_opaque16(
 	int flipx,int flipy,
 	int sx,int sy,
 	int tpens,
-	int *pusage,
+	cps1_pen_t *pusage,
 	const int size,
 	const int max,
 	const int delta,

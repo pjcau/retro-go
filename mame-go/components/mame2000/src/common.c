@@ -1171,7 +1171,48 @@ void mamego_regions_to_flash(void)
 			/* CPS1: its graphics ROM is converted in vh_start, the result goes to flash */
 			extern int cps1_vh_start(void);
 			if (Machine->drv->vh_start == cps1_vh_start)
+			{
+				if (type == REGION_CPU1)
+				{
+					/* every CPS1 set reserves 2 MB for its program (CODE_SIZE);
+					   keep only what the ROMs fill (SF2: 1.5 MB, Final Fight 1 MB) */
+					const struct RomModule *r = Machine->gamedrv->rom;
+					unsigned used = 0, in_cpu1 = 0;
+					for (; r && (r->name || r->offset || r->length); r++)
+					{
+						if (!r->name)          /* ROM_REGION */
+						{
+							in_cpu1 = (r->crc & ~REGIONFLAG_MASK) == REGION_CPU1;
+							continue;
+						}
+						if (r->name == (char *)-1)  /* ROM_CONTINUE / ROM_RELOAD */
+						{
+							if (in_cpu1 && r->offset + (r->length & ~ROMFLAG_MASK) > used)
+								used = r->offset + (r->length & ~ROMFLAG_MASK);
+							continue;
+						}
+						if (in_cpu1)
+						{
+							unsigned end = r->offset + (r->length & ~ROMFLAG_MASK) * ((r->length & ROMFLAG_ALTERNATE) ? 2 : 1);
+							if (end > used) used = end;
+						}
+					}
+					used = (used + 0xffff) & ~0xffff;
+					if (used && used < Machine->memory_region_length[i])
+					{
+						extern void memory_rebase(const unsigned char *old, size_t len, unsigned char *copy);
+						unsigned char *old = Machine->memory_region[i], *lo = realloc(old, used);
+						if (lo && lo != old)
+							memory_rebase(old, used, lo);
+						if (lo)
+						{
+							Machine->memory_region[i] = lo;
+							printf("mamego: CPS1 program region %u -> %u KB\n", Machine->memory_region_length[i] / 1024, used / 1024);
+						}
+					}
+				}
 				continue;
+			}
 		}
 		{
 			extern int neospr_owns(const unsigned char *region);

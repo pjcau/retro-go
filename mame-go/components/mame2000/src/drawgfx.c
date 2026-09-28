@@ -299,7 +299,10 @@ struct GfxElement *decodegfx(const uint8_t *src,const struct GfxLayout *gl)
 		return 0;
 	}
 #endif
-	if ((gfx->gfxdata = (unsigned char *) malloc(gl->total * gfx->char_modulo * sizeof(uint8_t))) == 0)
+	/* at least 1 byte: CPS1 declares empty elements (0 tiles; its tiles are
+	   converted by its own code) and ESP-IDF's malloc(0) returns NULL, which
+	   read as "out of memory" (glibc returns a pointer) */
+	if ((gfx->gfxdata = (unsigned char *) malloc(gl->total * gfx->char_modulo * sizeof(uint8_t) + 1)) == 0)
 	{
 		free(gfx->pen_usage);
 		free(gfx);

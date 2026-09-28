@@ -75,14 +75,41 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
 {
     if (!data) /* duplicate frame */
         return;
+    static bool single;
     if (!updates[0] || updates[0]->width != (int)width || updates[0]->height != (int)height)
     {
+        if (updates[1] != updates[0])
+            rg_surface_free(updates[1]);
+        rg_surface_free(updates[0]);
+        updates[0] = updates[1] = NULL;
         for (int i = 0; i < 2; i++)
-        {
-            rg_surface_free(updates[i]);
-            updates[i] = rg_surface_create(width, height, RG_PIXEL_565_LE, MEM_FAST);
-        }
+            /* internal RAM for the small 8-bit boards; a 384x224 CPS1 frame
+               (172 KB, twice) does not fit there */
+            updates[i] = rg_surface_create(width, height, RG_PIXEL_565_LE, width * height * 2 <= 128 * 1024 ? MEM_FAST : MEM_ANY);
+        /* no room for the second one (CPS1 with 16-bit graphics): one surface,
+           the display finishes with it before the next frame is copied in */
+        single = !updates[1];
+        if (single)
+            updates[1] = updates[0];
     }
+    if (!updates[0])
+    {
+        /* not even one (Street Fighter II: 2 MB of tiles in PSRAM): the
+           display reads the core's own frame buffer, and is waited for
+           before the core may draw the next frame into it */
+        static rg_surface_t *direct;
+        if (!direct && !(direct = rg_surface_create(0, 0, RG_PIXEL_565_LE, 0)))
+            return;
+        direct->width = width;
+        direct->height = height;
+        direct->stride = pitch;
+        direct->data = (void *)data;
+        rg_display_submit(direct, 0);
+        rg_display_sync(true);
+        return;
+    }
+    if (single)
+        rg_display_sync(true);
     rg_surface_t *surface = updates[current];
     for (unsigned y = 0; y < height; y++)
         memcpy((uint8_t *)surface->data + y * surface->stride, (const uint8_t *)data + y * pitch, width * 2);
