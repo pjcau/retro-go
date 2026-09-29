@@ -26,6 +26,7 @@ void gbsp_render_start(void);
 void gbsp_render_wait(void);
 #ifdef GBAPROF
 extern int64_t gbaprof_render_us, gbaprof_wait_us;
+extern u32 gbaprof_lag159, gbaprof_syncs, gbaprof_lag80, gbaprof_wakes;
 extern u32 gbaprof_instr;
 u32 gbaprof_pageloads;
 static int64_t gbaprof_sync_us;
@@ -78,6 +79,25 @@ static void IRAM_ATTR samp_tick(void)
             samp[h].n++;
             return;
         }
+}
+/* core 1: which task runs at each tick */
+#define C1_N 12
+static struct { TaskHandle_t t; uint32_t n; } c1[C1_N];
+static void IRAM_ATTR c1_tick(void)
+{
+    TaskHandle_t t = xTaskGetCurrentTaskHandleForCore(1);
+    for (int i = 0; i < C1_N; i++)
+        if (c1[i].t == t || !c1[i].t) { c1[i].t = t; c1[i].n++; return; }
+}
+static void c1_dump(void)
+{
+    uint32_t tot = 0;
+    for (int i = 0; i < C1_N; i++) tot += c1[i].n;
+    printf("CORE1");
+    for (int i = 0; i < C1_N && c1[i].t; i++)
+        printf(" %s:%.0f%%", pcTaskGetName(c1[i].t), 100.0 * c1[i].n / (tot ? tot : 1));
+    printf("\n");
+    memset(c1, 0, sizeof(c1));
 }
 static void samp_dump(void)
 {
@@ -335,13 +355,16 @@ void app_main(void)
                 {
                     samp = heap_caps_calloc(SAMP_N, sizeof(*samp), MALLOC_CAP_SPIRAM);
                     esp_register_freertos_tick_hook_for_cpu(samp_tick, 0);
+                    esp_register_freertos_tick_hook_for_cpu(c1_tick, 1);
                     samp_on = true;
                 }
                 else if (seconds == 24)
                     samp_dump();
-                printf("GBAWAIT ms/frame: vblank wait for core 1 %.2f, display sync %.2f\n",
-                       gbaprof_wait_us / 1000.f / frames, gbaprof_sync_us / 1000.f / frames);
+                printf("GBAWAIT ms/frame: wait for core 1 %.2f (%.1f syncs), display sync %.2f | core 1 lines behind at line 80: %.1f, 159: %.1f, wakes %.1f\n",
+                       gbaprof_wait_us / 1000.f / frames, (float)gbaprof_syncs / frames, gbaprof_sync_us / 1000.f / frames, (float)gbaprof_lag80 / frames, (float)gbaprof_lag159 / frames, (float)gbaprof_wakes / frames);
                 gbaprof_wait_us = gbaprof_sync_us = 0;
+                gbaprof_lag159 = gbaprof_syncs = gbaprof_lag80 = gbaprof_wakes = 0;
+                c1_dump();
                 printf("GBAPROF %d frames (%d drawn): ms/frame cpu %.2f sound %.2f display %.2f | render %.2f per drawn frame | %d instr/frame, %.0f cycles/instr | %u ROM pages loaded\n",
                        frames, drawn_n, cpu_us / 1000.f / frames, snd_us / 1000.f / frames, disp_us / 1000.f / frames,
                        drawn_n ? render_us / 1000.f / drawn_n : 0.f, (int)(instr / frames), instr ? cpu_us * 240.0 / instr : 0.0, (unsigned)gbaprof_pageloads);

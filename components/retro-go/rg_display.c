@@ -131,6 +131,12 @@ static inline void write_update(const rg_surface_t *update)
 
     const bool partial_update = RG_SCREEN_PARTIAL_UPDATES;
 
+    // esp32-emu-turbo: exact 2x horizontal (e.g. 240 -> 480), unfiltered RGB565:
+    // each source pixel becomes two with one 32-bit store instead of a
+    // per-pixel map lookup (the display task shares core 1 with emulators)
+    const bool fast_2x = !filter_x && format == RG_PIXEL_565_LE && crop_left == 0 &&
+                         draw_width == update->width * 2 && !(update->width & 1) && !((uintptr_t)data & 1);
+
     int lines_per_buffer = LCD_BUFFER_LENGTH / draw_width;
     int lines_remaining = draw_height;
     int lines_updated = 0;
@@ -174,7 +180,21 @@ static inline void write_update(const rg_surface_t *update)
                         *line_buffer_ptr++ = (PIXEL); \
                     } \
                 }
-                if (format & RG_PIXEL_PALETTE)
+                if (fast_2x)
+                {
+                    const uint16_t *src = (const uint16_t *)(data + map_viewport_to_source_y[y] * stride);
+                    uint32_t *dst = (uint32_t *)line_buffer_ptr;
+                    for (int x = 0; x < draw_width / 2; x += 2)
+                    {
+                        uint32_t a = src[x], b = src[x + 1];
+                        a = ((a << 8) | (a >> 8)) & 0xFFFF;
+                        b = ((b << 8) | (b >> 8)) & 0xFFFF;
+                        dst[x] = a | (a << 16);
+                        dst[x + 1] = b | (b << 16);
+                    }
+                    line_buffer_ptr += draw_width;
+                }
+                else if (format & RG_PIXEL_PALETTE)
                     RENDER_LINE(uint8_t, palette[buffer[x]])
                 else if (format == RG_PIXEL_565_LE)
                     RENDER_LINE(uint16_t, (buffer[x] << 8) | (buffer[x] >> 8))
