@@ -36,6 +36,8 @@ bool rg_network_wifi_set_config(const rg_wifi_config_t *config);
 bool rg_network_wifi_start(void);
 void rg_network_wifi_stop(void);
 rg_network_t rg_network_get_info(void);
+// esp32-emu-turbo console: print the access points the radio hears ("CTL wifi ap ...")
+void rg_network_wifi_scan_print(void);
 
 // Configuration slots management
 bool rg_network_wifi_read_config(int slot, rg_wifi_config_t *out);

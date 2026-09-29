@@ -540,6 +540,28 @@ static void console_exec(char *line)
         }
         printf("CTL volume %d\n", rg_audio_get_volume());
     }
+#ifdef RG_ENABLE_NETWORKING
+    else if (strcmp(cmd, "wifi") == 0)
+    {
+        // wifi on|off|scan|status : the Wi-Fi of apps built with networking
+        // (launcher, retro-core). on/off is saved like the options menu switch.
+        if (arg1 && strcmp(arg1, "scan") == 0)
+            rg_network_wifi_scan_print();
+        else if (arg1 && (strcmp(arg1, "on") == 0 || strcmp(arg1, "off") == 0))
+        {
+            bool on = strcmp(arg1, "on") == 0;
+            rg_settings_set_boolean(NS_WIFI, "Enable", on);
+            rg_settings_commit();
+            if (on)
+                rg_network_wifi_start();
+            else
+                rg_network_wifi_stop();
+        }
+        rg_network_t info = rg_network_get_info();
+        printf("CTL wifi %s state %d ip %s rssi %d ssid %s\n", rg_settings_get_boolean(NS_WIFI, "Enable", false) ? "on" : "off",
+               info.state, info.ip_addr[0] ? info.ip_addr : "-", info.rssi, info.name[0] ? info.name : "-");
+    }
+#endif
     else if ((strcmp(cmd, "save") == 0 || strcmp(cmd, "load") == 0))
     {
         // save/load [slot] : emulator save-state, executed on the app's main task
@@ -555,7 +577,7 @@ static void console_exec(char *line)
     }
     else
     {
-        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch|resume <part> <app> <path> | save|load [slot] | hud on|off | volume [0-100] | launcher | reboot\n");
+        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch|resume <part> <app> <path> | save|load [slot] | hud on|off | volume [0-100] | wifi on|off|scan|status | launcher | reboot\n");
     }
 }
 

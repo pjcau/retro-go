@@ -225,6 +225,39 @@ void rg_network_wifi_stop(void)
 #endif
 }
 
+void rg_network_wifi_scan_print(void)
+{
+#ifdef RG_ENABLE_NETWORKING
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    bool was_running = esp_wifi_get_mode(&mode) == ESP_OK && netif != NULL;
+    if (network_state == RG_NETWORK_DISABLED)
+    {
+        printf("CTL wifi err network not initialized\n");
+        return;
+    }
+    /* a scan needs the station idle: stop any connection attempt first */
+    esp_wifi_stop();
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_start();
+    if (esp_wifi_scan_start(NULL, true) == ESP_OK)
+    {
+        uint16_t n = 32;
+        wifi_ap_record_t *aps = calloc(n, sizeof(wifi_ap_record_t));
+        if (aps && esp_wifi_scan_get_ap_records(&n, aps) == ESP_OK)
+            for (int i = 0; i < n; i++)
+                printf("CTL wifi ap %4d dBm ch %2d auth %d %s\n", aps[i].rssi, aps[i].primary, aps[i].authmode, (char *)aps[i].ssid);
+        free(aps);
+        printf("CTL wifi scan done %d\n", n);
+    }
+    else
+        printf("CTL wifi scan failed\n");
+    esp_wifi_stop();
+    netif = NULL;
+    if (was_running)
+        rg_network_wifi_start();
+#endif
+}
+
 rg_network_t rg_network_get_info(void)
 {
     rg_network_t info = {0};
