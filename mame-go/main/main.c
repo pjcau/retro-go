@@ -76,7 +76,9 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
     if (!data) /* duplicate frame */
         return;
     static bool single;
-    if (!updates[0] || updates[0]->width != (int)width || updates[0]->height != (int)height)
+    static unsigned failed_w, failed_h;   /* no room for a surface of this size */
+    if ((!updates[0] && (width != failed_w || height != failed_h))
+        || (updates[0] && (updates[0]->width != (int)width || updates[0]->height != (int)height)))
     {
         if (updates[1] != updates[0])
             rg_surface_free(updates[1]);
@@ -89,6 +91,8 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
         /* no room for the second one (CPS1 with 16-bit graphics): one surface,
            the display finishes with it before the next frame is copied in */
         single = !updates[1];
+        failed_w = updates[0] ? 0 : width;
+        failed_h = updates[0] ? 0 : height;
         if (single)
             updates[1] = updates[0];
     }

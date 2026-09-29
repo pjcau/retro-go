@@ -668,8 +668,19 @@ int mixer_samples_this_frame(void)
 #define EXTRA_SAMPLES 1    // safety margin for sampling rate conversion
 int mixer_need_samples_this_frame(int channel,int freq)
 {
+#ifdef MAMEGO
+	/* both counts are unsigned: a stream a sample ahead of the frame
+	   (the CPS1 sound board fills its streams to the end on core 1) wrapped
+	   around to ~100000 samples, and the YM2151 update ran 64 KB past its
+	   16 K-sample buffer into the chip's own state (SF2 panicked on core 1) */
+	int need = (int)samples_this_frame - (int)mixer_channel[channel].samples_available;
+	if (need < 0)
+		need = 0;
+	return (int)((int64_t)need * freq / Machine->sample_rate) + EXTRA_SAMPLES;
+#else
 	return (samples_this_frame - mixer_channel[channel].samples_available)
 			* freq / Machine->sample_rate + EXTRA_SAMPLES;
+#endif
 }
 
 
