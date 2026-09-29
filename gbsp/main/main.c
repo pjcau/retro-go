@@ -20,6 +20,10 @@ u32 skip_next_frame = 0;
 int sprite_limit = 1;
 
 gbsp_memory_t *gbsp_memory;
+/* scanline renderer on core 1 (gbsp-libretro/video.cpp) */
+extern int gbsp_render_core1;
+void gbsp_render_start(void);
+void gbsp_render_wait(void);
 #ifdef GBAPROF
 extern int64_t gbaprof_render_us;
 extern u32 gbaprof_instr;
@@ -235,6 +239,8 @@ void app_main(void)
         RG_PANIC("Could not load the game file.");
     }
 
+    gbsp_render_start();
+    RG_LOGI("line renderer on core 1: %s", gbsp_render_core1 ? "yes" : "no");
     RG_LOGI("reset_gba");
     reset_gba();
 
@@ -279,7 +285,10 @@ void app_main(void)
 #endif
 
         if (!skip_next_frame)
+        {
+            gbsp_render_wait();   /* core 1 finishes the frame's last lines */
             rg_display_submit(currentUpdate, 0);
+        }
 #ifdef GBAPROF
         const int64_t t_snd = rg_system_timer();
 #endif
@@ -292,7 +301,7 @@ void app_main(void)
             static int64_t cpu_us, render_us, disp_us, snd_us, t_last, instr;
             static int frames, drawn_n;
             const int64_t now = rg_system_timer();
-            cpu_us += (t_disp - t_exec) - gbaprof_render_us;
+            cpu_us += (t_disp - t_exec) - (gbsp_render_core1 ? 0 : gbaprof_render_us);
             render_us += gbaprof_render_us;
             disp_us += t_snd - t_disp;
             snd_us += now - t_snd;
@@ -327,7 +336,12 @@ void app_main(void)
         rg_audio_submit(mixbuffer, frames_count);
         // RG_TIMER_LAP("rg_audio_submit");
 
-        if (skip_next_frame == 0)
+        /* with the lines drawn on core 1 a skipped frame saves core 0
+           nothing: draw them all (retro-go's auto frameskip still raises
+           app->frameskip when the game runs below full speed) */
+        if (gbsp_render_core1)
+            skip_next_frame = 0;
+        else if (skip_next_frame == 0)
             skip_next_frame = app->frameskip;
         else if (skip_next_frame > 0)
             skip_next_frame--;
