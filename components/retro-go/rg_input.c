@@ -46,6 +46,18 @@ static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
 #include <fcntl.h>
 #include <unistd.h>
 #include "rg_storage.h"
+#ifdef ESP_PLATFORM
+#include <sdkconfig.h>
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+#include <hal/usb_serial_jtag_ll.h>
+#define CONSOLE_PUT_USJ_FIFO 1
+#endif
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+#include <esp_rom_crc.h>
+#endif
 static uint32_t console_held = 0;     // keys held until "release"
 static uint32_t console_tap = 0;      // keys held until console_tap_until
 static int64_t console_tap_until = 0;
@@ -279,12 +291,80 @@ static int console_b64_val(char c)
     return -1; // '=' padding and anything else
 }
 
-// put <size> <path> : the host then streams base64 text (any line length,
-// whitespace ignored) until `size` decoded bytes were written to <path>.
-// Runs inline in the input task: only use it from the launcher, not while an
-// emulator is reading the card.
-static void console_put(const char *path, size_t size)
+#ifdef CONSOLE_PUT_USJ_FIFO
+// The console VFS (no driver) reads the 64-byte USB FIFO one char at a time
+// and returns at the first empty poll: ~90 KB/s. Read the FIFO directly and
+// keep filling while packets follow each other. Not the IDF driver: its ISR
+// drops packets when its ring buffer is full (IDF 5.4), and the SD card does
+// stall; here a full FIFO just makes the host wait (USB NAK), nothing is lost.
+static int console_put_read_fifo(char *buf, size_t len)
 {
+    size_t n = 0;
+    int64_t idle_since = rg_system_timer();
+    while (n < len)
+    {
+        if (usb_serial_jtag_ll_rxfifo_data_available())
+        {
+            n += usb_serial_jtag_ll_read_rxfifo((uint8_t *)buf + n, len - n);
+            idle_since = rg_system_timer();
+        }
+        else if (rg_system_timer() - idle_since > 200)
+            break; // no packet for 200 us: the host paused, decode what we have
+    }
+    return n;
+}
+#endif
+
+// SD writes run in their own task on the other core, so the card's busy time
+// overlaps the USB reception (they took turns before: total = usb + sd).
+#define PUT_BUF_SIZE  32256 // 63 sectors, < SPIRAM_MALLOC_ALWAYSINTERNAL: DMA-capable
+#define PUT_BUF_COUNT 3
+typedef struct
+{
+    uint8_t *buf;
+    size_t len;
+} put_chunk_t;
+typedef struct
+{
+    FILE *fp;
+    QueueHandle_t full, free;
+    SemaphoreHandle_t done;
+    volatile bool failed;
+    int64_t t_write;
+} put_writer_t;
+
+static void console_put_writer(void *arg)
+{
+    put_writer_t *w = arg;
+    put_chunk_t c;
+    while (xQueueReceive(w->full, &c, portMAX_DELAY) == pdTRUE && c.buf)
+    {
+        int64_t t0 = rg_system_timer();
+        if (!w->failed && fwrite(c.buf, 1, c.len, w->fp) != c.len)
+            w->failed = true;
+        w->t_write += rg_system_timer() - t0;
+        xQueueSend(w->free, &c, portMAX_DELAY);
+    }
+    xSemaphoreGive(w->done);
+    vTaskDelete(NULL);
+}
+
+// put <size> <path>  : the host then streams base64 text (any line length,
+//                      whitespace ignored) until `size` decoded bytes arrived.
+// putb <size> <path> : the same with exactly `size` raw bytes (25% less USB
+//                      traffic than base64).
+// Both end with "CTL put done <size> bytes ... crc <crc32>" for the host to
+// compare. Runs inline in the input task: only use it from the launcher, not
+// while an emulator is reading the card.
+static void console_put(const char *path, size_t size, bool binary)
+{
+#ifndef CONSOLE_PUT_USJ_FIFO
+    if (binary) // the console VFS translates line endings: raw bytes need the FIFO path
+    {
+        printf("CTL put failed binary unsupported\n");
+        return;
+    }
+#endif
     rg_storage_mkdir(rg_dirname(path)); // e.g. a new system's /sd/roms/<name>
     FILE *fp = fopen(path, "wb");
     if (!fp)
@@ -292,59 +372,139 @@ static void console_put(const char *path, size_t size)
         printf("CTL put failed open %s\n", path);
         return;
     }
-    uint8_t *out = malloc(3072);
-    char in[1024];
-    size_t written = 0, next_report = 0;
-    uint32_t acc = 0;
+    setvbuf(fp, NULL, _IONBF, 0); // whole 16 KB chunks go straight to FatFs
+    const size_t in_size = 4096;
+    char *in = binary ? NULL : malloc(in_size);
+    put_writer_t w = {.fp = fp};
+    w.full = xQueueCreate(PUT_BUF_COUNT + 1, sizeof(put_chunk_t));
+    w.free = xQueueCreate(PUT_BUF_COUNT, sizeof(put_chunk_t));
+    w.done = xSemaphoreCreateBinary();
+    int nbufs = 0;
+    while (w.free && nbufs < PUT_BUF_COUNT)
+    {
+        put_chunk_t c = {malloc(PUT_BUF_SIZE), 0};
+        if (!c.buf)
+            break;
+        xQueueSend(w.free, &c, 0);
+        nbufs++;
+    }
+    if (nbufs < 2 || (!binary && !in) || !w.full || !w.done ||
+        xTaskCreatePinnedToCore(console_put_writer, "rg_put", 6144, &w, uxTaskPriorityGet(NULL), NULL, 0) != pdPASS)
+    {
+        printf("CTL put failed nomem\n");
+        for (put_chunk_t c; w.free && xQueueReceive(w.free, &c, 0) == pdTRUE;)
+            free(c.buf);
+        if (w.full) vQueueDelete(w.full);
+        if (w.free) vQueueDelete(w.free);
+        if (w.done) vSemaphoreDelete(w.done);
+        free(in);
+        fclose(fp);
+        return;
+    }
+    size_t got = 0, next_report = 0;
+    uint32_t acc = 0, crc = 0;
     int bits = 0, n;
-    int64_t start = rg_system_timer(), last = start;
+    int64_t start = rg_system_timer(), last = start, t_read = 0, t_wait = 0, t0;
+    put_chunk_t cur;
+    xQueueReceive(w.free, &cur, portMAX_DELAY);
+    cur.len = 0;
     printf("CTL put ready %s %u\n", path, (unsigned)size);
     fflush(stdout);
-    while (written < size)
+    while (got < size && !w.failed)
     {
-        if ((n = read(STDIN_FILENO, in, sizeof(in))) <= 0)
+        size_t space = PUT_BUF_SIZE - cur.len;
+        // base64: read no more than what decodes into the space left
+        size_t want = binary ? RG_MIN(space, size - got) : RG_MIN(in_size, space / 3 * 4);
+        if (want == 0)
+        {
+            t0 = rg_system_timer();
+            xQueueSend(w.full, &cur, portMAX_DELAY);
+            xQueueReceive(w.free, &cur, portMAX_DELAY); // all buffers busy: the card is the limit
+            t_wait += rg_system_timer() - t0;
+            cur.len = 0;
+            continue;
+        }
+        t0 = rg_system_timer();
+#ifdef CONSOLE_PUT_USJ_FIFO
+        n = console_put_read_fifo(binary ? (char *)cur.buf + cur.len : in, want);
+#else
+        n = read(STDIN_FILENO, binary ? (char *)cur.buf + cur.len : in, want);
+#endif
+        t_read += rg_system_timer() - t0;
+        if (n <= 0)
         {
             if (rg_system_timer() - last > 5000000)
             {
-                printf("CTL put failed timeout at %u\n", (unsigned)written);
+                printf("CTL put failed timeout at %u\n", (unsigned)got);
                 break;
             }
-            rg_usleep(200);
+            rg_task_delay(1);
             continue;
         }
         last = rg_system_timer();
-        size_t o = 0;
-        for (int i = 0; i < n; ++i)
+        size_t o = n;
+        if (!binary)
         {
-            int v = console_b64_val(in[i]);
-            if (v < 0)
-                continue;
-            acc = (acc << 6) | v;
-            bits += 6;
-            if (bits >= 8)
+            uint8_t *out = cur.buf + cur.len;
+            o = 0;
+            for (int i = 0; i < n; ++i)
             {
-                bits -= 8;
-                out[o++] = (acc >> bits) & 0xFF;
+                int v = console_b64_val(in[i]);
+                if (v < 0)
+                    continue;
+                acc = (acc << 6) | v;
+                bits += 6;
+                if (bits >= 8)
+                {
+                    bits -= 8;
+                    out[o++] = (acc >> bits) & 0xFF;
+                }
             }
+            if (o > size - got)
+                o = size - got;
         }
-        if (o > size - written)
-            o = size - written;
-        if (o && fwrite(out, 1, o, fp) != o)
+        crc = esp_rom_crc32_le(crc, cur.buf + cur.len, o);
+        cur.len += o;
+        got += o;
+        if (got >= next_report)
         {
-            printf("CTL put failed write at %u\n", (unsigned)written);
-            break;
-        }
-        written += o;
-        if (written >= next_report)
-        {
-            printf("CTL put %u\n", (unsigned)written);
-            next_report = written + 262144;
+            printf("CTL put %u\n", (unsigned)got);
+            next_report = got + 262144;
         }
     }
-    fclose(fp);
-    free(out);
-    printf("CTL put %s %u bytes %d ms\n", written == size ? "done" : "short", (unsigned)written,
-           (int)((rg_system_timer() - start) / 1000));
+    // hand over the last partial chunk (or give the buffer back), then stop the writer
+    xQueueSend(cur.len ? w.full : w.free, &cur, portMAX_DELAY);
+    put_chunk_t stop = {NULL, 0};
+    xQueueSend(w.full, &stop, portMAX_DELAY);
+    xSemaphoreTake(w.done, portMAX_DELAY);
+    for (put_chunk_t c; xQueueReceive(w.free, &c, 0) == pdTRUE;)
+        free(c.buf);
+    vQueueDelete(w.full);
+    vQueueDelete(w.free);
+    vSemaphoreDelete(w.done);
+    free(in);
+    t0 = rg_system_timer();
+    if (fclose(fp) != 0)
+        w.failed = true;
+    w.t_write += rg_system_timer() - t0;
+    if (w.failed)
+        printf("CTL put failed write\n");
+#ifdef CONSOLE_PUT_USJ_FIFO
+    if (got < size && binary)
+    {
+        // raw bytes still on the way must not reach the command parser
+        for (int64_t quiet = rg_system_timer(); rg_system_timer() - quiet < 500000;)
+        {
+            char junk[64];
+            if (console_put_read_fifo(junk, sizeof(junk)) > 0)
+                quiet = rg_system_timer();
+        }
+    }
+#endif
+    printf("CTL put %s %u bytes %d ms (usb %d, sd %d, wait %d) crc %08x\n",
+           got == size && !w.failed ? "done" : "short", (unsigned)got,
+           (int)((rg_system_timer() - start) / 1000), (int)(t_read / 1000), (int)(w.t_write / 1000),
+           (int)(t_wait / 1000), (unsigned)crc);
 }
 
 static void console_exec(char *line)
@@ -385,11 +545,20 @@ static void console_exec(char *line)
         bool ok = rg_storage_scandir(path, console_ls_cb, NULL, RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_STAT);
         printf("CTL ls %s %s\n", ok ? "done" : "failed", path);
     }
-    else if (strcmp(cmd, "put") == 0 && arg1 && arg2)
+    else if (strcmp(cmd, "format") == 0)
+    {
+        // format ERASE-ALL-SD-DATA : new empty FAT on the card (launcher only).
+        // The long token keeps a stray or garbled line from ever matching.
+        if (arg1 && strcmp(arg1, "ERASE-ALL-SD-DATA") == 0)
+            printf("CTL format %s\n", rg_storage_format() ? "done" : "failed");
+        else
+            printf("CTL format refused (needs the confirmation token)\n");
+    }
+    else if ((strcmp(cmd, "put") == 0 || strcmp(cmd, "putb") == 0) && arg1 && arg2)
     {
         char path[RG_PATH_MAX + 1];
         snprintf(path, sizeof(path), "%s%s%s", arg2, rest ? " " : "", rest ? rest : "");
-        console_put(path, (size_t)atoi(arg1));
+        console_put(path, (size_t)atoi(arg1), cmd[3] == 'b');
     }
     else if (strcmp(cmd, "acap") == 0)
     {
@@ -577,7 +746,7 @@ static void console_exec(char *line)
     }
     else
     {
-        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put <size> <path> | rm <path> | launch|resume <part> <app> <path> | save|load [slot] | hud on|off | volume [0-100] | wifi on|off|scan|status | launcher | reboot\n");
+        printf("CTL err usage: ping | key <k[+k]> [ms] | hold <k> | release [k] | ls [path] | put|putb <size> <path> | rm <path> | launch|resume <part> <app> <path> | save|load [slot] | hud on|off | volume [0-100] | wifi on|off|scan|status | launcher | reboot\n");
     }
 }
 

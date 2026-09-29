@@ -33,6 +33,7 @@
 #endif
 
 static bool disk_mounted = false;
+static bool format_if_unmountable = false; // set by rg_storage_format() only
 #if defined(RG_STORAGE_SDSPI_HOST) || defined(RG_STORAGE_SDMMC_HOST)
 static sdmmc_card_t *card_handle = NULL;
 #endif
@@ -102,9 +103,9 @@ void rg_storage_init(void)
     #endif
 
     esp_vfs_fat_mount_config_t mount_config = {
-        .format_if_mount_failed = false,
+        .format_if_mount_failed = format_if_unmountable,
         .max_files = 8,
-        .allocation_unit_size = 0,
+        .allocation_unit_size = 32 * 1024, // only used when formatting
     };
 
     err = esp_vfs_fat_sdspi_mount(RG_STORAGE_ROOT, &host_config, &slot_config, &mount_config, &card_handle);
@@ -137,9 +138,9 @@ void rg_storage_init(void)
 #endif
 
     esp_vfs_fat_mount_config_t mount_config = {
-        .format_if_mount_failed = false,
+        .format_if_mount_failed = format_if_unmountable,
         .max_files = 8,
-        .allocation_unit_size = 0,
+        .allocation_unit_size = 32 * 1024, // only used when formatting
     };
 
     esp_err_t err = esp_vfs_fat_sdmmc_mount(RG_STORAGE_ROOT, &host_config, &slot_config, &mount_config, &card_handle);
@@ -223,6 +224,39 @@ void rg_storage_deinit(void)
         RG_LOGI("Storage unmounted.");
 
     disk_mounted = false;
+}
+
+bool rg_storage_format(void)
+{
+#if defined(RG_STORAGE_SDSPI_HOST) || defined(RG_STORAGE_SDMMC_HOST)
+    if (!disk_mounted)
+    {
+        // no usable file system (e.g. an interrupted format): mount again and
+        // let esp-idf format it, which it only does on FR_NO_FILESYSTEM
+        RG_LOGW("SD card not mounted: mounting with format-if-no-filesystem...");
+        format_if_unmountable = true;
+        rg_storage_init();
+        format_if_unmountable = false;
+        return disk_mounted;
+    }
+    if (!card_handle)
+        return false;
+    RG_LOGW("Formatting the SD card (FAT)...");
+    // allocation_unit_size 0 would mean 512-byte clusters: on 32 GB that is a
+    // 245 MB FAT (formatting takes ~40 min, the volume is slow). 32 KB is the
+    // usual FAT32 cluster for this size.
+    esp_vfs_fat_mount_config_t cfg = {
+        .format_if_mount_failed = false,
+        .max_files = 8,
+        .allocation_unit_size = 32 * 1024,
+    };
+    esp_err_t err = esp_vfs_fat_sdcard_format_cfg(RG_STORAGE_ROOT, card_handle, &cfg);
+    if (err != ESP_OK)
+        RG_LOGE("Format failed (0x%x)", err);
+    return err == ESP_OK;
+#else
+    return false;
+#endif
 }
 
 bool rg_storage_ready(void)
