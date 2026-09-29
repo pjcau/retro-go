@@ -542,6 +542,38 @@ int ADPCM_playing(int num)
 static int okim6295_command[MAX_OKIM6295];
 static int okim6295_base[MAX_OKIM6295][MAX_OKIM6295_VOICES];
 
+#ifdef MAMEGO
+/* mame-go save state (CPS1): the OKIM6295 command latches and bank bases, and
+   every voice with its sample pointer as an offset into its region */
+size_t OKIM6295_mamego_state(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
+{
+	size_t pos = 0;
+	int i;
+#define OK_IO(ptr, l) do { size_t _l = (l); if (mode && pos + _l > size) return 0; \
+		if (mode == 1) memcpy(buf + pos, (ptr), _l); else if (mode == 2) memcpy((ptr), buf + pos, _l); pos += _l; } while (0)
+	OK_IO(okim6295_command, sizeof(okim6295_command));
+	OK_IO(okim6295_base, sizeof(okim6295_base));
+	for (i = 0; i < num_voices; i++)
+	{
+		struct ADPCMVoice v = adpcm[i];
+		intptr_t off = v.base && v.region_base ? v.base - v.region_base : -1;
+		OK_IO(&v, sizeof(v));
+		OK_IO(&off, sizeof(off));
+		if (mode == 2)
+		{
+			v.stream = adpcm[i].stream;
+			v.region_base = adpcm[i].region_base;
+			v.base = off >= 0 && v.region_base ? v.region_base + off : NULL;
+			if (!v.base)
+				v.playing = 0;
+			adpcm[i] = v;
+		}
+	}
+#undef OK_IO
+	return pos;
+}
+#endif
+
 
 /**********************************************************************************************
 

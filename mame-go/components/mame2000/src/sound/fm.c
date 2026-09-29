@@ -3992,6 +3992,57 @@ void OPM_rearm_timers(int n)
 }
 #endif
 
+#ifdef MAMEGO
+/* mame-go save state (CPS1): the YM2151 of this file. Pointers into the chip
+   (the DT/AR/DR tables in ST, op1_out) are relocated; the others point at
+   this binary's statics, and mamego_state_walk() refuses a state written by
+   another build. The caller stops the sound board first (drivers/cps1.c). */
+size_t YM2151_state(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
+{
+	size_t len = sizeof(void *) + sizeof(YM2151);
+	YM2151 *F = FMOPM;
+	if (!mode)
+		return len;
+	if (!F || size < len)
+		return 0;
+	if (mode == 1)
+	{
+		void *base = F;
+		memcpy(buf, &base, sizeof(base));
+		memcpy(buf + sizeof(base), F, sizeof(YM2151));
+	}
+	else
+	{
+		void *base;
+		intptr_t self;
+		int c, s;
+		memcpy(&base, buf, sizeof(base));
+		self = (intptr_t)F - (intptr_t)base;
+		memcpy(F, buf + sizeof(base), sizeof(YM2151));
+#define RELOC(p) do { if ((uintptr_t)(p) >= (uintptr_t)base && (uintptr_t)(p) < (uintptr_t)base + sizeof(YM2151)) \
+		(p) = (void *)((intptr_t)(p) + self); } while (0)
+		for (c = 0; c < 8; c++)
+		{
+			FM_CH *CH = &F->CH[c];
+			for (s = 0; s < 4; s++)
+			{
+				RELOC(CH->SLOT[s].DT);
+				RELOC(CH->SLOT[s].AR);
+				RELOC(CH->SLOT[s].DR);
+				RELOC(CH->SLOT[s].SR);
+				RELOC(CH->SLOT[s].RR);
+			}
+			RELOC(CH->connect1);
+			RELOC(CH->connect2);
+			RELOC(CH->connect3);
+			RELOC(CH->connect4);
+		}
+#undef RELOC
+	}
+	return len;
+}
+#endif
+
 int YM2151TimerOver(int n,int c)
 {
 	YM2151 *F2151 = &(FMOPM[n]);

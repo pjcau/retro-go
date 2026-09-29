@@ -172,6 +172,7 @@ extern void z80snd_set_irq_callback(int (*callback)(int irqline));
 extern int z80snd_ICount;
 extern unsigned z80snd_idle_enable;
 extern unsigned z80_get_context(void *dst);
+extern void z80_set_context(void *src);
 extern unsigned (*sndz80_rm)(unsigned); extern void (*sndz80_wm)(unsigned, unsigned);
 extern unsigned (*sndz80_in)(unsigned); extern void (*sndz80_out)(unsigned, unsigned);
 extern volatile int mamego_snd_pos;
@@ -416,6 +417,93 @@ void cps1snd_disable(void)
 	mamego_soundlatch_hook = 0;
 	ym2151_timer_hook = 0;
 	cps1snd_core1 = 0;
+}
+
+/* mame-go save state, CPS1 part (called by mamego_state_walk() in cpuintrf.c
+ * for the YM2151 boards): what the board keeps outside the CPU regions - the
+ * 68000 work RAM, GFX RAM (tile maps, sprites, palette), the CPS-A/B output
+ * registers, the sprite list buffered at vblank - plus the sound board: the
+ * Z80's music bank, the latch and fade timer, the Z80 on core 1 with its
+ * pending events and YM2151 timers, and the YM2151 and OKIM6295 chips. The
+ * program ROM stays out (read-only), which keeps the state small enough for
+ * PSRAM next to the 2 MB of tiles. */
+size_t cps1_mamego_state(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
+{
+	extern unsigned char *cps1_gfxram, *cps1_output;
+	extern size_t cps1_gfxram_size, cps1_output_size;
+	extern size_t YM2151_state(unsigned char *buf, size_t size, int mode);
+	extern size_t OKIM6295_mamego_state(unsigned char *buf, size_t size, int mode);
+	extern size_t cps1_mamego_video_state(unsigned char *buf, size_t size, int mode);
+	extern int soundlatch_state(int *value, int mode);
+	unsigned char *snd = memory_region(REGION_CPU2);
+	unsigned char ctx[1024];
+	size_t pos = 0, len;
+	int latch = 0, core1 = cps1snd_core1;
+	int bank1 = cpu_bankbase[1] ? (int)(cpu_bankbase[1] - (snd + 0x10000)) : 0;
+	unsigned ctxlen = z80snd_get_context(NULL);
+#define C1_IO(ptr, l) do { size_t _l = (l); if (mode && pos + _l > size) return 0; \
+		if (mode == 1) memcpy(buf + pos, (ptr), _l); else if (mode == 2) memcpy((ptr), buf + pos, _l); pos += _l; } while (0)
+#define C1_V(v) C1_IO(&(v), sizeof(v))
+#define C1_SUB(fn) do { len = fn(NULL, 0, 0); if (mode && (pos + len > size || !fn(buf + pos, len, mode))) return 0; pos += len; } while (0)
+
+	if (!cpu_bankbase[2] || !cps1_gfxram || !cps1_output)
+		return 0;
+	if (mode)
+		cps1snd_wait(); /* core 1 done with the Z80 and the chips */
+	if (mode == 1)
+	{
+		soundlatch_state(&latch, 1);
+		if (core1)
+		{
+			z80snd_get_context(ctx);
+			bank1 = cps1snd_bank; /* MAME's bank pointer is stale while core 1 runs the Z80 */
+		}
+	}
+	C1_IO(cpu_bankbase[2], 0x10000); /* work RAM, 0xff0000 */
+	C1_IO(cps1_gfxram, cps1_gfxram_size);
+	C1_IO(cps1_output, cps1_output_size);
+	C1_V(latch);
+	C1_V(cps1_sound_fade_timer);
+	C1_V(bank1);
+	C1_V(core1);
+	if (core1 || mode == 0)
+	{
+		C1_IO(ctx, ctxlen);
+		C1_V(cps1snd_bank);
+		C1_V(cps1snd_latch);
+		C1_V(cps1snd_now);
+		C1_IO(cps1snd_timer_on, sizeof(cps1snd_timer_on));
+		C1_IO(cps1snd_timer_at, sizeof(cps1snd_timer_at));
+		C1_IO(cps1snd_evn, sizeof(cps1snd_evn));
+		C1_IO(cps1snd_evq, sizeof(cps1snd_evq));
+		C1_V(cps1snd_evfill);
+		C1_V(cps1snd_job_q);
+	}
+	C1_SUB(YM2151_state);
+	C1_SUB(OKIM6295_mamego_state);
+	C1_SUB(cps1_mamego_video_state);
+#undef C1_SUB
+#undef C1_V
+#undef C1_IO
+
+	if (mode == 2)
+	{
+		soundlatch_state(&latch, 2);
+		if (bank1 >= 0 && bank1 < memory_region_length(REGION_CPU2) - 0x10000)
+			cpu_setbank(1, snd + 0x10000 + bank1);
+		if (core1 && cps1snd_core1)
+		{
+			z80snd_set_context(ctx);
+			z80snd_set_irq_callback(cps1snd_irq_ack);
+			/* the job queued before the save ran already: the next frame
+			   starts from the restored clock with an empty queue */
+			cps1snd_evn[0] = cps1snd_evn[1] = 0;
+			cps1snd_t0 = timer_get_time();
+		}
+		else if (core1)
+			z80_set_context(ctx); /* loaded before the board moved to core 1: cps1snd_enable() takes it from MAME's Z80 */
+	}
+	return pos;
 }
 #endif
 

@@ -1318,6 +1318,11 @@ int cps1_vh_start(void)
 		   I/O is the 0x800000 block (inputs, sound latch, CPS-A/B registers) */
 		extern unsigned int m68ki_idle_enable, m68ki_idle_io_lo, m68ki_idle_io_hi;
 		extern unsigned z80_idle_enable;
+		extern size_t (*mamego_driver_state)(unsigned char *, size_t, int);
+		extern size_t cps1_mamego_state(unsigned char *buf, size_t size, int mode);
+		/* exact save states on the YM2151 boards (drivers/cps1.c) */
+		if (Machine->drv->sound[0].sound_type == SOUND_YM2151)
+			mamego_driver_state = cps1_mamego_state;
 		m68ki_idle_enable = 1;
 		m68ki_idle_io_lo = 0x800000;
 		m68ki_idle_io_hi = 0x8fffff;
@@ -1397,6 +1402,36 @@ int cps1_vh_start(void)
 	return 0;
 }
 
+#ifdef MAMEGO
+/* mame-go save state (drivers/cps1.c): the sprite list buffered at the last
+   vblank and the flip state; on load the palette and scroll 2 caches are
+   rebuilt from video RAM */
+size_t cps1_mamego_video_state(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
+{
+	size_t pos = 0, len = cps1_buffered_obj ? cps1_obj_size : 0;
+	int i;
+	if (mode && pos + len + sizeof(cps1_flip_screen) > size)
+		return 0;
+	if (mode == 1)
+	{
+		memcpy(buf, cps1_buffered_obj, len);
+		memcpy(buf + len, &cps1_flip_screen, sizeof(cps1_flip_screen));
+	}
+	else if (mode == 2)
+	{
+		memcpy(cps1_buffered_obj, buf, len);
+		memcpy(&cps1_flip_screen, buf + len, sizeof(cps1_flip_screen));
+		cps1_get_video_base();
+		if (cps1_old_palette && cps1_palette)
+			for (i = 0; i < cps1_palette_size; i += 2)
+				WRITE_WORD(&cps1_old_palette[i], ~READ_WORD(&cps1_palette[i]));
+		if (cps1_scroll2_old)
+			memset(cps1_scroll2_old, 0xff, cps1_scroll2_size);
+	}
+	return len + sizeof(cps1_flip_screen);
+}
+#endif
+
 /***************************************************************************
 
   Stop the video hardware emulation.
@@ -1406,6 +1441,7 @@ void cps1_vh_stop(void)
 {
 #ifdef MAMEGO
 	{ extern void cps1snd_disable(void); cps1snd_disable(); }
+	{ extern size_t (*mamego_driver_state)(unsigned char *, size_t, int); mamego_driver_state = 0; }
 	{ extern unsigned int m68ki_idle_enable; extern unsigned z80_idle_enable; m68ki_idle_enable = 0; z80_idle_enable = 0; }
 #endif
 	if (cps1_old_palette)
