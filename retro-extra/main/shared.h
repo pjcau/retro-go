@@ -7,4 +7,3 @@
 #define AUDIO_SAMPLE_RATE   (32000)
 
 void ngp_main(void);
-void a26_main(void);

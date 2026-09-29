@@ -45,7 +45,7 @@ Run `python rg_tool.py --help` to see all available flags and commands.
 For a smaller build you can also specify which apps you want, for example the launcher + DOOM only:
 1. `python rg_tool.py build-fw launcher prboom-go`
 
-Note that the app named `retro-core` contains the following emulators: NES, PCE, G&W, Lynx, and SMS/GG/COL. As such, these emulators cannot be selected individually. The reason for the bundling is simply size, together they account for a mere 700KB instead of almost 3MB when they were built separately.
+Note that the app named `retro-core` contains the following emulators: NES, SNES, GB/GBC, PCE and SMS/GG/COL/SG-1000. As such, these emulators cannot be selected individually. The reason for the bundling is simply size, together they account for a mere 700KB instead of almost 3MB when they were built separately.
 
 
 ## Flashing an image for the first time
@@ -103,7 +103,7 @@ Instructions to port to new ESP32 devices can be found in [PORTING.md](PORTING.m
 I don't want to maintain non-ESP32 ports in this repository, but let me know if I can make small changes to make your own port easier! The absolute minimum requirements for Retro-Go are roughly:
 - Processor: 200Mhz 32bit little-endian
 - Memory: 2MB
-- Compiler: C99 (and C++03 for handy-go)
+- Compiler: C99
 
 Whilst all applications were heavily modified or even redesigned for our constrained needs, special care is taken to keep
 Retro-Go and ESP32-specific code exclusively in their port file (main.c). This makes reusing them in your own codebase very easy!

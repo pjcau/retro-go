@@ -694,18 +694,12 @@ void applications_init(void)
     application("Nintendo Gameboy", "gb", "gb gbc zip", "retro-core", 0);
     application("Nintendo Gameboy Color", "gbc", "gbc gb zip", "retro-core", 0);
     application("Nintendo Gameboy Advance", "gba", "gba zip", "gbsp", 0);
-    /* Game & Watch and Lynx: set aside for now (2026-09-27, the user) - no usable
-     * ROMs yet (.gw needs LCD-Game-Shrinker; the Lynx files were web pages). The
-     * cores stay in retro-core; uncomment to bring the tabs back. */
-    // application("Nintendo Game & Watch", "gw", "gw", "retro-core", 0);
     application("Sega SG-1000", "sg1", "sg sg1 sms zip", "retro-core", 0);
     application("Sega Master System", "sms", "sms sg zip", "retro-core", 0);
     application("Sega Game Gear", "gg", "gg zip", "retro-core", 0);
     application("Sega Mega Drive", "md", "md gen bin zip", "gwenesis", 0);
     application("Coleco ColecoVision", "col", "col rom zip", "retro-core", 0);
     application("NEC PC Engine", "pce", "pce zip", "retro-core", 0);
-    // application("Atari Lynx", "lnx", "lnx zip", "retro-core", 64);  /* set aside, see Game & Watch above */
-    application("Atari 2600", "a26", "a26 bin zip", "retro-extra", 0);
     application("Neo Geo Pocket", "ngp", "ngp ngc npc zip", "retro-extra", 0);
     application("DOOM", "doom", "wad zip", "prboom-go", 0);
     application("Duke Nukem 3D", "duke3d", "grp", "duke3d-go", 0);

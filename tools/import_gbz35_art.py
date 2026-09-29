@@ -20,7 +20,7 @@ import os, subprocess, sys, tempfile
 from PIL import Image
 
 # Logos drawn in plain black vanish on the launcher's dark header: paint them white.
-BLACK_LOGOS = {"a26"}
+BLACK_LOGOS = set()
 
 # launcher tab short name -> es-theme-gbz35 folder
 SYSTEMS = {
@@ -29,7 +29,6 @@ SYSTEMS = {
     "wolf3d": "ports",  # native source ports
     "quake": "ports",
     "sg1": "sg-1000",
-    "a26": "atari2600",
     "gba": "gba",
     "ngp": "ngp",
 }
