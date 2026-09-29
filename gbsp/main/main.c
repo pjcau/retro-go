@@ -20,6 +20,16 @@ u32 skip_next_frame = 0;
 int sprite_limit = 1;
 
 gbsp_memory_t *gbsp_memory;
+#ifdef HAVE_DYNAREC
+/* the Xtensa dynarec (gbsp-libretro/xtensa): translation caches in PSRAM
+   mapped executable, see components/xjit */
+#include "xjit_exec.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+int dynarec_enable = 1;
+extern u32 xt_exec_delta;
+u32 execute_arm_translate(u32 cycles);
+#endif
 /* scanline renderer on core 1 (gbsp-libretro/video.cpp) */
 extern int gbsp_render_core1;
 void gbsp_render_start(void);
@@ -220,7 +230,24 @@ static void options_handler(rg_gui_option_t *dest)
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
+#ifdef HAVE_DYNAREC
+/* the dynarec translates a block's branch targets recursively: deeper than
+   the main task's stack, so the emulator runs on its own task */
+static void gbsp_main(void);
+static void gbsp_task(void *arg)
+{
+    gbsp_main();
+}
 void app_main(void)
+{
+    if (xTaskCreatePinnedToCore(gbsp_task, "gbsp", 40 * 1024, NULL, uxTaskPriorityGet(NULL), NULL, 0) != pdPASS)
+        gbsp_main();   /* no memory for the stack: try on the main task */
+    vTaskDelete(NULL);
+}
+static void gbsp_main(void)
+#else
+void app_main(void)
+#endif
 {
     const rg_handlers_t handlers = {
         .loadState = &load_state_handler,
@@ -253,6 +280,20 @@ void app_main(void)
 
     libretro_supports_bitmasks = true;
     retro_set_input_state(input_cb);
+#ifdef HAVE_DYNAREC
+    {
+        static xj_exec_t jit;   /* before the ROM cache takes the rest of PSRAM */
+        if (!xj_exec_alloc_psram(&jit, ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE))
+            RG_PANIC("No memory for the dynarec's translation caches");
+        rom_translation_cache = jit.data;
+        ram_translation_cache = jit.data + ROM_TRANSLATION_CACHE_SIZE;
+        rom_translation_ptr = rom_translation_cache;
+        ram_translation_ptr = ram_translation_cache;
+        xt_exec_delta = jit.exec - (u32)(uintptr_t)jit.data;
+        RG_LOGI("dynarec: translation caches %u KB at %p (exec %08lx)",
+                (unsigned)((ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE) / 1024), jit.data, (unsigned long)jit.exec);
+    }
+#endif
     init_gamepak_buffer();
     RG_LOGI("ROM cache: %u blocks of 1 MB", (unsigned)gamepak_buffer_count);
     init_sound();
@@ -303,7 +344,11 @@ void app_main(void)
         const int64_t t_exec = rg_system_timer();
         gbaprof_render_us = 0;
 #endif
+#ifdef HAVE_DYNAREC
+        execute_arm_translate(execute_cycles);
+#else
         execute_arm(execute_cycles);
+#endif
         // RG_TIMER_LAP("execute_arm");
 #ifdef GBAPROF
         const int64_t t_disp = rg_system_timer();

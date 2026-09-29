@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.5)
 set(COMPONENTS "main retro-go gbsp-libretro app_trace bootloader esptool_py")
+if(DEFINED ENV{GBAJIT} AND NOT "$ENV{GBAJIT}" STREQUAL "0")
+    list(APPEND COMPONENTS xjit esp_mm)
+endif()
 set(RG_ENABLE_NETWORKING 0)
 include(../base.cmake)
 project(gbsp)
