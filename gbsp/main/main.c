@@ -25,9 +25,10 @@ extern int gbsp_render_core1;
 void gbsp_render_start(void);
 void gbsp_render_wait(void);
 #ifdef GBAPROF
-extern int64_t gbaprof_render_us;
+extern int64_t gbaprof_render_us, gbaprof_wait_us;
 extern u32 gbaprof_instr;
 u32 gbaprof_pageloads;
+static int64_t gbaprof_sync_us;
 #endif
 extern u32 gamepak_buffer_count;
 
@@ -217,8 +218,12 @@ void app_main(void)
 
     updates[0] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_LE, MEM_FAST);
     updates[0]->height = GBA_SCREEN_HEIGHT;
-    // updates[1] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_LE, MEM_FAST);
-    // updates[1]->height = GBA_SCREEN_HEIGHT;
+    /* second buffer (PSRAM: internal RAM is full): the display task on core 1
+       sends one frame while the next is drawn into the other, otherwise the
+       top of the next frame shows up in the one being sent */
+    updates[1] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_LE, MEM_SLOW);
+    if (updates[1])
+        updates[1]->height = GBA_SCREEN_HEIGHT;
     currentUpdate = updates[0];
 
     gba_screen_pixels = currentUpdate->data;
@@ -287,7 +292,21 @@ void app_main(void)
         if (!skip_next_frame)
         {
             gbsp_render_wait();   /* core 1 finishes the frame's last lines */
-            rg_display_submit(currentUpdate, 0);
+            if (updates[1])
+            {
+#ifdef GBAPROF
+                const int64_t t_sync = rg_system_timer();
+#endif
+                rg_display_sync(true);   /* the other buffer has been sent */
+#ifdef GBAPROF
+                gbaprof_sync_us += rg_system_timer() - t_sync;
+#endif
+                rg_display_submit(currentUpdate, 0);
+                currentUpdate = updates[currentUpdate == updates[0]];
+                gba_screen_pixels = currentUpdate->data;
+            }
+            else
+                rg_display_submit(currentUpdate, 0);
         }
 #ifdef GBAPROF
         const int64_t t_snd = rg_system_timer();
@@ -320,6 +339,9 @@ void app_main(void)
                 }
                 else if (seconds == 24)
                     samp_dump();
+                printf("GBAWAIT ms/frame: vblank wait for core 1 %.2f, display sync %.2f\n",
+                       gbaprof_wait_us / 1000.f / frames, gbaprof_sync_us / 1000.f / frames);
+                gbaprof_wait_us = gbaprof_sync_us = 0;
                 printf("GBAPROF %d frames (%d drawn): ms/frame cpu %.2f sound %.2f display %.2f | render %.2f per drawn frame | %d instr/frame, %.0f cycles/instr | %u ROM pages loaded\n",
                        frames, drawn_n, cpu_us / 1000.f / frames, snd_us / 1000.f / frames, disp_us / 1000.f / frames,
                        drawn_n ? render_us / 1000.f / drawn_n : 0.f, (int)(instr / frames), instr ? cpu_us * 240.0 / instr : 0.0, (unsigned)gbaprof_pageloads);
