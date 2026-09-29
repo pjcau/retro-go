@@ -28,8 +28,8 @@ void gbsp_render_wait(void);
 extern int64_t gbaprof_render_us;
 extern u32 gbaprof_instr;
 u32 gbaprof_pageloads;
-extern u32 gamepak_buffer_count;
 #endif
+extern u32 gamepak_buffer_count;
 
 static rg_surface_t *updates[2];
 static rg_surface_t *currentUpdate;
