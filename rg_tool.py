@@ -22,7 +22,7 @@ PROJECT_APPS = {
   # Project name  Type, SubType, Size
   'launcher':     [0, 16, 1179648],
   'retro-core':   [0, 16, 1310720],
-  'prboom-go':    [0, 16, 786432],
+  'prboom-go':    [0, 16, 851968],  # 832 KB: the binary outgrew 768 KB and mkfw.py had already grown the partition on the board
   'gwenesis':     [0, 16, 1048576],
   'duke3d-go':    [0, 16, 1048576],
   'retro-extra':  [0, 16, 1572864],  # was 1.75 MB: 256 KB moved to mame-go (CPS1), binary 1.43 MB
