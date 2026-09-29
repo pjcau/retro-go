@@ -712,7 +712,6 @@ void applications_init(void)
     application("Wolfenstein 3D", "wolf3d", "wl1 wl6 sod", "wolf3d-go", 0);
     application("Quake", "quake", "pak", "quake-go", 0);
     application("OpenTyrian", "opentyrian", "tyr", "opentyrian-go", 0);
-    application("MSX", "msx", "rom mx1 mx2 dsk", "fmsx", 0);
     application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
     application("Neo Geo", "neogeo", "zip", "mame-go", 0); /* mame-go too; neogeo.zip (BIOS) lives in the folder */
 

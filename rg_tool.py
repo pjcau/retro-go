@@ -14,7 +14,7 @@ import zlib
 DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "odroid-go")
 DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
 DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM3")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis fmsx duke3d-go retro-extra mame-go wolf3d-go quake-go opentyrian-go")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis duke3d-go retro-extra mame-go wolf3d-go quake-go opentyrian-go gbsp")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 MAMEROM_SIZE = 4 * 1024 * 1024  # data partition "mamerom", see build_image()
@@ -24,12 +24,12 @@ PROJECT_APPS = {
   'retro-core':   [0, 16, 1310720],
   'prboom-go':    [0, 16, 786432],
   'gwenesis':     [0, 16, 1048576],
-  'fmsx':         [0, 16, 589824],
   'duke3d-go':    [0, 16, 1048576],
   'retro-extra':  [0, 16, 1572864],  # was 1.75 MB: 256 KB moved to mame-go (CPS1), binary 1.43 MB
   'mame-go':      [0, 16, 1835008],  # 1.75 MB since CPS1 (was 1.5 MB)
   'wolf3d-go':    [0, 16, 655360],
   'quake-go':     [0, 16, 786432],
+  'gbsp':         [0, 16, 851968],  # GBA (gpSP interpreter, from upstream); fMSX removed 2026-09-29 to make room
   'opentyrian-go': [0, 16, 655360],
 }
 # PROJECT_APPS = {}

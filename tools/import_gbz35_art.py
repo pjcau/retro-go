@@ -31,7 +31,6 @@ SYSTEMS = {
     "sg1": "sg-1000",
     "a26": "atari2600",
     "gba": "gba",
-    "msx": "msx",
     "ngp": "ngp",
 }
 THEME_DIR = os.path.join(os.path.dirname(__file__), "..", "themes", "default")
