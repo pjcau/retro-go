@@ -298,10 +298,33 @@ static void sram_save(void)
         fclose(fp);
 }
 
+#ifdef HAVE_DYNAREC
+/* per game (NS_FILE): whether the dynarec may run it. A launch sets TRYING,
+   two minutes of play (or a clean exit) set OK; a launch that finds TRYING
+   means the last one crashed or hung on the dynarec, and the game uses the
+   interpreter from then on (OFF), as it does after a self-modifying-code
+   storm (xt_give_up). Save states and .sram files are the same for both. */
+#define JIT_KEY "DynarecState"
+enum { JIT_OK = 0, JIT_TRYING = 1, JIT_OFF = 2 };
+static int jit_state = JIT_OK;
+static void jit_state_set(int v)
+{
+    jit_state = v;
+    rg_settings_set_number(NS_FILE, JIT_KEY, v);
+    rg_settings_commit();
+}
+#endif
+
 static void event_handler(int event, void *arg)
 {
     if (event == RG_EVENT_SHUTDOWN)
+    {
         sram_save();
+#ifdef HAVE_DYNAREC
+        if (jit_state == JIT_TRYING)
+            jit_state_set(JIT_OK);
+#endif
+    }
     if (event == RG_EVENT_REDRAW)
     {
         rg_display_submit(displaying ? displaying : currentUpdate, 0);
@@ -385,9 +408,38 @@ static rg_gui_event_t sound_toggle_cb(rg_gui_option_t *option, rg_gui_event_t ev
     return RG_DIALOG_VOID;
 }
 
+#ifdef HAVE_DYNAREC
+/* the per-game engine switch: Off = interpreter at once; On = dynarec from the
+   next start (after a false alarm, e.g. the console lost power) */
+static rg_gui_event_t dynarec_toggle_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    extern int xt_give_up;
+    static bool on_next_start;
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
+    {
+        if (jit_state == JIT_OFF)
+        {
+            jit_state_set(JIT_OK);
+            on_next_start = true;
+        }
+        else
+        {
+            jit_state_set(JIT_OFF);
+            xt_give_up = 1;
+            on_next_start = false;
+        }
+    }
+    strcpy(option->value, jit_state == JIT_OFF ? _("Off") : on_next_start ? _("On (next start)") : _("On"));
+    return RG_DIALOG_VOID;
+}
+#endif
+
 static void options_handler(rg_gui_option_t *dest)
 {
     *dest++ = (rg_gui_option_t){0, _("Audio enable"), "-", RG_DIALOG_FLAG_NORMAL, &sound_toggle_cb};
+#ifdef HAVE_DYNAREC
+    *dest++ = (rg_gui_option_t){0, _("Fast CPU (dynarec)"), "-", RG_DIALOG_FLAG_NORMAL, &dynarec_toggle_cb};
+#endif
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
@@ -515,6 +567,24 @@ void app_main(void)
     sram_load();
     gamepak_backup_dirty = 0;
 
+#ifdef HAVE_DYNAREC
+    {
+        extern int xt_give_up;
+        jit_state = (int)rg_settings_get_number(NS_FILE, JIT_KEY, JIT_OK);
+        if (jit_state == JIT_TRYING)
+        {
+            RG_LOGW("the dynarec crashed or hung on this game last time: interpreter from now on");
+            jit_state_set(JIT_OFF);
+            rg_gui_alert("GBA", "This game stopped last time with the fast CPU core (dynarec): it now runs with the interpreter.");
+        }
+        if (jit_state == JIT_OFF)
+            xt_give_up = 1;
+        else
+            jit_state_set(JIT_TRYING);
+        RG_LOGI("CPU core: %s", jit_state == JIT_OFF ? "interpreter (DynarecState)" : "dynarec");
+    }
+#endif
+
     if (app->bootFlags & RG_BOOT_RESUME)
     {
         RG_LOGI("load_state");
@@ -556,11 +626,20 @@ void app_main(void)
 #endif
 #ifdef HAVE_DYNAREC
         {
-            extern int xt_give_up;   /* xtensa_stub.c: self-modifying code storm */
+            extern int xt_give_up;   /* xtensa_stub.c: self-modifying code storm, or DynarecState */
+            static int jit_frames;
             if (xt_give_up)
+            {
                 execute_arm(execute_cycles);
+                if (jit_state != JIT_OFF)
+                    jit_state_set(JIT_OFF);   /* remembered: the next launch starts on the interpreter */
+            }
             else
+            {
                 execute_arm_translate(execute_cycles);
+                if (jit_state == JIT_TRYING && ++jit_frames == 60 * 120)
+                    jit_state_set(JIT_OK);   /* two minutes without trouble */
+            }
         }
 #else
         execute_arm(execute_cycles);
