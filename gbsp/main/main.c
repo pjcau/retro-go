@@ -457,6 +457,12 @@ void app_main(void)
                 (unsigned)((ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE) / 1024), jit.data, (unsigned long)jit.exec);
     }
 #endif
+#ifdef HAVE_DYNAREC
+    {
+        extern void gbsp_rvram_alloc(void);   /* the renderer's VRAM copy, before the ROM cache takes PSRAM */
+        gbsp_rvram_alloc();
+    }
+#endif
     init_gamepak_buffer();
     RG_LOGI("ROM cache: %u blocks of 1 MB", (unsigned)gamepak_buffer_count);
     init_sound();
@@ -650,6 +656,14 @@ void app_main(void)
                        gbaprof_wait_us / 1000.f / frames, (float)gbaprof_syncs / frames, gbaprof_sync_us / 1000.f / frames, (float)gbaprof_lag80 / frames, (float)gbaprof_lag159 / frames, (float)gbaprof_wakes / frames);
                 gbaprof_wait_us = gbaprof_sync_us = 0;
                 gbaprof_lag159 = gbaprof_syncs = gbaprof_lag80 = gbaprof_wakes = 0;
+                {
+                    extern int64_t gbaprof_wait_by[8];
+                    printf("GBAWAIT by cause ms/frame: other %.2f cpuBG %.2f cpuOBJ %.2f dmaBG %.2f dmaOBJ %.2f oam %.2f pal %.2f end %.2f\n",
+                           gbaprof_wait_by[0] / 1000.f / frames, gbaprof_wait_by[1] / 1000.f / frames, gbaprof_wait_by[2] / 1000.f / frames,
+                           gbaprof_wait_by[3] / 1000.f / frames, gbaprof_wait_by[4] / 1000.f / frames, gbaprof_wait_by[5] / 1000.f / frames,
+                           gbaprof_wait_by[6] / 1000.f / frames, gbaprof_wait_by[7] / 1000.f / frames);
+                    memset(gbaprof_wait_by, 0, sizeof(gbaprof_wait_by));
+                }
                 c1_dump();
 #ifdef HAVE_DYNAREC
                 {
