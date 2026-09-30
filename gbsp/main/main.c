@@ -277,7 +277,34 @@ static void event_handler(int event, void *arg)
 }
 
 #ifdef GBABENCH
+#include "xtensa_perfmon_access.h"
+#include "xtensa/xt_perf_consts.h"
 static int bench_frame;
+/* core-0 LX7 counters around the CPU emulation; 2 counters, 3 pairs taken in
+   turn frame by frame (each total is scaled by 3 when printed) */
+static const uint16_t perf_sel[3][2][2] = {
+    {{XTPERF_CNT_CYCLES, XTPERF_MASK_CYCLES}, {XTPERF_CNT_INSN, XTPERF_MASK_INSN_ALL}},
+    {{XTPERF_CNT_I_STALL, XTPERF_MASK_I_STALL_ALL}, {XTPERF_CNT_D_STALL, XTPERF_MASK_D_STALL_ALL}},
+    {{XTPERF_CNT_I_STALL, XTPERF_MASK_I_STALL_CACHE_MISS}, {XTPERF_CNT_I_STALL, XTPERF_MASK_I_STALL_BUSY | XTPERF_MASK_I_STALL_IN_PIF}},
+};
+static uint64_t perf_sum[3][2];
+static void perf_begin(int f)
+{
+    const int p = f % 3;
+    xtensa_perfmon_stop();
+    for (int i = 0; i < 2; i++)
+    {
+        xtensa_perfmon_init(i, perf_sel[p][i][0], perf_sel[p][i][1], 0, -1);
+        xtensa_perfmon_reset(i);
+    }
+    xtensa_perfmon_start();
+}
+static void perf_end(int f)
+{
+    xtensa_perfmon_stop();
+    for (int i = 0; i < 2; i++)
+        perf_sum[f % 3][i] += xtensa_perfmon_value(i);
+}
 /* right held, B 4 frames in 16, A 10 frames in 120 (libretro bits) */
 static int16_t bench_keys(int f)
 {
@@ -482,11 +509,15 @@ void app_main(void)
 #endif
 #ifdef GBABENCH
         const int64_t tb_exec = rg_system_timer();
+        perf_begin(bench_frame);
 #endif
 #ifdef HAVE_DYNAREC
         execute_arm_translate(execute_cycles);
 #else
         execute_arm(execute_cycles);
+#endif
+#ifdef GBABENCH
+        perf_end(bench_frame);
 #endif
 #ifdef GBABENCH
         const int64_t tb_render = rg_system_timer();
@@ -568,6 +599,14 @@ void app_main(void)
                        bench_frame, work_us / 1000.0 / 300, (unsigned long)acc, exec_us / 300000.0, rwait_us / 300000.0,
                        disp_us / 300000.0, snd_us / 300000.0, (unsigned)frames_not_shown);
                 frames_not_shown = 0;
+                {
+                    /* per frame, in thousands (Mcycles/1000); each pair ran one frame in three */
+                    const double k = 3.0 / 300 / 1000;
+                    printf("GBABENCH perf: kcycles %.0f kinstr %.0f (%.2f cyc/instr) | I-stall %.0f (cache-miss %.0f, busy/PIF %.0f) D-stall %.0f\n",
+                           perf_sum[0][0] * k, perf_sum[0][1] * k, perf_sum[0][1] ? (double)perf_sum[0][0] / perf_sum[0][1] : 0.0,
+                           perf_sum[1][0] * k, perf_sum[2][0] * k, perf_sum[2][1] * k, perf_sum[1][1] * k);
+                    memset(perf_sum, 0, sizeof(perf_sum));
+                }
                 {
                     static rg_display_counters_t last;
                     rg_display_counters_t c = rg_display_get_counters();
