@@ -518,7 +518,13 @@ void app_main(void)
         perf_begin(bench_frame);
 #endif
 #ifdef HAVE_DYNAREC
-        execute_arm_translate(execute_cycles);
+        {
+            extern int xt_give_up;   /* xtensa_stub.c: self-modifying code storm */
+            if (xt_give_up)
+                execute_arm(execute_cycles);
+            else
+                execute_arm_translate(execute_cycles);
+        }
 #else
         execute_arm(execute_cycles);
 #endif
@@ -677,6 +683,15 @@ void app_main(void)
                     extern u32 xt_prof_translate_cycles, xt_prof_translate_blocks;
                     printf("GBAJIT translate: %u blocks, %.2f ms/frame\n", (unsigned)xt_prof_translate_blocks,
                            xt_prof_translate_cycles / 240000.f / frames);
+                    {
+                        extern u32 xt_prof_tr_region[16], xt_prof_tr_pc[4], xt_prof_rom_flush;
+                        printf("GBAJIT translate by region: bios %u ewram %u iwram %u rom %u | ROM flushes %u | last pcs %08x %08x %08x %08x\n",
+                               (unsigned)xt_prof_tr_region[0], (unsigned)xt_prof_tr_region[2], (unsigned)xt_prof_tr_region[3],
+                               (unsigned)(xt_prof_tr_region[8] + xt_prof_tr_region[9] + xt_prof_tr_region[10] + xt_prof_tr_region[11]),
+                               (unsigned)xt_prof_rom_flush, (unsigned)xt_prof_tr_pc[0], (unsigned)xt_prof_tr_pc[1], (unsigned)xt_prof_tr_pc[2], (unsigned)xt_prof_tr_pc[3]);
+                        memset(xt_prof_tr_region, 0, sizeof(xt_prof_tr_region));
+                        xt_prof_rom_flush = 0;
+                    }
                     xt_prof_translate_cycles = xt_prof_translate_blocks = 0;
                     printf("GBAJIT code: ROM cache %u KB, RAM cache %u KB\n",
                            (unsigned)((rom_translation_ptr - rom_translation_cache) / 1024), (unsigned)((ram_translation_ptr - ram_translation_cache) / 1024));
