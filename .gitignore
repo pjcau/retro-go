@@ -21,3 +21,7 @@ build/
 /stdout.txt
 /gmon.out
 /*.exe
+
+# old in-tree test benches, now in xtensa-68000-dynarec (leftover build dirs hold ROMs)
+/gbajit-test/
+/xjit-test/

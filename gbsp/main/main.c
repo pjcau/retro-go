@@ -2,11 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "../components/gbsp-libretro/common.h"
-#include "../components/gbsp-libretro/memmap.h"
-#include "../components/gbsp-libretro/sound.h"
-#include "../components/gbsp-libretro/gba_memory.h"
-#include "../components/gbsp-libretro/gba_cc_lut.h"
+#include "../../xtensa-68000-dynarec/components/gbsp-libretro/common.h"
+#include "../../xtensa-68000-dynarec/components/gbsp-libretro/memmap.h"
+#include "../../xtensa-68000-dynarec/components/gbsp-libretro/sound.h"
+#include "../../xtensa-68000-dynarec/components/gbsp-libretro/gba_memory.h"
+#include "../../xtensa-68000-dynarec/components/gbsp-libretro/gba_cc_lut.h"
 
 #define AUDIO_SAMPLE_RATE (GBA_SOUND_FREQUENCY)
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)

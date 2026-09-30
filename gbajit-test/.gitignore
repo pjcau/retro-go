@@ -1,5 +1,0 @@
-build/
-sdkconfig
-sdkconfig.old
-build_jit/
-build_*/

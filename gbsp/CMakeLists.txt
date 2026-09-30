@@ -8,6 +8,8 @@ if(DEFINED ENV{GBABENCH} AND NOT "$ENV{GBABENCH}" STREQUAL "0")
 endif()
 set(RG_ENABLE_NETWORKING 0)
 include(../base.cmake)
+# gpSP and the Xtensa dynarec (gbsp-libretro, xjit) live in the xtensa-68000-dynarec submodule
+list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../xtensa-68000-dynarec/components")
 project(gbsp)
 # `GBAPROF=1 python rg_tool.py ... build gbsp`: ms per frame of the ARM
 # interpreter, the scanline renderer, the sound mix and the display submit,
