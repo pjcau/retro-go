@@ -268,8 +268,40 @@ static bool reset_handler(bool hard)
     return true;
 }
 
+/* the cartridge's battery memory (SRAM / flash / EEPROM, 128 KB buffer):
+   <saves>/gba/<rom>.gba.sram, read at start, written ~1-2 s after the game
+   stops writing it and when leaving */
+
+extern u8 gamepak_backup_dirty;
+static char *sram_path;
+static void sram_load(void)
+{
+    FILE *fp = sram_path ? fopen(sram_path, "rb") : NULL;
+    if (!fp)
+        return;
+    size_t n = fread(gamepak_backup, 1, sizeof(gamepak_backup), fp);
+    fclose(fp);
+    RG_LOGI("battery save loaded: %s (%u bytes)", sram_path, (unsigned)n);
+}
+static void sram_save(void)
+{
+    if (!sram_path || !gamepak_backup_dirty)
+        return;
+    gamepak_backup_dirty = 0;
+    rg_storage_mkdir(rg_dirname(sram_path));
+    FILE *fp = fopen(sram_path, "wb");
+    if (!fp || fwrite(gamepak_backup, sizeof(gamepak_backup), 1, fp) != 1)
+        RG_LOGE("battery save failed: %s", sram_path);
+    else
+        RG_LOGI("battery save written: %s", sram_path);
+    if (fp)
+        fclose(fp);
+}
+
 static void event_handler(int event, void *arg)
 {
+    if (event == RG_EVENT_SHUTDOWN)
+        sram_save();
     if (event == RG_EVENT_REDRAW)
     {
         rg_display_submit(displaying ? displaying : currentUpdate, 0);
@@ -479,6 +511,10 @@ void app_main(void)
     RG_LOGI("reset_gba");
     reset_gba();
 
+    sram_path = rg_emu_get_path(RG_PATH_SAVE_SRAM, app->romPath);
+    sram_load();
+    gamepak_backup_dirty = 0;
+
     if (app->bootFlags & RG_BOOT_RESUME)
     {
         RG_LOGI("load_state");
@@ -497,6 +533,7 @@ void app_main(void)
 
         if (joystick & (RG_KEY_MENU | RG_KEY_OPTION))
         {
+            sram_save();   /* the menu can quit the game */
             if (joystick & RG_KEY_MENU)
                 rg_gui_game_menu();
             else
@@ -709,6 +746,16 @@ void app_main(void)
             }
         }
 #endif
+
+        /* battery save: to the card one second after the game started writing
+           it (a flash save takes several frames); written again if it goes on */
+        {
+            static int sram_timer;
+            if (gamepak_backup_dirty && !sram_timer)
+                sram_timer = 60;
+            else if (sram_timer && --sram_timer == 0)
+                sram_save();
+        }
 
         rg_system_tick(rg_system_timer() - startTime);
 
