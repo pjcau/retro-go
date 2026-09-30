@@ -44,7 +44,27 @@ static int64_t gbaprof_sync_us;
 #endif
 extern u32 gamepak_buffer_count;
 
-static rg_surface_t *updates[2];
+/* three frame buffers: core 1 draws into currentUpdate while the display task
+   sends the last submitted one; when the display is still busy at the end of
+   a frame, that frame is not shown and emulation goes on in the third buffer
+   instead of waiting (a full-screen 2x update is ~16-17 ms on the 20 MHz bus) */
+static rg_surface_t *updates[3];
+static rg_surface_t *displaying;   /* last submitted */
+static rg_surface_t *pending;      /* finished while the display was busy: sent as soon as it is free */
+static rg_surface_t *frame_done;   /* the frame just finished (GBABENCH hash) */
+static uint32_t frames_not_shown;
+
+/* called by the scanline code every 32 lines (core 0): send the pending frame
+   as soon as the display task has taken the previous one */
+void gbsp_display_poll(void)
+{
+    if (pending && rg_display_sync(false))
+    {
+        rg_display_submit(pending, 0);
+        displaying = pending;
+        pending = NULL;
+    }
+}
 static rg_surface_t *currentUpdate;
 static rg_app_t *app;
 
@@ -118,9 +138,18 @@ static void IRAM_ATTR samp_tick(void)
 #define C1_N 12
 typedef struct { TaskHandle_t t; uint32_t n; } task_ticks_t;
 static task_ticks_t c1[C1_N], c0[C1_N];
+/* core 1 PCs (renderer, display): which code shares the instruction cache */
+#define SAMP1_N 2048
+static struct { uint32_t pc, n; } *samp1;
 static void IRAM_ATTR c1_tick(void)
 {
     TaskHandle_t t = xTaskGetCurrentTaskHandleForCore(1);
+    if (samp1 && samp_on && t)
+    {
+        uint32_t pc = (*(uint32_t **)t)[1], h = (pc >> 2) & (SAMP1_N - 1);
+        for (int i = 0; i < 16; i++, h = (h + 1) & (SAMP1_N - 1))
+            if (samp1[h].pc == pc || samp1[h].n == 0) { samp1[h].pc = pc; samp1[h].n++; break; }
+    }
     for (int i = 0; i < C1_N; i++)
         if (c1[i].t == t || !c1[i].t) { c1[i].t = t; c1[i].n++; break; }
     t = xTaskGetCurrentTaskHandleForCore(0);
@@ -171,6 +200,17 @@ static void samp_dump(void)
         printf("GBASAMPLE %08x %u %.2f a0 %08x ps %08x\n", (unsigned)samp[best].pc, (unsigned)samp[best].n, 100.0 * samp[best].n / total,
                (unsigned)samp[best].a0, (unsigned)samp[best].ps);
         samp[best].n = 0;
+    }
+    for (int k = 0; samp1 && k < 150; k++)
+    {
+        int best = -1;
+        for (int i = 0; i < SAMP1_N; i++)
+            if (samp1[i].n && (best < 0 || samp1[i].n > samp1[best].n))
+                best = i;
+        if (best < 0)
+            break;
+        printf("GBASAMPLE1 %08x %u\n", (unsigned)samp1[best].pc, (unsigned)samp1[best].n);
+        samp1[best].n = 0;
     }
     printf("GBASAMPLE total %u of %u ticks (last depth-4 caller %08x)\n", (unsigned)total, (unsigned)samp_all, (unsigned)samp_up2);
     {
@@ -232,13 +272,28 @@ static void event_handler(int event, void *arg)
 {
     if (event == RG_EVENT_REDRAW)
     {
-        rg_display_submit(currentUpdate, 0);
+        rg_display_submit(displaying ? displaying : currentUpdate, 0);
     }
 }
+
+#ifdef GBABENCH
+static int bench_frame;
+/* right held, B 4 frames in 16, A 10 frames in 120 (libretro bits) */
+static int16_t bench_keys(int f)
+{
+    int16_t m = 1 << RETRO_DEVICE_ID_JOYPAD_RIGHT;
+    if ((f & 15) < 4) m |= 1 << RETRO_DEVICE_ID_JOYPAD_B;
+    if (f % 120 < 10) m |= 1 << RETRO_DEVICE_ID_JOYPAD_A;
+    return m;
+}
+#endif
 
 int16_t input_cb(unsigned port, unsigned device, unsigned index, unsigned id)
 {
     // RG_LOGI("%u, %u, %u, %u", port, device, index, id);
+#ifdef GBABENCH
+    return bench_keys(bench_frame);
+#endif
     uint32_t joystick = rg_input_read_gamepad();
     int16_t val = 0;
     if (joystick & RG_KEY_DOWN) val |= (1 << RETRO_DEVICE_ID_JOYPAD_DOWN);
@@ -323,6 +378,9 @@ void app_main(void)
     updates[1] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_LE, MEM_SLOW);
     if (updates[1])
         updates[1]->height = GBA_SCREEN_HEIGHT;
+    updates[2] = updates[1] ? rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_LE, MEM_SLOW) : NULL;
+    if (updates[2])
+        updates[2]->height = GBA_SCREEN_HEIGHT;
     currentUpdate = updates[0];
 
     gba_screen_pixels = currentUpdate->data;
@@ -340,8 +398,9 @@ void app_main(void)
            through the instruction bus */
         /* the exec heap is tiny: take plain internal RAM in SRAM1, which is
            also mapped on the instruction bus (memory protection off) */
-        jit.size = ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE;
-        jit.data = heap_caps_aligned_alloc(4, jit.size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        static uint8_t iram_cache[ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE] __attribute__((aligned(64)));   /* .bss: not fragmented */
+        jit.size = sizeof(iram_cache);
+        jit.data = iram_cache;
         if (jit.data && (uintptr_t)jit.data >= SOC_DIRAM_DRAM_LOW && (uintptr_t)jit.data + jit.size <= SOC_DIRAM_DRAM_HIGH)
             jit.exec = MAP_DRAM_TO_IRAM((uint32_t)(uintptr_t)jit.data);
         else
@@ -421,10 +480,17 @@ void app_main(void)
         const int64_t t_exec = rg_system_timer();
         gbaprof_render_us = 0;
 #endif
+#ifdef GBABENCH
+        const int64_t tb_exec = rg_system_timer();
+#endif
 #ifdef HAVE_DYNAREC
         execute_arm_translate(execute_cycles);
 #else
         execute_arm(execute_cycles);
+#endif
+#ifdef GBABENCH
+        const int64_t tb_render = rg_system_timer();
+        int64_t tb_display = tb_render;
 #endif
         // RG_TIMER_LAP("execute_arm");
 #ifdef GBAPROF
@@ -434,7 +500,25 @@ void app_main(void)
         if (!skip_next_frame)
         {
             gbsp_render_wait();   /* core 1 finishes the frame's last lines */
-            if (updates[1])
+#ifdef GBABENCH
+            tb_display = rg_system_timer();
+#endif
+            frame_done = currentUpdate;
+            if (updates[2])
+            {
+                if (pending)            /* never sent: this newer frame replaces it */
+                    frames_not_shown++;
+                pending = currentUpdate;
+                gbsp_display_poll();
+                for (int i = 0; i < 3; i++)
+                    if (updates[i] != displaying && updates[i] != pending && updates[i] != frame_done)
+                    {
+                        currentUpdate = updates[i];
+                        break;
+                    }
+                gba_screen_pixels = currentUpdate->data;
+            }
+            else if (updates[1])
             {
 #ifdef GBAPROF
                 const int64_t t_sync = rg_system_timer();
@@ -454,8 +538,48 @@ void app_main(void)
         const int64_t t_snd = rg_system_timer();
 #endif
 
+#ifdef GBABENCH
+        const int64_t tb_sound = rg_system_timer();
+#endif
         size_t frames_count = sound_read_samples((s16 *)mixbuffer, AUDIO_BUFFER_LENGTH);
         // RG_TIMER_LAP("sound_read_samples");
+#ifdef GBABENCH
+        {
+            static int64_t work_us, exec_us, rwait_us, disp_us, snd_us;
+            exec_us += tb_render - tb_exec;
+            rwait_us += tb_display - tb_render;
+            disp_us += tb_sound - tb_display;
+            snd_us += rg_system_timer() - tb_sound;
+            static uint32_t acc;
+            work_us += rg_system_timer() - startTime;
+            /* the frame just submitted (the buffers were swapped) */
+            const rg_surface_t *shown = frame_done ? frame_done : currentUpdate;
+            uint32_t h = 2166136261u;
+            for (int y = 0; y < GBA_SCREEN_HEIGHT; y++)
+            {
+                const uint16_t *line = (const uint16_t *)((const uint8_t *)shown->data + y * shown->stride);
+                for (int x = 0; x < GBA_SCREEN_WIDTH; x++)
+                    h = (h ^ line[x]) * 16777619u;
+            }
+            acc = acc * 31 + h;
+            if (++bench_frame % 300 == 0)
+            {
+                printf("GBABENCH frames %d work %.2f ms/frame hash %08lx | exec %.2f render-wait %.2f display %.2f sound %.2f | not shown %u\n",
+                       bench_frame, work_us / 1000.0 / 300, (unsigned long)acc, exec_us / 300000.0, rwait_us / 300000.0,
+                       disp_us / 300000.0, snd_us / 300000.0, (unsigned)frames_not_shown);
+                frames_not_shown = 0;
+                {
+                    static rg_display_counters_t last;
+                    rg_display_counters_t c = rg_display_get_counters();
+                    int shown = (int)((c.fullFrames + c.partFrames) - (last.fullFrames + last.partFrames));
+                    printf("GBABENCH display: %d frames sent (%d full), %.2f ms each\n", shown, (int)(c.fullFrames - last.fullFrames),
+                           shown ? (c.busyTime - last.busyTime) / 1000.0 / shown : 0.0);
+                    last = c;
+                }
+                work_us = exec_us = rwait_us = disp_us = snd_us = 0;
+            }
+        }
+#endif
 #ifdef GBAPROF
         {
             /* cpu = execute_arm minus the scanline renderer inside it */
@@ -476,6 +600,7 @@ void app_main(void)
                 if (++seconds == 4)
                 {
                     samp = heap_caps_calloc(SAMP_N, sizeof(*samp), MALLOC_CAP_SPIRAM);
+                    samp1 = heap_caps_calloc(SAMP1_N, sizeof(*samp1), MALLOC_CAP_SPIRAM);
                     esp_register_freertos_tick_hook_for_cpu(samp_tick, 0);
                     esp_register_freertos_tick_hook_for_cpu(c1_tick, 1);
                     samp_on = true;
@@ -496,6 +621,10 @@ void app_main(void)
                            xt_prof_sync_cycles / 240000.f / frames, (unsigned)(flush_ram_count - last_flush),
                            (unsigned)gbaprof_notifies, gbaprof_notify_cycles / 240000.f / frames);
                     gbaprof_notify_cycles = gbaprof_notifies = 0;
+                    extern u32 xt_prof_translate_cycles, xt_prof_translate_blocks;
+                    printf("GBAJIT translate: %u blocks, %.2f ms/frame\n", (unsigned)xt_prof_translate_blocks,
+                           xt_prof_translate_cycles / 240000.f / frames);
+                    xt_prof_translate_cycles = xt_prof_translate_blocks = 0;
                     printf("GBAJIT code: ROM cache %u KB, RAM cache %u KB\n",
                            (unsigned)((rom_translation_ptr - rom_translation_cache) / 1024), (unsigned)((ram_translation_ptr - ram_translation_cache) / 1024));
                     xt_prof_syncs = xt_prof_sync_cycles = 0;
