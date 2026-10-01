@@ -46,21 +46,88 @@
 
 
 /* Redirect memory calls */
+#ifdef MAMEGO
+/* mame-go: RAM/ROM/banks (first-level entry <= HT_BANKMAX) are read and
+   written right here, without a call into memory.c; anything else (second
+   level, handlers, odd addresses) takes the generic path, which looks the
+   address up again. Same bytes as cpu_readmem32* / cpu_writemem32*. */
+#define M68K_MH_SHIFT (ABITS2_32 + ABITS_MIN_32)
+static __inline__ __attribute__((always_inline)) unsigned m68k_fast_r8(unsigned a)
+{
+	MHELE hw = cur_mrhard[a >> M68K_MH_SHIFT];
+	if (hw <= HT_BANKMAX)
+		return cpu_bankbase[hw][BYTE_XOR_BE(a) - memoryreadoffset[hw]];
+	return cpu_readmem32(a);
+}
+static __inline__ __attribute__((always_inline)) unsigned m68k_fast_r16(unsigned a)
+{
+	MHELE hw = cur_mrhard[a >> M68K_MH_SHIFT];
+	if (hw <= HT_BANKMAX && !(a & 1))
+		return READ_WORD_A(&cpu_bankbase[hw][a - memoryreadoffset[hw]]);
+	return cpu_readmem32_word(a);
+}
+static __inline__ __attribute__((always_inline)) unsigned m68k_fast_r32(unsigned a)
+{
+	MHELE hw = cur_mrhard[a >> M68K_MH_SHIFT];
+	if (hw <= HT_BANKMAX && !(a & 1) && hw == cur_mrhard[(a + 2) >> M68K_MH_SHIFT])
+	{
+		const uint8_t *p = &cpu_bankbase[hw][a - memoryreadoffset[hw]];
+		return (READ_WORD_A(p) << 16) | READ_WORD_A(p + 2);
+	}
+	return cpu_readmem32_dword(a);
+}
+static __inline__ __attribute__((always_inline)) void m68k_fast_w8(unsigned a, unsigned v)
+{
+	MHELE hw = cur_mwhard[a >> M68K_MH_SHIFT];
+	if (hw <= HT_BANKMAX)
+		cpu_bankbase[hw][BYTE_XOR_BE(a) - memorywriteoffset[hw]] = v;
+	else
+		cpu_writemem32(a, v);
+}
+static __inline__ __attribute__((always_inline)) void m68k_fast_w16(unsigned a, unsigned v)
+{
+	MHELE hw = cur_mwhard[a >> M68K_MH_SHIFT];
+	if (hw <= HT_BANKMAX && !(a & 1))
+		WRITE_WORD_A(&cpu_bankbase[hw][a - memorywriteoffset[hw]], v);
+	else
+		cpu_writemem32_word(a, v);
+}
+static __inline__ __attribute__((always_inline)) void m68k_fast_w32(unsigned a, unsigned v)
+{
+	MHELE hw = cur_mwhard[a >> M68K_MH_SHIFT];
+	if (hw <= HT_BANKMAX && !(a & 1) && hw == cur_mwhard[(a + 2) >> M68K_MH_SHIFT])
+	{
+		uint8_t *p = &cpu_bankbase[hw][a - memorywriteoffset[hw]];
+		WRITE_WORD_A(p, v >> 16);
+		WRITE_WORD_A(p + 2, v);
+	}
+	else
+		cpu_writemem32_dword(a, v);
+}
+#define m68k_read_memory_8(address)          m68k_fast_r8(address)
+#define m68k_read_memory_16(address)         m68k_fast_r16(address)
+#define m68k_read_memory_32(address)         m68k_fast_r32(address)
+#define m68k_write_memory_8(address, value)  m68k_fast_w8(address, value)
+#define m68k_write_memory_16(address, value) m68k_fast_w16(address, value)
+#define m68k_write_memory_32(address, value) m68k_fast_w32(address, value)
+#else
 #define m68k_read_memory_8(address)          cpu_readmem32(address)
 #define m68k_read_memory_16(address)         cpu_readmem32_word(address)
 #define m68k_read_memory_32(address)         cpu_readmem32_dword(address)
+#define m68k_write_memory_8(address, value)  cpu_writemem32(address, value)
+#define m68k_write_memory_16(address, value) cpu_writemem32_word(address, value)
+#define m68k_write_memory_32(address, value) cpu_writemem32_dword(address, value)
+#endif
 
-#define m68k_read_immediate_16(address)      cpu_readop_arg16(address)
-#define m68k_read_immediate_32(address)      ((cpu_readop_arg16(address)<<16) | cpu_readop_arg16((address)+2))
+/* the 68000 PC is always even: one aligned load per opcode word */
+#define m68k_read_immediate_16(address)      READ_WORD_A(&OP_RAM[address])
+#define m68k_read_immediate_32(address)      ((READ_WORD_A(&OP_RAM[address])<<16) | READ_WORD_A(&OP_RAM[(address)+2]))
 
 #define m68k_read_disassembler_8(address)    cpu_readmem32(address)
 #define m68k_read_disassembler_16(address)   cpu_readmem32_word(address)
 #define m68k_read_disassembler_32(address)   cpu_readmem32_dword(address)
 
 
-#define m68k_write_memory_8(address, value)  cpu_writemem32(address, value)
-#define m68k_write_memory_16(address, value) cpu_writemem32_word(address, value)
-#define m68k_write_memory_32(address, value) cpu_writemem32_dword(address, value)
 
 
 /* Redirect ICount */

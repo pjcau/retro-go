@@ -540,7 +540,7 @@ MAMEGO_HOT void cpu_writemem24bew_word(offs_t address,data_t data)
 		hw = cur_mwhard[(uint32_t)address >> (ABITS2_24BEW + ABITS_MIN_24BEW)];
 		if (hw <= HT_BANKMAX)
 		{
-			WRITE_WORD(&cpu_bankbase[hw][address - memorywriteoffset[hw]], data);
+			WRITE_WORD_A(&cpu_bankbase[hw][address - memorywriteoffset[hw]], data);
 			return; 
 		}
 
@@ -551,7 +551,7 @@ MAMEGO_HOT void cpu_writemem24bew_word(offs_t address,data_t data)
 			hw = writehardware[(hw << MH_SBITS) + (((uint32_t)address >> ABITS_MIN_24BEW) & MHMASK(ABITS2_24BEW))]; 
 			if (hw <= HT_BANKMAX)
 			{
-				WRITE_WORD(&cpu_bankbase[hw][address - memorywriteoffset[hw]], data);
+				WRITE_WORD_A(&cpu_bankbase[hw][address - memorywriteoffset[hw]], data);
 				return; 
 			}
 		}
@@ -604,11 +604,11 @@ MAMEGO_HOT void cpu_writemem24bew_dword(offs_t address,data_t data)
 
 		/* process each word */ 
 		if (hw1 <= HT_BANKMAX)
-			WRITE_WORD(&cpu_bankbase[hw1][address - memorywriteoffset[hw1]], word1);
+			WRITE_WORD_A(&cpu_bankbase[hw1][address - memorywriteoffset[hw1]], word1);
 		else
 			(*memorywritehandler[hw1])(address - memorywriteoffset[hw1], word1);
 		if (hw2 <= HT_BANKMAX)
-			WRITE_WORD(&cpu_bankbase[hw2][address2 - memorywriteoffset[hw2]], word2);
+			WRITE_WORD_A(&cpu_bankbase[hw2][address2 - memorywriteoffset[hw2]], word2);
 		else
 			(*memorywritehandler[hw2])(address2 - memorywriteoffset[hw2], word2);
 	}
@@ -937,7 +937,7 @@ MAMEGO_HOT void cpu_writemem32_word(offs_t address,data_t data)
 		hw = cur_mwhard[(uint32_t)address >> (ABITS2_32 + ABITS_MIN_32)];
 		if (hw <= HT_BANKMAX)
 		{
-			WRITE_WORD(&cpu_bankbase[hw][address - memorywriteoffset[hw]], data);
+			WRITE_WORD_A(&cpu_bankbase[hw][address - memorywriteoffset[hw]], data);
 			return; 
 		}
 
@@ -948,7 +948,7 @@ MAMEGO_HOT void cpu_writemem32_word(offs_t address,data_t data)
 			hw = writehardware[(hw << MH_SBITS) + (((uint32_t)address >> ABITS_MIN_32) & MHMASK(ABITS2_32))]; 
 			if (hw <= HT_BANKMAX)
 			{
-				WRITE_WORD(&cpu_bankbase[hw][address - memorywriteoffset[hw]], data);
+				WRITE_WORD_A(&cpu_bankbase[hw][address - memorywriteoffset[hw]], data);
 				return; 
 			}
 		}
@@ -1000,11 +1000,11 @@ MAMEGO_HOT void cpu_writemem32_dword(offs_t address,data_t data)
 
 		/* process each word */ 
 		if (hw1 <= HT_BANKMAX)
-			WRITE_WORD(&cpu_bankbase[hw1][address - memorywriteoffset[hw1]], word1);
+			WRITE_WORD_A(&cpu_bankbase[hw1][address - memorywriteoffset[hw1]], word1);
 		else
 			(*memorywritehandler[hw1])(address - memorywriteoffset[hw1], word1);
 		if (hw2 <= HT_BANKMAX)
-			WRITE_WORD(&cpu_bankbase[hw2][address2 - memorywriteoffset[hw2]], word2);
+			WRITE_WORD_A(&cpu_bankbase[hw2][address2 - memorywriteoffset[hw2]], word2);
 		else
 			(*memorywritehandler[hw2])(address2 - memorywriteoffset[hw2], word2);
 	}

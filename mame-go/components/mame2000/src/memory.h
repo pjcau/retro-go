@@ -291,6 +291,10 @@ extern unsigned char *cpu_bankbase[];	/* array of bank bases */
     #define READ_WORD(a)      _mame_read_word((a))
     #define WRITE_WORD(a,d)   _mame_write_word((a), (uint16_t)(d))
 #endif
+/* mame-go: ALIGN_SHORTS makes READ_WORD two byte loads. The 16-bit CPUs'
+   RAM/ROM paths (even address, even bank base) use one aligned access. */
+#define READ_WORD_A(a)      (*(const uint16_t *)(a))
+#define WRITE_WORD_A(a,d)   (*(uint16_t *)(a) = (uint16_t)(d))
 #define COMBINE_WORD(w,d)	  (((w) & ((d) >> 16)) | ((d) & 0xffff))
 #define COMBINE_WORD_MEM(a,d) (WRITE_WORD((a), (READ_WORD(a) & ((d) >> 16)) | (d)))
 

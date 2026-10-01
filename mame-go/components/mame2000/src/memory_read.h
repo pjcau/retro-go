@@ -426,7 +426,7 @@ MAMEGO_HOT data_t cpu_readmem24bew_word(offs_t address)
 		/* first-level lookup */
 		hw = cur_mrhard[(uint32_t)address >> (ABITS2_24BEW + ABITS_MIN_24BEW)];
 		if (hw <= HT_BANKMAX)
-			return READ_WORD(&cpu_bankbase[hw][address - memoryreadoffset[hw]]);
+			return READ_WORD_A(&cpu_bankbase[hw][address - memoryreadoffset[hw]]);
 
 		/* second-level lookup */
 		if (hw >= MH_HARDMAX)
@@ -434,7 +434,7 @@ MAMEGO_HOT data_t cpu_readmem24bew_word(offs_t address)
 			hw -= MH_HARDMAX;
 			hw = readhardware[(hw << MH_SBITS) + (((uint32_t)address >> ABITS_MIN_24BEW) & MHMASK(ABITS2_24BEW))];
 			if (hw <= HT_BANKMAX)
-				return READ_WORD(&cpu_bankbase[hw][address - memoryreadoffset[hw]]);
+				return READ_WORD_A(&cpu_bankbase[hw][address - memoryreadoffset[hw]]);
 		}
 
 		/* fall back to handler */
@@ -476,11 +476,11 @@ MAMEGO_HOT data_t cpu_readmem24bew_dword(offs_t address)
 
 		/* process each word */ 
 		if (hw1 <= HT_BANKMAX)
-			word1 = READ_WORD(&cpu_bankbase[hw1][address - memoryreadoffset[hw1]]); 
+			word1 = READ_WORD_A(&cpu_bankbase[hw1][address - memoryreadoffset[hw1]]); 
 		else
 			word1 = (*memoryreadhandler[hw1])(address - memoryreadoffset[hw1]); 
 		if (hw2 <= HT_BANKMAX)
-			word2 = READ_WORD(&cpu_bankbase[hw2][address2 - memoryreadoffset[hw2]]);
+			word2 = READ_WORD_A(&cpu_bankbase[hw2][address2 - memoryreadoffset[hw2]]);
 		else
 			word2 = (*memoryreadhandler[hw2])(address2 - memoryreadoffset[hw2]);
 
@@ -759,7 +759,7 @@ MAMEGO_HOT data_t cpu_readmem32_word(offs_t address)
 		/* first-level lookup */
 		hw = cur_mrhard[(uint32_t)address >> (ABITS2_32 + ABITS_MIN_32)];
 		if (hw <= HT_BANKMAX)
-			return READ_WORD(&cpu_bankbase[hw][address - memoryreadoffset[hw]]);
+			return READ_WORD_A(&cpu_bankbase[hw][address - memoryreadoffset[hw]]);
 
 		/* second-level lookup */
 		if (hw >= MH_HARDMAX)
@@ -767,7 +767,7 @@ MAMEGO_HOT data_t cpu_readmem32_word(offs_t address)
 			hw -= MH_HARDMAX;
 			hw = readhardware[(hw << MH_SBITS) + (((uint32_t)address >> ABITS_MIN_32) & MHMASK(ABITS2_32))];
 			if (hw <= HT_BANKMAX)
-				return READ_WORD(&cpu_bankbase[hw][address - memoryreadoffset[hw]]);
+				return READ_WORD_A(&cpu_bankbase[hw][address - memoryreadoffset[hw]]);
 		}
 
 		/* fall back to handler */
@@ -811,11 +811,11 @@ MAMEGO_HOT data_t cpu_readmem32_dword(offs_t address)
 
 		/* process each word */ 
 		if (hw1 <= HT_BANKMAX)
-			word1 = READ_WORD(&cpu_bankbase[hw1][address - memoryreadoffset[hw1]]); 
+			word1 = READ_WORD_A(&cpu_bankbase[hw1][address - memoryreadoffset[hw1]]); 
 		else
 			word1 = (*memoryreadhandler[hw1])(address - memoryreadoffset[hw1]); 
 		if (hw2 <= HT_BANKMAX)
-			word2 = READ_WORD(&cpu_bankbase[hw2][address2 - memoryreadoffset[hw2]]);
+			word2 = READ_WORD_A(&cpu_bankbase[hw2][address2 - memoryreadoffset[hw2]]);
 		else
 			word2 = (*memoryreadhandler[hw2])(address2 - memoryreadoffset[hw2]);
 
