@@ -9,6 +9,20 @@ static unsigned char *game_palette;	/* RGB palette as set by the driver. */
 static unsigned char *new_palette;	/* changes to the palette are stored here before */
 							/* being moved to game_palette by palette_recalc() */
 static unsigned char *palette_dirty;
+#ifdef MAMEGO
+/* palette_recalc_8() and palette_init_used_colors() walk all the colours (4096
+ * on the Neo Geo, in PSRAM) every frame, ~9 % of core 0 in Metal Slug, though
+ * from one frame to the next nothing usually changes:
+ * - palette_dirty_any: palette_change_color() marked a colour dirty;
+ * - used_base: the pen_visiblecount / pen_cachedcount part of the used colours,
+ *   rebuilt only when a usage count changed (used_base_dirty). */
+static int palette_dirty_any;
+static unsigned char *used_base;
+static int used_base_dirty = 1;
+#define USED_BASE_DIRTY() (used_base_dirty = 1)
+#else
+#define USED_BASE_DIRTY() ((void)0)
+#endif
 /* arrays which keep track of colors actually used, to help in the palette shrinking. */
 unsigned char *palette_used_colors;
 static unsigned char *old_used_colors;
@@ -115,6 +129,7 @@ int palette_start(void)
 		pen_cachedcount = pen_visiblecount + Machine->drv->total_colors;
 		memset(pen_visiblecount,0,Machine->drv->total_colors * sizeof(int));
 		memset(pen_cachedcount,0,Machine->drv->total_colors * sizeof(int));
+		USED_BASE_DIRTY();
 	}
 	else palette_used_colors = old_used_colors = just_remapped = new_palette = palette_dirty = 0;
 
@@ -146,6 +161,12 @@ void palette_stop(void)
 	palette_used_colors = old_used_colors = just_remapped = new_palette = palette_dirty = 0;
 	free(pen_visiblecount);
 	pen_visiblecount = 0;
+#ifdef MAMEGO
+	free(used_base);
+	used_base = 0;
+	used_base_dirty = 1;
+	palette_dirty_any = 0;
+#endif
 	free(game_palette);
 	game_palette = 0;
 	free(palette_map);
@@ -465,6 +486,9 @@ static INLINE void palette_change_color_8(int color,unsigned char red,unsigned c
 		new_palette[3*color + 1] = green;
 		new_palette[3*color + 2] = blue;
 		palette_dirty[color] = 1;
+#ifdef MAMEGO
+		palette_dirty_any = 1;
+#endif
 	}
 	/* otherwise, just update the array */
 	else
@@ -508,6 +532,7 @@ logerror("error: palette_change_color() called with color %d, but only %d alloca
 
 void palette_increase_usage_count(int table_offset,unsigned int usage_mask,int color_flags)
 {
+	USED_BASE_DIRTY();
 	/* if we are not dynamically reducing the palette, return immediately. */
 	if (palette_used_colors == 0) return;
 
@@ -527,6 +552,7 @@ void palette_increase_usage_count(int table_offset,unsigned int usage_mask,int c
 
 void palette_decrease_usage_count(int table_offset,unsigned int usage_mask,int color_flags)
 {
+	USED_BASE_DIRTY();
 	/* if we are not dynamically reducing the palette, return immediately. */
 	if (palette_used_colors == 0) return;
 
@@ -546,6 +572,7 @@ void palette_decrease_usage_count(int table_offset,unsigned int usage_mask,int c
 
 void palette_increase_usage_countx(int table_offset,int num_pens,const unsigned char *pen_data,int color_flags)
 {
+	USED_BASE_DIRTY();
 	char flag[256];
 	memset(flag,0,256);
 
@@ -565,6 +592,7 @@ void palette_increase_usage_countx(int table_offset,int num_pens,const unsigned 
 
 void palette_decrease_usage_countx(int table_offset, int num_pens, const unsigned char *pen_data,int color_flags)
 {
+	USED_BASE_DIRTY();
 	char flag[256];
 	memset(flag,0,256);
 
@@ -590,6 +618,13 @@ void palette_init_used_colors(void)
 	/* if we are not dynamically reducing the palette, return immediately. */
 	if (palette_used_colors == 0) return;
 
+#ifdef MAMEGO
+	if (!used_base_dirty && used_base)
+	{
+		memcpy(palette_used_colors, used_base, Machine->drv->total_colors);
+		return;
+	}
+#endif
 	memset(palette_used_colors,PALETTE_COLOR_UNUSED,Machine->drv->total_colors * sizeof(unsigned char));
 
 	for (pen = 0;pen < Machine->drv->total_colors;pen++)
@@ -597,6 +632,14 @@ void palette_init_used_colors(void)
 		if (pen_visiblecount[pen]) palette_used_colors[pen] |= PALETTE_COLOR_VISIBLE;
 		if (pen_cachedcount[pen]) palette_used_colors[pen] |= PALETTE_COLOR_CACHED;
 	}
+#ifdef MAMEGO
+	if (!used_base) used_base = malloc(Machine->drv->total_colors);
+	if (used_base)
+	{
+		memcpy(used_base, palette_used_colors, Machine->drv->total_colors);
+		used_base_dirty = 0;
+	}
+#endif
 }
 
 
@@ -812,6 +855,13 @@ static const unsigned char *palette_recalc_8(void)
 	int need,avail;
 
 
+#ifdef MAMEGO
+	/* nothing to apply and the same colours in use as last time: every loop
+	 * below would leave everything as it is, and the result would be 0 */
+	if (!palette_dirty_any && !memcmp(palette_used_colors, old_used_colors, Machine->drv->total_colors))
+		return 0;
+	palette_dirty_any = 0;      /* the loop below applies every dirty colour */
+#endif
 	memset(just_remapped,0,Machine->drv->total_colors * sizeof(unsigned char));
 
 

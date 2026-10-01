@@ -73,9 +73,10 @@ static bool environment_cb(unsigned cmd, void *data)
 
 #ifdef MAMEPROF
 /* `MAMEPROF=1`: sampling profiler, core 0's interrupted PC at every FreeRTOS
- * tick (1 kHz); "MAMESAMPLE pc count %" lines once, after 1800 frames
+ * tick (1 kHz), in 64-byte slices; "MAMESAMPLE pc count %" lines (the top 100) once, after 1800 frames
  * (symbols: xtensa-esp32s3-elf-addr2line -e build/mame-go.elf). The port keeps
  * the task's exception frame pointer in its TCB: word 1 is the PC. */
+#include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_freertos_hooks.h>
 #include <esp_heap_caps.h>
@@ -88,7 +89,7 @@ static void IRAM_ATTR samp_tick(void)
     if (!samp_on) return;
     TaskHandle_t t = xTaskGetCurrentTaskHandleForCore(0);
     if (!t) return;
-    uint32_t pc = (*(uint32_t **)t)[1], h = (pc >> 2) & (SAMP_N - 1);
+    uint32_t pc = (*(uint32_t **)t)[1] & ~63u, h = (pc >> 6) & (SAMP_N - 1);   /* 64-byte slices */
     samp_total++;
     for (int i = 0; i < 16; i++, h = (h + 1) & (SAMP_N - 1))
         if (samp[h].pc == pc || samp[h].n == 0) { samp[h].pc = pc; samp[h].n++; return; }
@@ -101,7 +102,7 @@ static void samp_start(void)
 static void samp_dump(void)
 {
     samp_on = false;
-    for (int k = 0; k < 40; k++)
+    for (int k = 0; k < 100; k++)
     {
         int best = -1;
         for (int i = 0; i < SAMP_N; i++)
