@@ -1165,7 +1165,7 @@ void copyrozbitmap(struct osd_bitmap *dest,struct osd_bitmap *src,
 
 
 /* fill a bitmap using the specified pen */
-void fillbitmap(struct osd_bitmap *dest,int pen,const struct rectangle *clip)
+MAMEGO_HOT void fillbitmap(struct osd_bitmap *dest,int pen,const struct rectangle *clip)
 {
 	int sx,sy,ex,ey,y;
 	struct rectangle myclip;

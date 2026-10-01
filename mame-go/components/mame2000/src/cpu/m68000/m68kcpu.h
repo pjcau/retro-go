@@ -874,7 +874,7 @@ static INLINE void m68ki_check_interrupts(void);            /* ASG: check for in
 
 /* ---------------------------- Read Immediate ---------------------------- */
 
-static INLINE uint m68ki_read_imm_16(void)
+MAMEGO_HOT static INLINE uint m68ki_read_imm_16(void)
 {
 	m68ki_set_fc(FLAG_S | FUNCTION_CODE_USER_PROGRAM);
 #if M68K_EMULATE_PREFETCH

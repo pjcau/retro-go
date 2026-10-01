@@ -41,7 +41,7 @@ static const char* copyright_notice =
 /* ======================================================================== */
 
 int  m68ki_initial_cycles;
-int  m68ki_remaining_cycles = 0;                     /* Number of clocks remaining */
+MAMEGO_DRAM int  m68ki_remaining_cycles = 0;                     /* Number of clocks remaining */
 uint m68ki_tracing = 0;
 uint m68ki_address_space;
 
@@ -61,7 +61,7 @@ char* m68ki_cpu_names[9] =
 #endif /* M68K_LOG_ENABLE */
 
 /* The CPU core */
-m68ki_cpu_core m68ki_cpu = {0};
+MAMEGO_DRAM m68ki_cpu_core m68ki_cpu = {0};
 
 
 /* Used by shift & rotate instructions */
@@ -619,7 +619,7 @@ void m68k_set_cpu_type(unsigned int cpu_type)
 
 /* Execute some instructions until we use up num_cycles clock cycles */
 /* ASG: removed per-instruction interrupt checks */
-int m68k_execute(int num_cycles)
+MAMEGO_HOT int m68k_execute(int num_cycles)
 {
 	/* Make sure we're not stopped */
 	if(!CPU_STOPPED)
@@ -939,7 +939,7 @@ void m68k_pchist(unsigned pc, unsigned cycles)
 #define idle_stat(w, r, i) ((void)0)
 #endif
 
-void m68ki_idle_check(void)
+MAMEGO_HOT void m68ki_idle_check(void)
 {
 	uint whash = m68ki_idle_whash, io = m68ki_idle_io;
 	int same = REG_PC == idle_pc && !io && whash == idle_whash && !memcmp(idle_regs, REG_DA, sizeof(idle_regs));

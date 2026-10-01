@@ -603,7 +603,7 @@ WRITE_HANDLER( neo_game_fix_w )
 /******************************************************************************/
 
 
-void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx, /* AJP */
+MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx, /* AJP */
 		unsigned int code,unsigned int color,int flipx,int flipy,int sx,int sy,
 		int zx,int zy,const struct rectangle *clip)
 {
@@ -984,7 +984,7 @@ void NeoMVSDrawGfx16(unsigned char **line,const struct GfxElement *gfx, /* AJP *
 /* do_palette: MAME palette bookkeeping (core 0 only: global palette state);
    do_draw: sprites + fix layer into bitmap, from the given video RAM and the
    frame counter / fix bank of that frame (core 1 when deferred) */
-static void screenrefresh_(struct osd_bitmap *bitmap,const struct rectangle *clip,int do_palette,int do_draw,
+MAMEGO_HOT static void screenrefresh_(struct osd_bitmap *bitmap,const struct rectangle *clip,int do_palette,int do_draw,
 		const unsigned char *vidram,unsigned int neogeo_frame_counter,int fix_bank)
 {
 	int sx =0,sy =0,oy =0,my =0,zx = 1, rzy = 1;

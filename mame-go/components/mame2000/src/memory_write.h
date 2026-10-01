@@ -486,7 +486,7 @@ void cpu_writemem24(offs_t address,data_t data)
 #ifdef MAME_MEMINLINE
 INLINE
 #endif
-void cpu_writemem24bew(offs_t address,data_t data)
+MAMEGO_HOT void cpu_writemem24bew(offs_t address,data_t data)
 {
 	MHELE hw;
 
@@ -529,7 +529,7 @@ void cpu_writemem24bew(offs_t address,data_t data)
 #ifdef MAME_MEMINLINE
 INLINE
 #endif
-void cpu_writemem24bew_word(offs_t address,data_t data)
+MAMEGO_HOT void cpu_writemem24bew_word(offs_t address,data_t data)
 {
 	MHELE hw;
 
@@ -572,7 +572,7 @@ void cpu_writemem24bew_word(offs_t address,data_t data)
 #ifdef MAME_MEMINLINE
 INLINE
 #endif
-void cpu_writemem24bew_dword(offs_t address,data_t data)
+MAMEGO_HOT void cpu_writemem24bew_dword(offs_t address,data_t data)
 {
 	uint16_t word1, word2;
 	MHELE hw1, hw2; 
@@ -883,7 +883,7 @@ void cpu_writemem29_dword(offs_t address,data_t data)
 #ifdef MAME_MEMINLINE
 INLINE
 #endif
-void cpu_writemem32(offs_t address,data_t data)
+MAMEGO_HOT void cpu_writemem32(offs_t address,data_t data)
 {
 	MHELE hw;
 
@@ -926,7 +926,7 @@ void cpu_writemem32(offs_t address,data_t data)
 #ifdef MAME_MEMINLINE
 INLINE
 #endif
-void cpu_writemem32_word(offs_t address,data_t data)
+MAMEGO_HOT void cpu_writemem32_word(offs_t address,data_t data)
 {
 	MHELE hw;
 
@@ -968,7 +968,7 @@ void cpu_writemem32_word(offs_t address,data_t data)
 #ifdef MAME_MEMINLINE
 INLINE
 #endif
-void cpu_writemem32_dword(offs_t address,data_t data)
+MAMEGO_HOT void cpu_writemem32_dword(offs_t address,data_t data)
 {
 	uint16_t word1, word2;
 	MHELE hw1, hw2; 

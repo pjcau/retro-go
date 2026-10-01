@@ -1,6 +1,18 @@
 #ifndef MEMORY_H
 #define MEMORY_H
 
+/* mame-go: the code core 0 runs all the time goes to IRAM, the 68000 state
+   to internal RAM (MAME's .bss is in PSRAM, see linker.lf): the 32 KB
+   instruction cache is shared by Musashi's handlers, MAME and the drivers */
+#if defined(MAMEGO) && defined(ESP_PLATFORM)
+#include "esp_attr.h"
+#define MAMEGO_HOT IRAM_ATTR
+#define MAMEGO_DRAM DRAM_ATTR
+#else
+#define MAMEGO_HOT
+#define MAMEGO_DRAM
+#endif
+
 #include "osd_cpu.h"
 #include <retro_inline.h>
 #include <stddef.h>
