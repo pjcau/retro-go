@@ -89,7 +89,13 @@ static void IRAM_ATTR samp_tick(void)
     if (!samp_on) return;
     TaskHandle_t t = xTaskGetCurrentTaskHandleForCore(0);
     if (!t) return;
-    uint32_t pc = (*(uint32_t **)t)[1] & ~63u, h = (pc >> 6) & (SAMP_N - 1);   /* 64-byte slices */
+    uint32_t *f = *(uint32_t **)t, pc = f[1];
+    /* in the chip's ROM (no symbols): count the caller instead (a0, windowed:
+       the top 2 bits are the call size, the rest the return address) */
+    if (pc < 0x40060000u || (pc & ~63u) == 0x4037e440u)   /* ROM; the wait seen in IRAM */
+        pc = (f[3] & 0x3FFFFFFFu) | 0x40000000u;
+    pc &= ~63u;
+    uint32_t h = (pc >> 6) & (SAMP_N - 1);   /* 64-byte slices */
     samp_total++;
     for (int i = 0; i < 16; i++, h = (h + 1) & (SAMP_N - 1))
         if (samp[h].pc == pc || samp[h].n == 0) { samp[h].pc = pc; samp[h].n++; return; }
@@ -299,7 +305,16 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
 {
     static bool no_memory;
     if (present_busy)
+    {
+#ifdef NEOPROF
+        extern volatile int64_t mamego_wait_us[2];
+        int64_t t0 = rg_system_timer();
         xSemaphoreTake(present_done, portMAX_DELAY);
+        mamego_wait_us[1] += rg_system_timer() - t0;
+#else
+        xSemaphoreTake(present_done, portMAX_DELAY);
+#endif
+    }
     if (!pix) /* the core only waits for the previous frame */
         return 1;
 #ifdef MAMEBENCH

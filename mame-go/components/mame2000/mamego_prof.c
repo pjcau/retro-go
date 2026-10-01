@@ -45,6 +45,8 @@ void mamego_prof_pop(void)
 		depth--;
 }
 
+volatile int64_t mamego_wait_us[2];   /* core 0 waiting for core 1: YM2610, the frame conversion */
+
 void mamego_prof_frame(void)
 {
 	static const char *names[PROF_COUNT] = {"other", "68000", "z80", "ym2610", "video", "mixer", "blit", "out"};
@@ -76,6 +78,8 @@ void mamego_prof_frame(void)
 			disp_prev = disp;
 		}
 		printf(" | sprites deferred %d on core1 %d fallback %d\n", mamego_render_count[0], mamego_render_count[1], mamego_render_count[2]);
+		printf("NEOPROF core0 waits ms/frame: ym2610 %.2f present %.2f\n", mamego_wait_us[0] / 1000.0 / frames, mamego_wait_us[1] / 1000.0 / frames);
+		mamego_wait_us[0] = mamego_wait_us[1] = 0;
 		mamego_render_count[0] = mamego_render_count[1] = mamego_render_count[2] = 0;
 		mamego_core1_us[0] = mamego_core1_us[1] = mamego_core1_us[2] = 0;
 		frame_start = t;

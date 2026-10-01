@@ -2468,7 +2468,17 @@ static void ym_task_main(void *arg)
 static void ym_wait(void)
 {
 	if (ym_busy)
+	{
+#ifdef NEOPROF
+		extern volatile int64_t mamego_wait_us[2];
+		extern int64_t mamego_prof_now(void);
+		int64_t t0 = mamego_prof_now();
 		xSemaphoreTake(ym_done, portMAX_DELAY);
+		mamego_wait_us[0] += mamego_prof_now() - t0;
+#else
+		xSemaphoreTake(ym_done, portMAX_DELAY);
+#endif
+	}
 }
 static void ym_start(void)
 {
