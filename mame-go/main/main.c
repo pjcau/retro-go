@@ -84,10 +84,11 @@ static bool environment_cb(unsigned cmd, void *data)
 static struct { uint32_t pc, n; } *samp;
 static volatile bool samp_on;
 static uint32_t samp_total;
+static uint32_t samp_core;              /* MAMEPROF_CORE=1 builds sample core 1 */
 static void IRAM_ATTR samp_tick(void)
 {
     if (!samp_on) return;
-    TaskHandle_t t = xTaskGetCurrentTaskHandleForCore(0);
+    TaskHandle_t t = xTaskGetCurrentTaskHandleForCore(samp_core);
     if (!t) return;
     uint32_t *f = *(uint32_t **)t, pc = f[1];
     /* in the chip's ROM (no symbols): count the caller instead (a0, windowed:
@@ -103,7 +104,10 @@ static void IRAM_ATTR samp_tick(void)
 static void samp_start(void)
 {
     samp = heap_caps_calloc(SAMP_N, sizeof(*samp), MALLOC_CAP_SPIRAM);
-    if (samp && esp_register_freertos_tick_hook_for_cpu(samp_tick, 0) == ESP_OK) samp_on = true;
+#ifdef MAMEPROF_CORE1
+    samp_core = 1;
+#endif
+    if (samp && esp_register_freertos_tick_hook_for_cpu(samp_tick, samp_core) == ESP_OK) samp_on = true;
 }
 static void samp_dump(void)
 {
@@ -301,6 +305,14 @@ int64_t mamego_display_busy_us(void)
 }
 #endif
 
+/* the conversion task is still needed when the driver left the sprites of the
+   frame to core 1 (mamego_frame_render, builds without NEO_NO_DEFER) */
+static bool present_task_needed(void)
+{
+    extern void (*mamego_frame_render)(void);
+    return mamego_frame_render != NULL;
+}
+
 static int present_indexed(const void *pix, int bits, int width, int height, int pitch, const void *palette, int colors)
 {
     static bool no_memory;
@@ -331,6 +343,34 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
         bench_hash_next = false;
     }
 #endif
+    if (bits == 8 && !present_task_needed())
+    {
+        /* 8-bit pens: the display reads MAME's bitmap itself (a palette
+         * surface, no copy) and looks the colours up while it scales. The
+         * conversion on core 1 (21 % of it in Metal Slug) and a 16-bit
+         * write + read of the frame in PSRAM are gone. MAME draws its next
+         * frame into the other bitmap, the one submitted last time: the
+         * display must be done with it first (core 0 takes longer per frame
+         * than the display, so this does not wait in practice). */
+        static rg_surface_t *ds[2];
+        static int dcur;
+        if (!ds[0] && (!(ds[0] = rg_surface_create(0, 0, RG_PIXEL_PAL565_BE, 0)) ||
+                       !(ds[1] = rg_surface_create(0, 0, RG_PIXEL_PAL565_BE, 0))))
+            return 0;
+        rg_display_sync(true);
+        rg_surface_t *d = ds[dcur];
+        const uint16_t *src_pal = palette;
+        for (int i = 0; i < 256 && i < colors; i++)
+            d->palette[i] = (uint16_t)((src_pal[i] << 8) | (src_pal[i] >> 8));
+        d->data = (void *)pix;
+        d->width = width;
+        d->height = height;
+        d->stride = pitch;
+        d->offset = 0;
+        rg_display_submit(d, 0);
+        dcur ^= 1;
+        return 1;
+    }
     if (no_memory) /* declined once for memory: the core's own path from now on */
         return 0;
     if (!present_task)
