@@ -71,10 +71,86 @@ static bool environment_cb(unsigned cmd, void *data)
     }
 }
 
+#ifdef MAMEPROF
+/* `MAMEPROF=1`: sampling profiler, core 0's interrupted PC at every FreeRTOS
+ * tick (1 kHz); "MAMESAMPLE pc count %" lines once, after 1800 frames
+ * (symbols: xtensa-esp32s3-elf-addr2line -e build/mame-go.elf). The port keeps
+ * the task's exception frame pointer in its TCB: word 1 is the PC. */
+#include <freertos/task.h>
+#include <esp_freertos_hooks.h>
+#include <esp_heap_caps.h>
+#define SAMP_N 4096
+static struct { uint32_t pc, n; } *samp;
+static volatile bool samp_on;
+static uint32_t samp_total;
+static void IRAM_ATTR samp_tick(void)
+{
+    if (!samp_on) return;
+    TaskHandle_t t = xTaskGetCurrentTaskHandleForCore(0);
+    if (!t) return;
+    uint32_t pc = (*(uint32_t **)t)[1], h = (pc >> 2) & (SAMP_N - 1);
+    samp_total++;
+    for (int i = 0; i < 16; i++, h = (h + 1) & (SAMP_N - 1))
+        if (samp[h].pc == pc || samp[h].n == 0) { samp[h].pc = pc; samp[h].n++; return; }
+}
+static void samp_start(void)
+{
+    samp = heap_caps_calloc(SAMP_N, sizeof(*samp), MALLOC_CAP_SPIRAM);
+    if (samp && esp_register_freertos_tick_hook_for_cpu(samp_tick, 0) == ESP_OK) samp_on = true;
+}
+static void samp_dump(void)
+{
+    samp_on = false;
+    for (int k = 0; k < 40; k++)
+    {
+        int best = -1;
+        for (int i = 0; i < SAMP_N; i++)
+            if (samp[i].n && (best < 0 || samp[i].n > samp[best].n)) best = i;
+        if (best < 0) break;
+        printf("MAMESAMPLE %08x %u %.2f\n", (unsigned)samp[best].pc, (unsigned)samp[best].n, 100.0 * samp[best].n / samp_total);
+        samp[best].n = 0;
+    }
+    printf("MAMESAMPLE total %u\n", (unsigned)samp_total);
+}
+#endif
+
+#ifdef MAMEBENCH
+/* `MAMEBENCH=1`: deterministic benchmark. From the resumed state the input
+ * comes from a frame-numbered script, every frame is drawn (no auto frameskip),
+ * and every 300 frames a "MAMEBENCH" console line gives the hash of the frame:
+ * the same build must print the same hashes, and an interpreter change or the
+ * dynarec must not change them. With NEOPROF=1 the ms per part come alongside. */
+static uint32_t bench_frame, bench_hash;
+static bool bench_hash_next;
+
+static uint32_t bench_input(uint32_t f)
+{
+    uint32_t k = RG_KEY_RIGHT;                           /* walk right, fire and jump now and then */
+    if (f % 20 < 2) k |= RG_KEY_A;
+    if (f % 90 < 3) k |= RG_KEY_B;
+    if (f % 600 >= 300 && f % 600 < 360) k = RG_KEY_LEFT | (f % 20 < 2 ? RG_KEY_A : 0);
+    return k;
+}
+#endif
+
 static void video_cb(const void *data, unsigned width, unsigned height, size_t pitch)
 {
     if (!data) /* duplicate frame */
         return;
+#ifdef MAMEBENCH
+    if (bench_hash_next)
+    {
+        uint32_t h = 2166136261u;
+        for (unsigned y = 0; y < height; y++)
+        {
+            const uint16_t *p = (const uint16_t *)((const uint8_t *)data + y * pitch);
+            for (unsigned x = 0; x < width; x++)
+                h = (h ^ p[x]) * 16777619u;
+        }
+        bench_hash = h;
+        bench_hash_next = false;
+    }
+#endif
     static bool single;
     static unsigned failed_w, failed_h;   /* no room for a surface of this size */
     if ((!updates[0] && (width != failed_w || height != failed_h))
@@ -225,6 +301,20 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
         xSemaphoreTake(present_done, portMAX_DELAY);
     if (!pix) /* the core only waits for the previous frame */
         return 1;
+#ifdef MAMEBENCH
+    if (bench_hash_next)                    /* the core's pen bitmap (Neo Geo, CPS1) */
+    {
+        uint32_t h = 2166136261u;
+        for (int y = 0; y < height; y++)
+        {
+            const uint8_t *p = (const uint8_t *)pix + y * pitch * (bits / 8);
+            for (int x = 0; x < width * (bits / 8); x++)
+                h = (h ^ p[x]) * 16777619u;
+        }
+        bench_hash = h;
+        bench_hash_next = false;
+    }
+#endif
     if (no_memory) /* declined once for memory: the core's own path from now on */
         return 0;
     if (!present_task)
@@ -537,10 +627,19 @@ static void mame_task(void *arg)
         late = RG_MAX(late, -2 * frame_us); /* ahead time cannot be banked */
         late = RG_MIN(late, 8 * frame_us);  /* forget long stalls (menus) */
         loop_start = now;
+#ifdef MAMEBENCH
+        if (audio_buffer_status)
+            audio_buffer_status(true, 50, false);    /* draw every frame */
+        joystick = rg_input_read_gamepad();
+        if (!(joystick & (RG_KEY_MENU | RG_KEY_OPTION)))
+            joystick = bench_input(bench_frame);
+        bench_hash_next = bench_frame % 300 == 299;
+#else
         if (audio_buffer_status)
             audio_buffer_status(true, 50, late > frame_us);
 
         joystick = rg_input_read_gamepad();
+#endif
         if (joystick & RG_KEY_MENU)
             rg_gui_game_menu();
         else if (joystick & RG_KEY_OPTION)
@@ -549,6 +648,14 @@ static void mame_task(void *arg)
         int64_t start = rg_system_timer();
         retro_run(); /* audio_batch_cb blocks on the I2S DMA, which paces the loop */
         rg_system_tick(rg_system_timer() - start);
+#ifdef MAMEBENCH
+        if (++bench_frame % 300 == 0)
+            printf("MAMEBENCH frames %u hash %08x\n", (unsigned)bench_frame, (unsigned)bench_hash);
+#ifdef MAMEPROF
+        if (bench_frame == 300) samp_start();       /* after the warm-up */
+        if (bench_frame == 1800) samp_dump();
+#endif
+#endif
     }
 }
 
