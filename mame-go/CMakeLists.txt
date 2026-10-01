@@ -2,8 +2,16 @@ cmake_minimum_required(VERSION 3.5)
 # Arcade: MAME 0.37b5 (mame2000-libretro subset), non-commercial license, see
 # components/mame2000/README_MAMEGO.md
 set(COMPONENTS "main retro-go mame2000")
+# `M68KJIT=1 python rg_tool.py ... build mame-go`: the 68000 dynarec (submodule
+# ../xtensa-68000-dynarec, components m68kjit and xjit)
+if(DEFINED ENV{M68KJIT} AND NOT "$ENV{M68KJIT}" STREQUAL "0")
+    list(APPEND COMPONENTS m68kjit xjit esp_mm)
+endif()
 set(RG_ENABLE_NETWORKING 0)
 include(../base.cmake)
+if(DEFINED ENV{M68KJIT} AND NOT "$ENV{M68KJIT}" STREQUAL "0")
+    list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../xtensa-68000-dynarec/components")
+endif()
 # `NEOPROF=1 python rg_tool.py ... build mame-go`: ms per frame of the 68000,
 # Z80, YM2610, video and mixer, printed every 60 frames (mamego_prof.c)
 # Neo Geo sprites are drawn on core 0: on core 1 they measured the same fps

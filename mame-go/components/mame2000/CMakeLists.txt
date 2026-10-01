@@ -115,7 +115,16 @@ set(COMPONENT_SRCS
 set(COMPONENT_ADD_INCLUDEDIRS "src src/libretro src/libretro/libretro-common/include")
 set(COMPONENT_REQUIRES "retro-go")
 set(COMPONENT_ADD_LDFRAGMENTS "linker.lf")
+# `M68KJIT=1`: the 68000 dynarec of xtensa-68000-dynarec on this Musashi
+# (src/cpu/m68000/m68kmame.c includes its glue, glue/glue_musashi31.c)
+if(DEFINED ENV{M68KJIT} AND NOT "$ENV{M68KJIT}" STREQUAL "0")
+    set(COMPONENT_REQUIRES "retro-go m68kjit")
+    set(COMPONENT_PRIV_INCLUDEDIRS "../../../xtensa-68000-dynarec/components/m68kjit/glue" "src/cpu/m68000")
+endif()
 register_component()
+if(DEFINED ENV{M68KJIT} AND NOT "$ENV{M68KJIT}" STREQUAL "0")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE M68KJIT)
+endif()
 rg_setup_compile_options(
     -O2 -w -fsigned-char -fcommon
     -Wno-error=incompatible-pointer-types -Wno-error=int-conversion

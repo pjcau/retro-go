@@ -159,6 +159,9 @@ void init_neogeo(void)
 
 	/* Set the biosbank */
 	cpu_setbank(3, memory_region(REGION_USER1));
+#ifdef M68KJIT
+	{ extern unsigned m68kjit_fixed_banks; m68kjit_fixed_banks |= 1u << 3; }   /* the BIOS bank never switches */
+#endif
 
 	/* Set the 2nd ROM bank */
     RAM = memory_region(REGION_CPU1);

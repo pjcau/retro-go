@@ -25,8 +25,8 @@ PROJECT_APPS = {
   'prboom-go':    [0, 16, 851968],  # 832 KB: the binary outgrew 768 KB and mkfw.py had already grown the partition on the board
   'gwenesis':     [0, 16, 1048576],
   'duke3d-go':    [0, 16, 1048576],
-  'retro-extra':  [0, 16, 1572864],  # was 1.75 MB: 256 KB moved to mame-go (CPS1), binary 1.43 MB
-  'mame-go':      [0, 16, 1835008],  # 1.75 MB since CPS1 (was 1.5 MB)
+  'retro-extra':  [0, 16, 1310720],  # 1.25 MB since 2026-10-01 (MSX/Lynx/2600 gone, binary ~0.5 MB): 256 KB to mame-go
+  'mame-go':      [0, 16, 2097152],  # 2 MB since 2026-10-01: the 68000 dynarec (M68KJIT, +39 KB) did not fit 1.75 MB
   'wolf3d-go':    [0, 16, 655360],
   'quake-go':     [0, 16, 786432],
   'gbsp':         [0, 16, 851968],  # GBA (gpSP interpreter, from upstream); fMSX removed 2026-09-29 to make room

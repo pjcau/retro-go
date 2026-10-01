@@ -11,10 +11,128 @@
 #include "m68kops.c"
 #include "m68kcpu.c"
 
+#ifdef M68KJIT
+/* The 68000 dynarec (xtensa-68000-dynarec, components/m68kjit) on this Musashi:
+ * blocks are translated from the fixed ROM of the 68000's read map (MRA_ROM
+ * ranges, read from its region as the opcode fetch reads them); banked ROM,
+ * the BIOS bank and RAM stay with the interpreter. Only on machines with one
+ * 68000: the block cache is per address, not per CPU. */
+#include "glue_musashi31.c"
+#include "driver.h"
+#include "esp_heap_caps.h"
+
+int m68kjit_enabled = 1;                /* the engine choice of the app (0: interpreter) */
+/* banks a driver sets once and never switches (bit n: MRA_BANKn), e.g. the Neo
+ * Geo BIOS in bank 3: their code is translated too */
+unsigned m68kjit_fixed_banks;
+/* a block is translated once its address was reached this many times */
+#define M68KJIT_HOT 8
+static int jit_on, jit_pending;
+static unsigned jit_calls;
+
+static struct { unsigned lo, hi; const unsigned char *base; } jit_rom[8];  /* byte at a: base[a] */
+static int jit_nrom;
+
+static bool jit_is_code(uint32_t a, int len)
+{
+	int i;
+	for (i = 0; i < jit_nrom; i++)
+		if (a >= jit_rom[i].lo && a + len - 1 <= jit_rom[i].hi)
+			return true;
+	return false;
+}
+
+static uint16_t jit_read_code16(uint32_t a)
+{
+	int i;
+	for (i = 0; i < jit_nrom; i++)
+		if (a >= jit_rom[i].lo && a + 1 <= jit_rom[i].hi)
+			return READ_WORD(&jit_rom[i].base[a]);
+	return 0;
+}
+
+/* after a few seconds on the interpreter: the code cache gets what PSRAM has
+ * spare, less a margin; with too little the game stays on the interpreter */
+static void jit_start(void)
+{
+	/* one contiguous block (rounded to 64 KB MMU pages), from the largest one PSRAM
+	 * has, leaving it a margin; halved until it fits */
+	size_t spare = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+	size_t block = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+	size_t size = block > 256 * 1024 ? (block - 192 * 1024) & ~(size_t)0xFFFF : 0;
+	jit_pending = 0;
+	if (size > 1024 * 1024) size = 1024 * 1024;
+	for (; size >= 128 * 1024; size = (size / 2) & ~(size_t)0xFFFF)
+		if (glue31_jit_init(jit_is_code, jit_read_code16, size, M68KJIT_HOT))
+		{
+			jit_on = 1;
+			break;
+		}
+	printf("M68KJIT %s: code cache %u KB (PSRAM free %u KB, largest block %u KB)\n", jit_on ? "on" : "off (no room)",
+		jit_on ? (unsigned)(size >> 10) : 0, (unsigned)(spare >> 10), (unsigned)(block >> 10));
+}
+
+static void jit_setup(void)
+{
+	const struct MemoryReadAddress *mra;
+	int i, cpu = -1, n68k = 0;
+	jit_on = 0;
+	jit_nrom = 0;
+	if (!m68kjit_enabled) return;
+	for (i = 0; i < MAX_CPU && Machine->drv->cpu[i].cpu_type; i++)
+		if ((Machine->drv->cpu[i].cpu_type & ~CPU_FLAGS_MASK) == CPU_M68000) { cpu = i; n68k++; }
+	if (n68k != 1) return;
+	for (mra = Machine->drv->cpu[cpu].memory_read; mra && mra->start != -1 && jit_nrom < 8; mra++)
+	{
+		int bank = -(int)(intptr_t)mra->handler - 9;            /* MRA_BANK1 = -10 ... */
+		if (mra->handler == MRA_ROM)
+		{
+			jit_rom[jit_nrom].lo = mra->start;
+			jit_rom[jit_nrom].hi = mra->end;
+			jit_rom[jit_nrom].base = memory_region(REGION_CPU1 + cpu);
+			jit_nrom++;
+		}
+		else if (bank >= 1 && bank <= 16 && (m68kjit_fixed_banks & (1u << bank)) && cpu_bankbase[bank])
+		{
+			jit_rom[jit_nrom].lo = mra->start;
+			jit_rom[jit_nrom].hi = mra->end;
+			jit_rom[jit_nrom].base = cpu_bankbase[bank] - mra->start;   /* bank reads are relative to the range */
+			jit_nrom++;
+		}
+	}
+	/* the dynarec starts later (jit_start): its code cache takes the PSRAM the
+	 * game leaves once it has allocated everything (display surfaces included;
+	 * Metal Slug leaves very little) */
+	jit_pending = jit_nrom > 0;
+	jit_calls = 0;
+	printf("M68KJIT pending: %d fixed ROM range(s)", jit_nrom);
+	for (i = 0; i < jit_nrom; i++) printf(" %06x-%06x", jit_rom[i].lo, jit_rom[i].hi);
+	printf("\n");
+}
+
+/* a console line every ~5 s of 68000 time: what the dynarec does */
+static void jit_report(void)
+{
+	static unsigned calls;
+	if (++calls % 3000) return;
+	int i;
+	printf("M68KJIT blocks %u insns %u native %u links %u runs %u steps %u code %u KB flushes %u; steps by MB:",
+		(unsigned)m68kjit_stats.blocks, (unsigned)m68kjit_stats.insns, (unsigned)m68kjit_stats.native,
+		(unsigned)m68kjit_stats.links, (unsigned)m68kjit_stats.block_runs, (unsigned)m68kjit_stats.steps,
+		(unsigned)(m68kjit_stats.code_bytes >> 10), (unsigned)m68kjit_stats.flushes);
+	for (i = 0; i < 16; i++)
+		if (glue31_steps_by_mb[i]) printf(" %x:%u", i, (unsigned)glue31_steps_by_mb[i]);
+	printf("\n");
+}
+#endif
+
 void m68000_reset(void* param)
 {
 	m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 	m68k_pulse_reset();
+#ifdef M68KJIT
+	jit_setup();                        /* (glue31_jit_init() flushes the blocks) */
+#endif
 }
 
 void m68000_exit(void)
@@ -24,6 +142,15 @@ void m68000_exit(void)
 
 int m68000_execute(int cycles)
 {
+#ifdef M68KJIT
+	if (jit_pending && ++jit_calls == 1500)     /* ~2-3 s of 68000 time slices */
+		jit_start();
+	if (jit_on)
+	{
+		jit_report();
+		return glue31_jit_execute(cycles);
+	}
+#endif
 	return m68k_execute(cycles);
 }
 
