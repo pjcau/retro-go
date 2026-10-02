@@ -8,6 +8,8 @@
 
 #define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 4) // In pixels
 #define RG_TASK_MSG_BAND 2 // msg.dataPtr is an rg_band_t (rg_display_submit_band)
+#define CARRY_ROWS 6       // source rows a band may leave to the next one (a block spans at most lines-per-buffer rows when upscaling)
+#define CARRY_STRIDE 512   // bytes per carried row: the band frame's stride must not exceed it
 
 // static rg_display_driver_t driver;
 static rg_task_t *display_task_queue;
@@ -91,19 +93,61 @@ static int draw_on_screen_display(int region_start, int region_end)
 // Only the display task touches it.
 static struct
 {
-    int next_y;           // first viewport line not yet written
+    int next_block;       // first block (see block_start) not yet written
     int window_top;       // lcd window continuation
     int osd_next_call;
     int lines_updated;
     int64_t time_start;
-    int carry_row;        // a source row kept from the previous band (-1: none), see write_band
-    uint8_t carry[RG_SCREEN_WIDTH * 2 * 2];
+    int carry_first, carry_count;   // source rows kept from the previous band, see write_band
+    uint8_t carry[CARRY_ROWS * CARRY_STRIDE];
 } frame;
 
-// Writes viewport lines [y_begin, y_end) of `update`. The pixels of source row r
-// (counted from the cropped top) are at rows + (r - row_base) * stride, except
-// the carried row, kept in frame.carry.
-static inline void write_lines(const rg_surface_t *update, const void *rows, int row_base, int y_begin, int y_end)
+// The blocks of lines a frame is written in (one lcd buffer each), fixed by the
+// viewport: block k is viewport lines [block_start[k], block_start[k+1]). Bands
+// (V2) write whole blocks, so a band edge never changes which lines a block
+// holds, and the vertical filter blends exactly what it blends on a whole frame.
+static uint16_t block_start[RG_SCREEN_HEIGHT + 2];
+static int block_count;
+
+static void compute_blocks(void)
+{
+    int draw_width = display.viewport.width, draw_height = display.viewport.height;
+    if (display.viewport.left < 0)
+        draw_width += display.viewport.left * 2;
+    if (display.viewport.top < 0)
+        draw_height += display.viewport.top * 2;
+    int lines_per_buffer = draw_width > 0 ? LCD_BUFFER_LENGTH / draw_width : 1;
+    int y = 0, n = 0;
+    while (y < draw_height && n < RG_SCREEN_HEIGHT + 1)
+    {
+        int lines_to_copy = RG_MIN(lines_per_buffer, draw_height - y);
+        // The vertical filter requires a block to start and end with unscaled lines
+        if (display.viewport.filter_y)
+        {
+            while (lines_to_copy > 1 && (LINE_IS_REPEATED(y + lines_to_copy - 1) ||
+                                         LINE_IS_REPEATED(y + lines_to_copy)))
+                --lines_to_copy;
+        }
+        if (lines_to_copy < 1)
+            break;
+        block_start[n++] = y;
+        y += lines_to_copy;
+    }
+    block_start[n] = y;
+    block_count = n;
+}
+
+// The pixels of source row r (counted from the cropped top): rows + (r - row_base) * stride,
+// or the copy kept in frame.carry when the row came with the previous band.
+static inline const void *source_row(const void *rows, int row_base, int stride, int r)
+{
+    if (r >= frame.carry_first && r < frame.carry_first + frame.carry_count)
+        return frame.carry + (r - frame.carry_first) * stride;
+    return rows + (r - row_base) * stride;
+}
+
+// Writes blocks [block_from, block_to) of `update`.
+static inline void write_lines(const rg_surface_t *update, const void *rows, int row_base, int block_from, int block_to)
 {
     bool filter_x = display.viewport.filter_x;
     bool filter_y = display.viewport.filter_y;
@@ -155,23 +199,13 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
     const bool fused_scale = !fast_2x && source_x_count > 0 && crop_left == 0 &&
                              draw_width == display.viewport.width && (format & RG_PIXEL_FORMAT) != RG_PIXEL_888;
 
-    #define SOURCE_ROW(Y) ((map_viewport_to_source_y[Y] == frame.carry_row ? (const void *)frame.carry \
-                           : rows + (map_viewport_to_source_y[Y] - row_base) * stride) + crop_bytes)
+    #define SOURCE_ROW(Y) (source_row(rows, row_base, stride, map_viewport_to_source_y[Y]) + crop_bytes)
 
-    for (int y = y_begin; y < y_end;)
+    (void)lines_per_buffer;
+    for (int k = block_from; k < block_to;)
     {
-        int lines_to_copy = RG_MIN(lines_per_buffer, y_end - y);
-
-        if (lines_to_copy < 1)
-            break;
-
-        // The vertical filter requires a block to start and end with unscaled lines
-        if (filter_y)
-        {
-            while (lines_to_copy > 1 && (LINE_IS_REPEATED(y + lines_to_copy - 1) ||
-                                         LINE_IS_REPEATED(y + lines_to_copy)))
-                --lines_to_copy;
-        }
+        int y = block_start[k];
+        int lines_to_copy = block_start[++k] - y;
 
         uint16_t *line_buffer = lcd_get_buffer(LCD_BUFFER_LENGTH);
         uint16_t *line_buffer_ptr = line_buffer;
@@ -306,16 +340,16 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
         }
     }
     #undef SOURCE_ROW
-    frame.next_y = y_end;
+    frame.next_block = block_to;
 }
 
 static inline void frame_begin(void)
 {
-    frame.next_y = 0;
+    frame.next_block = 0;
     frame.window_top = -1;
     frame.osd_next_call = 20;
     frame.lines_updated = 0;
-    frame.carry_row = -1;
+    frame.carry_first = frame.carry_count = 0;
     frame.time_start = rg_system_timer();
 }
 
@@ -337,54 +371,55 @@ static inline void write_update(const rg_surface_t *update)
     int draw_height = display.viewport.height;
     if (display.viewport.top < 0)
         draw_height += display.viewport.top * 2;
+    (void)draw_height;
     frame_begin();
-    write_lines(update, update->data + update->offset + crop_top * update->stride, 0, 0, draw_height);
+    write_lines(update, update->data + update->offset + crop_top * update->stride, 0, 0, block_count);
     frame_end();
 }
 
 // V2 of the Arcade 60 fps plan: a band of source rows, scaled and sent while the
 // emulator draws the next one. Bands come in order; the first one (first == 0)
-// starts the frame, the one reaching the source height ends it. A band's last
-// source row is kept in frame.carry when the next viewport line repeats it, and
-// its viewport lines are written with the next band (the vertical filter blends
-// a repeated line with the line after it, which is in the next band).
+// starts the frame, the one reaching the source height ends it. A band writes
+// the whole blocks whose source rows it has (with the rows the previous band
+// left in frame.carry); the rows the next block still needs from this band are
+// copied to frame.carry before the band's buffer is released.
 static inline void write_band(const rg_band_t *band)
 {
     const rg_surface_t *update = band->frame;
+    const int stride = update->stride;
     int crop_top = display.viewport.top < 0 ? -display.viewport.top * display.viewport.step_y : 0;
-    int draw_height = display.viewport.height;
-    if (display.viewport.top < 0)
-        draw_height += display.viewport.top * 2;
-    int row_last = band->first + band->count - 1;          // source rows, uncropped
+    int band_lo = band->first - crop_top;                    // the band's rows, cropped-top space
+    int band_hi = band->first + band->count - 1 - crop_top;
     bool last = band->first + band->count >= update->height;
 
     if (band->first == 0)
         frame_begin();
 
-    int y_begin = frame.next_y, y_end = y_begin;
+    int k = frame.next_block;
     if (last)
-        y_end = draw_height;
+        k = block_count;
     else
+        while (k < block_count && map_viewport_to_source_y[block_start[k + 1] - 1] <= band_hi)
+            k++;
+
+    write_lines(update, band->rows, band_lo, frame.next_block, k);
+
+    if (!last && k < block_count)
     {
-        while (y_end < draw_height && map_viewport_to_source_y[y_end] + crop_top <= row_last)
-            y_end++;
-        if (y_end < draw_height && y_end > y_begin && LINE_IS_REPEATED(y_end))
-        {
-            // the next band's first line repeats this band's last row: give every
-            // line of that row to the next band and keep the row for it
-            while (y_end > y_begin && map_viewport_to_source_y[y_end - 1] + crop_top == row_last)
-                y_end--;
-            size_t bytes = RG_MIN(sizeof(frame.carry), (size_t)update->stride);
-            memcpy(frame.carry, band->rows + (row_last - band->first) * update->stride, bytes);
-        }
+        // the rows of this band the next block starts from
+        int need = map_viewport_to_source_y[block_start[k]];
+        if (need < band_lo)
+            need = band_lo;
+        int count = band_hi - need + 1;
+        if (count > CARRY_ROWS || stride > CARRY_STRIDE)
+            RG_PANIC("band carry");                           // never silently wrong pixels
+        if (count > 0)
+            memcpy(frame.carry, band->rows + (need - band_lo) * stride, count * stride);
+        frame.carry_first = need;
+        frame.carry_count = count > 0 ? count : 0;
     }
-
-    // rows are addressed from the cropped top: row_base is the band's first row in that space
-    write_lines(update, band->rows, band->first - crop_top, y_begin, y_end);
-
-    // the carried row stays valid for the next band only
-    frame.carry_row = (y_end < draw_height && !last && map_viewport_to_source_y[y_end] + crop_top == row_last)
-                      ? row_last - crop_top : -1;
+    else
+        frame.carry_count = 0;
 
     if (band->done)
         band->done(band->arg);
@@ -455,6 +490,7 @@ static void update_viewport_scaling(void)
     }
     for (int y = 0; y < screen_height; ++y)
         map_viewport_to_source_y[y] = FLOAT_TO_INT(y * display.viewport.step_y);
+    compute_blocks();
 
     RG_LOGI("%dx%d@%.3f => %dx%d@%.3f left:%d top:%d step_x:%.2f step_y:%.2f", src_width, src_height,
             (float)src_width / src_height, new_width, new_height, (float)new_width / new_height,
@@ -672,7 +708,7 @@ void rg_display_submit_band(const rg_band_t *band)
     const rg_surface_t *update = band->frame;
 
     RG_ASSERT_ARG(band && update && band->rows && band->count > 0);
-    RG_ASSERT_ARG(update->stride <= (int)sizeof(frame.carry)); // one source row must fit the carry
+    RG_ASSERT_ARG(update->stride <= CARRY_STRIDE); // a source row must fit a carry row
 
     if (rg_display_frozen)
     {
