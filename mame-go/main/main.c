@@ -375,10 +375,17 @@ bool mamego_band_setup(size_t bytes)
 
 /* a free band buffer: internal when there is one, else a PSRAM slot, else the
  * next internal one; *psram says which it was */
+extern volatile int rg_display_band_starving;
 void *mamego_band_acquire(int *idx, int *psram)
 {
     *psram = 0;
     if (xQueueReceive(band_free_int, idx, 0) == pdTRUE)
+        return band_buf[*idx];
+    /* short of internal buffers: tell the display, which moves the oldest unsent
+     * internal band to its PSRAM stage and gives the buffer back (one block's
+     * time, ~0.2 ms); a PSRAM slot only when that does not come in time */
+    rg_display_band_starving = 1;
+    if (xQueueReceive(band_free_int, idx, 1) == pdTRUE)
         return band_buf[*idx];
     if (xQueueReceive(band_free_ps, idx, 0) == pdTRUE)
     {
