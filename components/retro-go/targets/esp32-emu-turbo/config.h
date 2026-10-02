@@ -114,4 +114,6 @@
 // (pin 33) are hard-tied to +3V3 on the PCB — neither reaches a GPIO.
 // The driver #ifdef-skips both blocks when the defines are absent
 // (audit R30-CRIT-2; GPIO3 is BTN_R, GPIO45 is BTN_L/VDD_SPI strap).
+#ifndef RG_LCD_I80_CLK_HZ                               // -DRG_LCD_I80_CLK_HZ=... overrides (mame-go: LCD_MHZ=25)
 #define RG_LCD_I80_CLK_HZ           (20 * 1000 * 1000)  // 20 MHz write clock
+#endif

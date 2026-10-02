@@ -4,11 +4,6 @@ cmake_minimum_required(VERSION 3.5)
 set(COMPONENTS "main retro-go mame2000")
 # `M68KJIT=1 python rg_tool.py ... build mame-go`: the 68000 dynarec (submodule
 # ../xtensa-68000-dynarec, components m68kjit and xjit)
-# `M68KJIT_MEMIRQ=1`: the dynarec keeps the flags current before every memory
-# access (interrupts taken inside a handler); off since F2 of the codegen plan
-if(DEFINED ENV{M68KJIT_MEMIRQ} AND NOT "$ENV{M68KJIT_MEMIRQ}" STREQUAL "0")
-    idf_build_set_property(COMPILE_DEFINITIONS "-DM68KJIT_MEMIRQ=1" APPEND)
-endif()
 if(DEFINED ENV{M68KJIT} AND NOT "$ENV{M68KJIT}" STREQUAL "0")
     list(APPEND COMPONENTS m68kjit xjit esp_mm)
 endif()
@@ -24,6 +19,16 @@ endif()
 # (11.8 -> 14 ms). `NEODEFER=1` builds the core-1 renderer for experiments.
 if(NOT DEFINED ENV{NEODEFER} OR NOT "$ENV{NEODEFER}" STREQUAL "1")
     idf_build_set_property(COMPILE_DEFINITIONS "-DNEO_NO_DEFER=1" APPEND)
+endif()
+# `LCD_MHZ=25`: the i80 LCD write clock (default 20 MHz, see the target's config.h);
+# B1 of the Arcade 60 fps plan - the bus is 13.9 ms a full frame at 20 MHz
+if(DEFINED ENV{LCD_MHZ} AND NOT "$ENV{LCD_MHZ}" STREQUAL "")
+    idf_build_set_property(COMPILE_DEFINITIONS "-DRG_LCD_I80_CLK_HZ=($ENV{LCD_MHZ}*1000*1000)" APPEND)
+endif()
+# `M68KJIT_MEMIRQ=1`: the dynarec keeps the flags current before every memory
+# access (interrupts taken inside a handler); off since F2 of the codegen plan
+if(DEFINED ENV{M68KJIT_MEMIRQ} AND NOT "$ENV{M68KJIT_MEMIRQ}" STREQUAL "0")
+    idf_build_set_property(COMPILE_DEFINITIONS "-DM68KJIT_MEMIRQ=1" APPEND)
 endif()
 if(DEFINED ENV{NEOPROF} AND NOT "$ENV{NEOPROF}" STREQUAL "0")
     idf_build_set_property(COMPILE_DEFINITIONS "-DNEOPROF=1" APPEND)
