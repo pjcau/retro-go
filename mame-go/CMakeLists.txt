@@ -23,6 +23,11 @@ endif()
 if(DEFINED ENV{NEOPROF} AND NOT "$ENV{NEOPROF}" STREQUAL "0")
     idf_build_set_property(COMPILE_DEFINITIONS "-DNEOPROF=1" APPEND)
 endif()
+# `NEOBAND=1`: Neo Geo frames drawn in 16-line bands in internal RAM (V1 of the
+# Arcade 60 fps plan, vidhrdw/neogeo_band.c); off until it is proven faster
+if(DEFINED ENV{NEOBAND} AND NOT "$ENV{NEOBAND}" STREQUAL "0")
+    idf_build_set_property(COMPILE_DEFINITIONS "-DNEOBAND=1" APPEND)
+endif()
 # `MAMEPROF=1` (with MAMEBENCH=1): sampling profiler of core 0 (main/main.c)
 if(DEFINED ENV{MAMEPROF} AND NOT "$ENV{MAMEPROF}" STREQUAL "0")
     idf_build_set_property(COMPILE_DEFINITIONS "-DMAMEPROF=1" APPEND)

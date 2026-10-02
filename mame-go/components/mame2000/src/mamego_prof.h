@@ -9,7 +9,8 @@ enum { PROF_OTHER, PROF_CPU0, PROF_CPU1, PROF_YM, PROF_VIDEO, PROF_MIXER, PROF_B
        /* V0 of the Arcade 60 fps plan: the parts of the Neo Geo video time, nested
           inside PROF_VIDEO (vidhrdw/neogeo.c). Printed on their own line; the main
           line's "video" still holds their sum, so mbsum.py reads as before. */
-       PROF_VPAL = PROF_COUNT, PROF_VCLEAR, PROF_VSPR, PROF_VFIX, PROF_ALL };
+       PROF_VPAL = PROF_COUNT, PROF_VCLEAR, PROF_VSPR, PROF_VFIX, PROF_VCOPY, PROF_ALL };
+       /* PROF_VCOPY: the band -> frame bitmap copy of NEOBAND builds (V1 only; V2 removes it) */
 void mamego_prof_push(int part);
 void mamego_prof_pop(void);
 void mamego_prof_frame(void);

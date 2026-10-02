@@ -106,6 +106,9 @@ extern int (*mamego_present_indexed)(const void *pix, int bits, int width, int h
                                      const void *palette, int colors);
 static int render_defer = -1;
 #include "mamego_prof.h"
+#ifndef NEOBAND
+#define NEOBAND 0
+#endif
 /* V0 split of the video time (NEOPROF). The profiler's stack belongs to core 0:
    the core-1 renderer of NEODEFER builds must not touch it. */
 #define VPROF_PUSH(p) do { if (render_defer != 1) PROF_PUSH(p); } while (0)
@@ -998,8 +1001,13 @@ void NeoMVSDrawGfx16(unsigned char **line,const struct GfxElement *gfx, /* AJP *
 /* do_palette: MAME palette bookkeeping (core 0 only: global palette state);
    do_draw: sprites + fix layer into bitmap, from the given video RAM and the
    frame counter / fix bank of that frame (core 1 when deferred) */
+#if NEOBAND
+#include "neogeo_band.c"
+#endif
+
+/* bands: draw this (full-frame, 8-bit) call in bands from the strip list (NEOBAND) */
 MAMEGO_HOT static void screenrefresh_(struct osd_bitmap *bitmap,const struct rectangle *clip,int do_palette,int do_draw,
-		const unsigned char *vidram,unsigned int neogeo_frame_counter,int fix_bank)
+		const unsigned char *vidram,unsigned int neogeo_frame_counter,int fix_bank,int bands)
 {
 	int sx =0,sy =0,oy =0,my =0,zx = 1, rzy = 1;
 	int offs,i,count,y,x;
@@ -1053,12 +1061,29 @@ MAMEGO_HOT static void screenrefresh_(struct osd_bitmap *bitmap,const struct rec
 
 		/* Do compressed palette stuff */
 		VPROF_PUSH(PROF_VPAL);
+#if NEOBAND
+		if (bands && bitmap->depth == 8 && nb_init(bitmap))
+			bands = neoband_palette(clip,vidram,neogeo_frame_counter,fix_bank);  /* one walk: pens and the strip list */
+		else
+			bands = 0;
+		if (!bands)
+#endif
 		neogeo_palette(clip);
 		VPROF_POP();
 		/* no need to check the return code since we redraw everything each frame */
 	}
 	if (!do_draw)
 		return;
+
+#if NEOBAND
+	if (bands)
+	{
+		neoband_draw(bitmap,clip,fix_bank);
+		return;
+	}
+#else
+	(void)bands;
+#endif
 
 	VPROF_PUSH(PROF_VCLEAR);
 	fillbitmap(bitmap,Machine->pens[4095],clip);
@@ -1344,7 +1369,7 @@ for (i = 0;i < 8;i+=2)
 
 static void screenrefresh(struct osd_bitmap *bitmap,const struct rectangle *clip)
 {
-	screenrefresh_(bitmap,clip,1,1,vidram,neogeo_frame_counter,fix_bank);
+	screenrefresh_(bitmap,clip,1,1,vidram,neogeo_frame_counter,fix_bank,0);
 }
 
 #ifdef MAMEGO
@@ -1356,7 +1381,7 @@ static struct { struct osd_bitmap *bitmap; unsigned int frame_counter; int fix_b
 static void neogeo_render_job(void)
 {
 	neospr_frame();
-	screenrefresh_(render_job.bitmap,&Machine->visible_area,0,1,vidram_r,render_job.frame_counter,render_job.fix_bank);
+	screenrefresh_(render_job.bitmap,&Machine->visible_area,0,1,vidram_r,render_job.frame_counter,render_job.fix_bank,0);
 }
 #endif
 
@@ -1386,7 +1411,7 @@ void neogeo_vh_screenrefresh(struct osd_bitmap *bitmap,int full_refresh)
 		/* the renderer still drawing the last frame reads vidram_r and the
 		   palette: wait for it, then palette on core 0, copy, hand over */
 		mamego_present_indexed(0, 0, 0, 0, 0, 0, 0);
-		screenrefresh_(bitmap,&Machine->visible_area,1,0,vidram,neogeo_frame_counter,fix_bank);
+		screenrefresh_(bitmap,&Machine->visible_area,1,0,vidram,neogeo_frame_counter,fix_bank,0);
 		vram_sync();
 		render_job.bitmap = bitmap;
 		render_job.frame_counter = neogeo_frame_counter;
@@ -1400,7 +1425,7 @@ void neogeo_vh_screenrefresh(struct osd_bitmap *bitmap,int full_refresh)
 	if (neospr_active())
 		neospr_frame();
 #endif
-	screenrefresh(bitmap,&Machine->visible_area);
+	screenrefresh_(bitmap,&Machine->visible_area,1,1,vidram,neogeo_frame_counter,fix_bank,1);
 }
 
 static int next_update_first_line;

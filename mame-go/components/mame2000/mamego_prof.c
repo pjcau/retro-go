@@ -78,14 +78,15 @@ void mamego_prof_frame(void)
 			total[i] = 0;
 		}
 		/* V0: the video split and what each part moves through PSRAM (KB per frame) */
-		printf("\nNEOPROF video ms/frame: palette %.2f clear %.2f sprites %.2f fix %.2f rest %.2f"
-			" | KB/frame: clear w %.1f sprites r %.1f w<=%.1f strips %.0f fix r %.1f w<=%.1f tiles %.0f\n",
+		printf("\nNEOPROF video ms/frame: palette %.2f clear %.2f sprites %.2f fix %.2f rest %.2f copy %.2f"
+			" | KB/frame: clear w %.1f sprites r %.1f w<=%.1f strips %.0f fix r %.1f w<=%.1f tiles %.0f copy w %.1f\n",
 			total[PROF_VPAL] / 1000.0 / frames, total[PROF_VCLEAR] / 1000.0 / frames,
 			total[PROF_VSPR] / 1000.0 / frames, total[PROF_VFIX] / 1000.0 / frames,
-			video_rest / 1000.0 / frames,
+			video_rest / 1000.0 / frames, total[PROF_VCOPY] / 1000.0 / frames,
 			bytes_w[PROF_VCLEAR] / 1024.0 / frames,
 			bytes_r[PROF_VSPR] / 1024.0 / frames, bytes_w[PROF_VSPR] / 1024.0 / frames, (double)items[PROF_VSPR] / frames,
-			bytes_r[PROF_VFIX] / 1024.0 / frames, bytes_w[PROF_VFIX] / 1024.0 / frames, (double)items[PROF_VFIX] / frames);
+			bytes_r[PROF_VFIX] / 1024.0 / frames, bytes_w[PROF_VFIX] / 1024.0 / frames, (double)items[PROF_VFIX] / frames,
+			bytes_w[PROF_VCOPY] / 1024.0 / frames);
 		for (i = PROF_COUNT; i < PROF_ALL; i++)
 			total[i] = bytes_r[i] = bytes_w[i] = items[i] = 0;
 		busy1 = mamego_core1_us[0] + mamego_core1_us[1] + mamego_core1_us[2];
