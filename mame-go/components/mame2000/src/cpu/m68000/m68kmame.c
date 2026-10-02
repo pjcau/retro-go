@@ -122,6 +122,11 @@ static void jit_report(void)
 		(unsigned)(m68kjit_stats.code_bytes >> 10), (unsigned)m68kjit_stats.flushes);
 	for (i = 0; i < 16; i++)
 		if (glue31_steps_by_mb[i]) printf(" %x:%u", i, (unsigned)glue31_steps_by_mb[i]);
+	{
+		char bytes[160];
+		m68kjit_stats_bytes(bytes, sizeof bytes);
+		printf("; bytes/insn %s", bytes);
+	}
 	printf("\n");
 }
 #endif

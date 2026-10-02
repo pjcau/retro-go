@@ -46,7 +46,7 @@
 
 
 /* Redirect memory calls */
-#ifdef MAMEGO
+#if defined(MAMEGO) && !defined(FUZZ_MUSASHI31)   /* the dynarec's host fuzz builds this Musashi without memory.c */
 /* mame-go: RAM/ROM/banks (first-level entry <= HT_BANKMAX) are read and
    written right here, without a call into memory.c; anything else (second
    level, handlers, odd addresses) takes the generic path, which looks the
@@ -119,9 +119,14 @@ static __inline__ __attribute__((always_inline)) void m68k_fast_w32(unsigned a, 
 #define m68k_write_memory_32(address, value) cpu_writemem32_dword(address, value)
 #endif
 
+#ifdef FUZZ_MUSASHI31   /* the dynarec's host fuzz: no OP_RAM, the generic read */
+#define m68k_read_immediate_16(address)      cpu_readop_arg16(address)
+#define m68k_read_immediate_32(address)      ((cpu_readop_arg16(address)<<16) | cpu_readop_arg16((address)+2))
+#else
 /* the 68000 PC is always even: one aligned load per opcode word */
 #define m68k_read_immediate_16(address)      READ_WORD_A(&OP_RAM[address])
 #define m68k_read_immediate_32(address)      ((READ_WORD_A(&OP_RAM[address])<<16) | READ_WORD_A(&OP_RAM[(address)+2]))
+#endif
 
 #define m68k_read_disassembler_8(address)    cpu_readmem32(address)
 #define m68k_read_disassembler_16(address)   cpu_readmem32_word(address)
