@@ -4,6 +4,11 @@ cmake_minimum_required(VERSION 3.5)
 set(COMPONENTS "main retro-go mame2000")
 # `M68KJIT=1 python rg_tool.py ... build mame-go`: the 68000 dynarec (submodule
 # ../xtensa-68000-dynarec, components m68kjit and xjit)
+# `M68KJIT_MEMIRQ=1`: the dynarec keeps the flags current before every memory
+# access (interrupts taken inside a handler); off since F2 of the codegen plan
+if(DEFINED ENV{M68KJIT_MEMIRQ} AND NOT "$ENV{M68KJIT_MEMIRQ}" STREQUAL "0")
+    idf_build_set_property(COMPILE_DEFINITIONS "-DM68KJIT_MEMIRQ=1" APPEND)
+endif()
 if(DEFINED ENV{M68KJIT} AND NOT "$ENV{M68KJIT}" STREQUAL "0")
     list(APPEND COMPONENTS m68kjit xjit esp_mm)
 endif()

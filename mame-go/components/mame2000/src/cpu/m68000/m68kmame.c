@@ -126,6 +126,9 @@ static void jit_report(void)
 		char bytes[160];
 		m68kjit_stats_bytes(bytes, sizeof bytes);
 		printf("; bytes/insn %s", bytes);
+#ifdef NEOPROF
+		printf("; irq in mem call-out %u", (unsigned)glue31_irq_in_mem);
+#endif
 	}
 	printf("\n");
 }
@@ -291,8 +294,17 @@ void m68000_state_save(void *file)
 	m68k_save_context(m68000_save_value);
 }
 
+#if defined(NEOPROF) && defined(M68KJIT)
+extern int glue31_in_mem;
+extern uint32_t glue31_irq_in_mem;
+#define IRQ_IN_MEM_CHECK() do { if (glue31_in_mem) glue31_irq_in_mem++; } while (0)
+#else
+#define IRQ_IN_MEM_CHECK() do {} while (0)
+#endif
+
 void m68000_set_nmi_line(int state)
 {
+	IRQ_IN_MEM_CHECK();
 	switch(state)
 	{
 		case CLEAR_LINE:
@@ -309,6 +321,7 @@ void m68000_set_nmi_line(int state)
 
 void m68000_set_irq_line(int irqline, int state)
 {
+	IRQ_IN_MEM_CHECK();
 	switch(state)
 	{
 		case CLEAR_LINE:
