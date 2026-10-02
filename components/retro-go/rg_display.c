@@ -101,6 +101,7 @@ static struct
     // the stage in PSRAM takes a band only when the emulator is short of buffers
     uint8_t *stage;
     size_t stage_size;
+    bool active;          // a band frame has begun and is not sent yet
     uint32_t id;          // the frame being written; bands carry their frame's id
     uint32_t id_last;     // the id of the latest band accepted
     int avail_rows;       // source rows [0, avail_rows) of frame `id` are in pend (uncropped)
@@ -370,6 +371,7 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
 
 static inline void frame_begin(void)
 {
+    frame.active = true;
     frame.next_block = 0;
     frame.window_top = -1;
     frame.osd_next_call = 20;
@@ -379,6 +381,7 @@ static inline void frame_begin(void)
 
 static inline void frame_end(void)
 {
+    frame.active = false;
     int draw_height = display.viewport.height;
     if (display.viewport.top < 0)
         draw_height += display.viewport.top * 2;
@@ -522,10 +525,10 @@ static void accept_band(const rg_band_t *band)
     }
     if (band->first == 0)
     {
-        if (frame.avail_rows > 0 && frame.next_block < block_count && frame.id_last != frame.id)
+        if (frame.active && frame.id_last != frame.id)
             write_available(update, true);   // two frames behind: finish the old one first
         frame.id_last++;
-        if (frame.avail_rows == 0 && frame.next_block >= block_count)
+        if (!frame.active)
         {
             frame_begin();                   // nothing in flight: this band starts the frame now
             frame.id = frame.id_last;
@@ -655,6 +658,7 @@ static void display_task(void *arg)
                 pend_remove(0);
             frame.next_block = block_count;
             frame.avail_rows = 0;
+            frame.active = false;
             frame.id = frame.id_last;
             update_viewport_scaling();
             // Clear the screen if the viewport doesn't cover the entire screen because garbage could remain on the sides
@@ -881,8 +885,7 @@ void rg_display_submit_band(const rg_band_t *band)
 // cannot wait for the caller itself.
 static inline bool display_busy(void)
 {
-    return rg_task_messages_waiting(display_task_queue) || pend_n > 0 ||
-           (frame.avail_rows > 0 && frame.next_block < block_count);
+    return rg_task_messages_waiting(display_task_queue) || pend_n > 0 || frame.active;
 }
 
 bool rg_display_sync(bool block)
