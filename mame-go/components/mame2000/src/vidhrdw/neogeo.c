@@ -105,6 +105,11 @@ void (*mamego_frame_render)(void);
 extern int (*mamego_present_indexed)(const void *pix, int bits, int width, int height, int pitch,
                                      const void *palette, int colors);
 static int render_defer = -1;
+#include "mamego_prof.h"
+/* V0 split of the video time (NEOPROF). The profiler's stack belongs to core 0:
+   the core-1 renderer of NEODEFER builds must not touch it. */
+#define VPROF_PUSH(p) do { if (render_defer != 1) PROF_PUSH(p); } while (0)
+#define VPROF_POP()   do { if (render_defer != 1) PROF_POP(); } while (0)
 static unsigned char *vidram_r;          /* the renderer's copy of the video RAM */
 #endif
 
@@ -637,6 +642,11 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 	if ((gfx->pen_usage[code] & ~1) == 0)
 		return;
 
+	/* V0: one strip of this tile; 8 bytes of 4-bit pixels read per output row,
+	   at most zx bytes written per row (transparent pixels are skipped) */
+	if (ey >= sy)
+		PROF_BYTES(PROF_VSPR, (ey - sy + 1) * 8, (ey - sy + 1) * zx, 1);
+
    	if(zy==16)
 		 l_y_skip=full_y_skip;
 	else
@@ -823,6 +833,10 @@ void NeoMVSDrawGfx16(unsigned char **line,const struct GfxElement *gfx, /* AJP *
 	/* Check for total transparency, no need to draw */
 	if ((gfx->pen_usage[code] & ~1) == 0)
 		return;
+
+	/* V0: as in NeoMVSDrawGfx, 16-bit pixels */
+	if (ey >= sy)
+		PROF_BYTES(PROF_VSPR, (ey - sy + 1) * 8, (ey - sy + 1) * zx * 2, 1);
 
    	if(zy==16)
 		 l_y_skip=full_y_skip;
@@ -1038,19 +1052,25 @@ MAMEGO_HOT static void screenrefresh_(struct osd_bitmap *bitmap,const struct rec
 		if (palette_swap_pending) swap_palettes();
 
 		/* Do compressed palette stuff */
+		VPROF_PUSH(PROF_VPAL);
 		neogeo_palette(clip);
+		VPROF_POP();
 		/* no need to check the return code since we redraw everything each frame */
 	}
 	if (!do_draw)
 		return;
 
+	VPROF_PUSH(PROF_VCLEAR);
 	fillbitmap(bitmap,Machine->pens[4095],clip);
+	PROF_BYTES(PROF_VCLEAR, 0, (clip->max_y - clip->min_y + 1) * (clip->max_x - clip->min_x + 1) * (bitmap->depth == 16 ? 2 : 1), 1);
+	VPROF_POP();
 
 #ifdef NEO_DEBUG
 if (!dotiles) { 					/* debug */
 #endif
 
 	/* Draw sprites */
+	VPROF_PUSH(PROF_VSPR);
 	for (count=0;count<0x300;count+=2) {
 		t3 = READ_WORD( &vidram[0x10000 + count] );
 		t1 = READ_WORD( &vidram[0x10400 + count] );
@@ -1198,6 +1218,7 @@ if (!dotiles) { 					/* debug */
 			sy +=yskip;
 		}  /* for y */
 	}  /* for count */
+	VPROF_POP();
 
 
 
@@ -1206,6 +1227,7 @@ if (!dotiles) { 					/* debug */
 	pen_usage=gfx->pen_usage;
 
 	/* Character foreground */
+	VPROF_PUSH(PROF_VFIX);
 	for (y=clip->min_y/8; y<=clip->max_y/8; y++) {
 		for (x=0; x<40; x++) {
 
@@ -1215,6 +1237,8 @@ if (!dotiles) { 					/* debug */
 
 			if ((pen_usage[byte1] & ~1) == 0) continue;
 
+			/* an 8x8 tile decoded to one byte per pixel: 64 read, at most 64 written */
+			PROF_BYTES(PROF_VFIX, 64, 64 * (bitmap->depth == 16 ? 2 : 1), 1);
   			drawgfx(bitmap,gfx,
 					byte1,
 					byte2,
@@ -1223,6 +1247,7 @@ if (!dotiles) { 					/* debug */
 					clip,TRANSPARENCY_PEN,0);
   		}
 	}
+	VPROF_POP();
 
 
 
