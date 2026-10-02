@@ -1,0 +1,11 @@
+# Experiment: octal PSRAM at 120 MHz DDR (ESP-IDF marks it experimental). The
+# N16R8 module has quad flash: the F4R8 table allows 120 MHz PSRAM with the
+# flash at 120 MHz SDR. Known risk (IDF docs): after a temperature drift of
+# ~20 C from power-on, PSRAM/flash accesses may crash unless the timing point
+# is retuned from the temperature sensor (enabled here). Use with
+# RG_SDKCONFIG_EXTRA=sdkconfig.psram120; measure, do not ship, until proven.
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_ESPTOOLPY_FLASHFREQ_120M=y
+CONFIG_ESPTOOLPY_FLASHFREQ="120m"
+CONFIG_SPIRAM_SPEED_120M=y
+CONFIG_SPIRAM_TIMING_TUNING_POINT_VIA_TEMPERATURE_SENSOR=y

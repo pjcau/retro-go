@@ -204,7 +204,12 @@ if os.path.exists(f"components/retro-go/targets/{args.target}/env.py"):
             IDF_TARGET = os.getenv("IDF_TARGET")
 
 if os.path.exists(f"components/retro-go/targets/{args.target}/sdkconfig"):
-    os.putenv("SDKCONFIG_DEFAULTS", os.path.abspath(f"components/retro-go/targets/{args.target}/sdkconfig"))
+    defaults = os.path.abspath(f"components/retro-go/targets/{args.target}/sdkconfig")
+    # RG_SDKCONFIG_EXTRA: more defaults files (semicolon-separated, relative to the
+    # target directory), applied on top - e.g. sdkconfig.psram120 for an experiment
+    for extra in filter(None, os.getenv("RG_SDKCONFIG_EXTRA", "").split(";")):
+        defaults += ";" + os.path.abspath(f"components/retro-go/targets/{args.target}/{extra}")
+    os.putenv("SDKCONFIG_DEFAULTS", defaults)
 os.putenv("IDF_TARGET", IDF_TARGET)
 
 command = args.command
