@@ -25,6 +25,10 @@ endif()
 if(DEFINED ENV{LCD_MHZ} AND NOT "$ENV{LCD_MHZ}" STREQUAL "")
     idf_build_set_property(COMPILE_DEFINITIONS "-DRG_LCD_I80_CLK_HZ=($ENV{LCD_MHZ}*1000*1000)" APPEND)
 endif()
+# `NB_LINES=16`: lines per Neo Geo band (default 8, vidhrdw/neogeo_band.c)
+if(DEFINED ENV{NB_LINES} AND NOT "$ENV{NB_LINES}" STREQUAL "")
+    idf_build_set_property(COMPILE_DEFINITIONS "-DNB_LINES=$ENV{NB_LINES}" APPEND)
+endif()
 # `M68KJIT_MEMIRQ=1`: the dynarec keeps the flags current before every memory
 # access (interrupts taken inside a handler); off since F2 of the codegen plan
 if(DEFINED ENV{M68KJIT_MEMIRQ} AND NOT "$ENV{M68KJIT_MEMIRQ}" STREQUAL "0")

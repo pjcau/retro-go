@@ -319,12 +319,17 @@ static bool present_task_needed(void)
  * finished band to the display task (rg_display_submit_band), which scales and
  * sends it while the next band is drawn. The PSRAM frame bitmap is no longer
  * written or read. mamego_band_wait(idx) blocks until buffer idx is free. */
+#ifndef NB_LINES
+#define NB_LINES 8                      /* as vidhrdw/neogeo_band.c */
+#endif
 static rg_surface_t band_frame;        /* format, palette, size of the frame the bands belong to */
 /* Band buffers: BAND_INTERNAL in internal RAM (the fast path), BAND_PSRAM in
  * PSRAM for the moments the emulator outruns the display (its cheap bands,
  * sky and flat ground, come faster than the LCD bus takes them): a band drawn
  * in PSRAM costs that band V1's traffic, but the emulator never waits. */
-#define BAND_INTERNAL 4
+#ifndef BAND_INTERNAL
+#define BAND_INTERNAL (NB_LINES >= 16 ? 2 : 4)   /* the same 11 KB of internal RAM either way */
+#endif
 #define BAND_PSRAM 32
 #define BAND_SLOTS (BAND_INTERNAL + BAND_PSRAM)
 static uint8_t *band_buf[BAND_SLOTS];
