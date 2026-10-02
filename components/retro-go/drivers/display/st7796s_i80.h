@@ -20,7 +20,9 @@ static QueueHandle_t free_bufs;
 static QueueHandle_t pending_bufs;
 static bool window_fresh; // no pixel data sent since the last set_window
 
-#define I80_BUF_COUNT   5
+#ifndef I80_BUF_COUNT
+#define I80_BUF_COUNT   5   /* DMA buffers of LCD_BUFFER_LENGTH pixels (internal RAM); mame-go: LCD_BUFS=3 */
+#endif
 #define I80_BUF_LENGTH  (LCD_BUFFER_LENGTH * 2)  /* bytes (LCD_BUFFER_LENGTH is pixels) */
 
 /* ── DMA completion callback (ISR context) ────────────────────────── */
