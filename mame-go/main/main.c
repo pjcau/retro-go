@@ -313,9 +313,89 @@ static bool present_task_needed(void)
     return mamego_frame_render != NULL;
 }
 
+#if NEOBAND >= 2
+/* V2 of the Arcade 60 fps plan: the Neo Geo renderer (vidhrdw/neogeo_band.c)
+ * draws the frame in 16-line bands in two internal-RAM buffers and hands each
+ * finished band to the display task (rg_display_submit_band), which scales and
+ * sends it while the next band is drawn. The PSRAM frame bitmap is no longer
+ * written or read. mamego_band_wait(idx) blocks until buffer idx is free. */
+static rg_surface_t band_frame;        /* format, palette, size of the frame the bands belong to */
+static rg_band_t bands[2];
+static SemaphoreHandle_t band_free[2];
+static bool bands_presented;           /* this frame went out as bands: present_indexed() has nothing to do */
+
+static void band_done(void *arg)
+{
+    xSemaphoreGive(band_free[(int)(intptr_t)arg]);
+}
+
+void mamego_band_wait(int idx)
+{
+    if (!band_free[idx])
+    {
+        band_free[idx] = xSemaphoreCreateBinary();
+        xSemaphoreGive(band_free[idx]);
+        if (!band_frame.palette)
+            band_frame.palette = malloc(256 * sizeof(uint16_t));
+    }
+    xSemaphoreTake(band_free[idx], portMAX_DELAY);
+}
+
+void mamego_band_present(int idx, const void *rows, int first, int count, int width, int height,
+                         int pitch, const uint16_t *pal)
+{
+    if (first == 0)
+    {
+        for (int i = 0; i < 256; i++)
+            band_frame.palette[i] = (uint16_t)((pal[i] << 8) | (pal[i] >> 8));
+        band_frame.format = RG_PIXEL_PAL565_BE;
+        band_frame.width = width;
+        band_frame.height = height;
+        band_frame.stride = pitch;
+        band_frame.offset = 0;
+        band_frame.data = (void *)rows;  /* not read: the bands carry the pixels */
+    }
+#ifdef MAMEBENCH
+    /* the same bytes in the same order as the whole-frame hash of present_indexed() */
+    static uint32_t h;
+    if (bench_hash_next)
+    {
+        if (first == 0)
+            h = 2166136261u;
+        for (int y = 0; y < count; y++)
+        {
+            const uint8_t *p = (const uint8_t *)rows + y * pitch;
+            for (int x = 0; x < width; x++)
+                h = (h ^ p[x]) * 16777619u;
+        }
+        if (first + count >= height)
+        {
+            bench_hash = h;
+            bench_hash_next = false;
+        }
+    }
+#endif
+    bands[idx].frame = &band_frame;
+    bands[idx].rows = rows;
+    bands[idx].first = first;
+    bands[idx].count = count;
+    bands[idx].done = band_done;
+    bands[idx].arg = (void *)(intptr_t)idx;
+    bands_presented = true;
+    rg_display_submit_band(&bands[idx]);
+}
+#endif
+
 static int present_indexed(const void *pix, int bits, int width, int height, int pitch, const void *palette, int colors)
 {
     static bool no_memory;
+#if NEOBAND >= 2
+    if (bands_presented && pix)          /* the frame is already on its way, band by band */
+    {
+        bands_presented = false;
+        return 1;
+    }
+#endif
     if (present_busy)
     {
 #ifdef NEOPROF

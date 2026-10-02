@@ -108,6 +108,21 @@ void rg_display_clear(uint16_t color_le);
 bool rg_display_sync(bool block);
 void rg_display_force_redraw(void);
 void rg_display_submit(const rg_surface_t *update, uint32_t flags);
+// A band of source rows of the frame `frame` describes (format, palette, width,
+// height, stride; its data is not read): the display scales and sends it as soon
+// as it arrives, while the emulator draws the next band. Bands of a frame come in
+// order, the first with first == 0; the submit blocks until the display task has
+// finished the previous band; `done` is called on the display task when the
+// band's pixels are no longer needed.
+typedef struct
+{
+    const rg_surface_t *frame;
+    const void *rows;        // count rows of frame->stride bytes, source row `first` first
+    int first, count;
+    void (*done)(void *arg);
+    void *arg;
+} rg_band_t;
+void rg_display_submit_band(const rg_band_t *band);
 
 rg_display_counters_t rg_display_get_counters(void);
 const rg_display_t *rg_display_get_info(void);

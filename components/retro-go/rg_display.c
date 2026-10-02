@@ -7,6 +7,7 @@
 #include <string.h>
 
 #define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 4) // In pixels
+#define RG_TASK_MSG_BAND 2 // msg.dataPtr is an rg_band_t (rg_display_submit_band)
 
 // static rg_display_driver_t driver;
 static rg_task_t *display_task_queue;
@@ -86,10 +87,24 @@ static int draw_on_screen_display(int region_start, int region_end)
 
 #define blend_pixels rg_blend_pixels // rg_scale_line.h holds the copy the PC test proves
 
-static inline void write_update(const rg_surface_t *update)
+// The frame being written: what a band (V2) must find again on the next call.
+// Only the display task touches it.
+static struct
 {
-    const int64_t time_start = rg_system_timer();
+    int next_y;           // first viewport line not yet written
+    int window_top;       // lcd window continuation
+    int osd_next_call;
+    int lines_updated;
+    int64_t time_start;
+    int carry_row;        // a source row kept from the previous band (-1: none), see write_band
+    uint8_t carry[RG_SCREEN_WIDTH * 2 * 2];
+} frame;
 
+// Writes viewport lines [y_begin, y_end) of `update`. The pixels of source row r
+// (counted from the cropped top) are at rows + (r - row_base) * stride, except
+// the carried row, kept in frame.carry.
+static inline void write_lines(const rg_surface_t *update, const void *rows, int row_base, int y_begin, int y_end)
+{
     bool filter_x = display.viewport.filter_x;
     bool filter_y = display.viewport.filter_y;
     int draw_left = display.viewport.left;
@@ -98,7 +113,6 @@ static inline void write_update(const rg_surface_t *update)
     int draw_height = display.viewport.height;
 
     int crop_left = 0;
-    int crop_top = 0;
 
     if (draw_left < 0)
     {
@@ -108,16 +122,12 @@ static inline void write_update(const rg_surface_t *update)
     }
 
     if (draw_top < 0)
-    {
-        crop_top += -draw_top * display.viewport.step_y;
         draw_height += draw_top * 2;
-        draw_top = 0;
-    }
 
     const int format = update->format;
     const int stride = update->stride;
-    const void *data = update->data + update->offset + (crop_top * stride) + (crop_left * RG_PIXEL_GET_SIZE(format));
     const uint16_t *palette = update->palette;
+    const size_t crop_bytes = crop_left * RG_PIXEL_GET_SIZE(format);
 
     const bool partial_update = RG_SCREEN_PARTIAL_UPDATES;
 
@@ -125,13 +135,9 @@ static inline void write_update(const rg_surface_t *update)
     // each source pixel becomes two with one 32-bit store instead of a
     // per-pixel map lookup (the display task shares core 1 with emulators)
     const bool fast_2x = !filter_x && format == RG_PIXEL_565_LE && crop_left == 0 &&
-                         draw_width == update->width * 2 && !(update->width & 1) && !((uintptr_t)data & 1);
+                         draw_width == update->width * 2 && !(update->width & 1) && !((uintptr_t)rows & 1);
 
     int lines_per_buffer = LCD_BUFFER_LENGTH / draw_width;
-    int lines_remaining = draw_height;
-    int lines_updated = 0;
-    int window_top = -1;
-    int osd_next_call = 20;
 
     // D1 (Arcade 60 fps plan): the "did this line change" test hashes the source
     // line (the pixels this viewport line is scaled from) and, once per update,
@@ -149,9 +155,12 @@ static inline void write_update(const rg_surface_t *update)
     const bool fused_scale = !fast_2x && source_x_count > 0 && crop_left == 0 &&
                              draw_width == display.viewport.width && (format & RG_PIXEL_FORMAT) != RG_PIXEL_888;
 
-    for (int y = 0; y < draw_height;)
+    #define SOURCE_ROW(Y) ((map_viewport_to_source_y[Y] == frame.carry_row ? (const void *)frame.carry \
+                           : rows + (map_viewport_to_source_y[Y] - row_base) * stride) + crop_bytes)
+
+    for (int y = y_begin; y < y_end;)
     {
-        int lines_to_copy = RG_MIN(lines_per_buffer, lines_remaining);
+        int lines_to_copy = RG_MIN(lines_per_buffer, y_end - y);
 
         if (lines_to_copy < 1)
             break;
@@ -175,7 +184,7 @@ static inline void write_update(const rg_surface_t *update)
             for (int i = 0; i < lines_to_copy; ++i)
             {
                 if (!(i > 0 && LINE_IS_REPEATED(y + i))) // a repeated line carries the previous hash
-                    checksum = rg_line_hash(data + map_viewport_to_source_y[y + i] * stride + src_offset, src_line_bytes, pal_hash);
+                    checksum = rg_line_hash(SOURCE_ROW(y + i) + src_offset, src_line_bytes, pal_hash);
                 if (screen_line_checksum[draw_top + y + i] != checksum)
                 {
                     screen_line_checksum[draw_top + y + i] = checksum;
@@ -196,8 +205,9 @@ static inline void write_update(const rg_surface_t *update)
             }
             else
             {
+                const void *src = SOURCE_ROW(y);
                 #define RENDER_LINE(PTR_TYPE, PIXEL) { \
-                    PTR_TYPE *buffer = (PTR_TYPE *)(data + map_viewport_to_source_y[y] * stride);\
+                    const PTR_TYPE *buffer = (const PTR_TYPE *)src; \
                     for (int xx = 0; xx < draw_width; ++xx) { \
                         int x = map_viewport_to_source_x[xx]; \
                         *line_buffer_ptr++ = (PIXEL); \
@@ -205,11 +215,11 @@ static inline void write_update(const rg_surface_t *update)
                 }
                 if (fast_2x)
                 {
-                    const uint16_t *src = (const uint16_t *)(data + map_viewport_to_source_y[y] * stride);
+                    const uint16_t *src16 = (const uint16_t *)src;
                     uint32_t *dst = (uint32_t *)line_buffer_ptr;
                     for (int x = 0; x < draw_width / 2; x += 2)
                     {
-                        uint32_t a = src[x], b = src[x + 1];
+                        uint32_t a = src16[x], b = src16[x + 1];
                         a = ((a << 8) | (a >> 8)) & 0xFFFF;
                         b = ((b << 8) | (b >> 8)) & 0xFFFF;
                         dst[x] = a | (a << 16);
@@ -220,7 +230,6 @@ static inline void write_update(const rg_surface_t *update)
                 else if (fused_scale)
                 {
                     // D2: pattern-driven scaling with the horizontal filter fused in
-                    const void *src = data + map_viewport_to_source_y[y] * stride;
                     if (format & RG_PIXEL_PALETTE)
                         rg_scale_line_pal(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, draw_width, filter_x);
                     else if (format == RG_PIXEL_565_LE)
@@ -277,11 +286,11 @@ static inline void write_update(const rg_surface_t *update)
         {
             int left = display.screen.margins.left + draw_left;
             int top = display.screen.margins.top + draw_top + y - lines_to_copy;
-            if (top != window_top)
-                lcd_set_window(left, top, draw_width, lines_remaining);
+            if (top != frame.window_top)
+                lcd_set_window(left, top, draw_width, draw_height - (y - lines_to_copy));
             lcd_send_buffer(line_buffer, draw_width * lines_to_copy);
-            window_top = top + lines_to_copy;
-            lines_updated += lines_to_copy;
+            frame.window_top = top + lines_to_copy;
+            frame.lines_updated += lines_to_copy;
         }
         else
         {
@@ -290,20 +299,97 @@ static inline void write_update(const rg_surface_t *update)
         }
 
         // Drawing the OSD as we progress reduces flicker compared to doing it once at the end
-        if (osd_next_call && draw_top + y >= osd_next_call)
+        if (frame.osd_next_call && draw_top + y >= frame.osd_next_call)
         {
-            osd_next_call = draw_on_screen_display(0, draw_top + y);
-            window_top = -1;
+            frame.osd_next_call = draw_on_screen_display(0, draw_top + y);
+            frame.window_top = -1;
         }
-
-        lines_remaining -= lines_to_copy;
     }
+    #undef SOURCE_ROW
+    frame.next_y = y_end;
+}
 
-    if (lines_updated > draw_height * 0.80f)
+static inline void frame_begin(void)
+{
+    frame.next_y = 0;
+    frame.window_top = -1;
+    frame.osd_next_call = 20;
+    frame.lines_updated = 0;
+    frame.carry_row = -1;
+    frame.time_start = rg_system_timer();
+}
+
+static inline void frame_end(void)
+{
+    int draw_height = display.viewport.height;
+    if (display.viewport.top < 0)
+        draw_height += display.viewport.top * 2;
+    if (frame.lines_updated > draw_height * 0.80f)
         counters.fullFrames++;
     else
         counters.partFrames++;
-    counters.busyTime += rg_system_timer() - time_start;
+    counters.busyTime += rg_system_timer() - frame.time_start;
+}
+
+static inline void write_update(const rg_surface_t *update)
+{
+    int crop_top = display.viewport.top < 0 ? -display.viewport.top * display.viewport.step_y : 0;
+    int draw_height = display.viewport.height;
+    if (display.viewport.top < 0)
+        draw_height += display.viewport.top * 2;
+    frame_begin();
+    write_lines(update, update->data + update->offset + crop_top * update->stride, 0, 0, draw_height);
+    frame_end();
+}
+
+// V2 of the Arcade 60 fps plan: a band of source rows, scaled and sent while the
+// emulator draws the next one. Bands come in order; the first one (first == 0)
+// starts the frame, the one reaching the source height ends it. A band's last
+// source row is kept in frame.carry when the next viewport line repeats it, and
+// its viewport lines are written with the next band (the vertical filter blends
+// a repeated line with the line after it, which is in the next band).
+static inline void write_band(const rg_band_t *band)
+{
+    const rg_surface_t *update = band->frame;
+    int crop_top = display.viewport.top < 0 ? -display.viewport.top * display.viewport.step_y : 0;
+    int draw_height = display.viewport.height;
+    if (display.viewport.top < 0)
+        draw_height += display.viewport.top * 2;
+    int row_last = band->first + band->count - 1;          // source rows, uncropped
+    bool last = band->first + band->count >= update->height;
+
+    if (band->first == 0)
+        frame_begin();
+
+    int y_begin = frame.next_y, y_end = y_begin;
+    if (last)
+        y_end = draw_height;
+    else
+    {
+        while (y_end < draw_height && map_viewport_to_source_y[y_end] + crop_top <= row_last)
+            y_end++;
+        if (y_end < draw_height && y_end > y_begin && LINE_IS_REPEATED(y_end))
+        {
+            // the next band's first line repeats this band's last row: give every
+            // line of that row to the next band and keep the row for it
+            while (y_end > y_begin && map_viewport_to_source_y[y_end - 1] + crop_top == row_last)
+                y_end--;
+            size_t bytes = RG_MIN(sizeof(frame.carry), (size_t)update->stride);
+            memcpy(frame.carry, band->rows + (row_last - band->first) * update->stride, bytes);
+        }
+    }
+
+    // rows are addressed from the cropped top: row_base is the band's first row in that space
+    write_lines(update, band->rows, band->first - crop_top, y_begin, y_end);
+
+    // the carried row stays valid for the next band only
+    frame.carry_row = (y_end < draw_height && !last && map_viewport_to_source_y[y_end] + crop_top == row_last)
+                      ? row_last - crop_top : -1;
+
+    if (band->done)
+        band->done(band->arg);
+    if (last)
+        frame_end();
 }
 
 static void update_viewport_scaling(void)
@@ -423,7 +509,10 @@ static void display_task(void *arg)
             display.changed = false;
         }
 
-        write_update(msg.dataPtr);
+        if (msg.type == RG_TASK_MSG_BAND)
+            write_band(msg.dataPtr);
+        else
+            write_update(msg.dataPtr);
         // draw_on_screen_display(0, display.screen.height);
         rg_task_receive(&msg);
 
@@ -575,6 +664,40 @@ void rg_display_submit(const rg_surface_t *update, uint32_t flags)
 
     counters.blockTime += rg_system_timer() - time_start;
     counters.totalFrames++;
+}
+
+void rg_display_submit_band(const rg_band_t *band)
+{
+    const int64_t time_start = rg_system_timer();
+    const rg_surface_t *update = band->frame;
+
+    RG_ASSERT_ARG(band && update && band->rows && band->count > 0);
+    RG_ASSERT_ARG(update->stride <= (int)sizeof(frame.carry)); // one source row must fit the carry
+
+    if (rg_display_frozen)
+    {
+        if (band->done)
+            band->done(band->arg);
+        if (band->first == 0)
+            counters.totalFrames++;
+        return;
+    }
+
+    if (display.source.width != update->width || display.source.height != update->height)
+    {
+        rg_display_sync(true);
+        display.source.width = update->width;
+        display.source.height = update->height;
+        display.changed = true;
+    }
+
+    // the queue holds one message: this blocks until the display task has
+    // finished the previous band, so the emulator runs at most one band ahead
+    rg_task_send(display_task_queue, &(rg_task_msg_t){.type = RG_TASK_MSG_BAND, .dataPtr = band});
+
+    counters.blockTime += rg_system_timer() - time_start;
+    if (band->first == 0)
+        counters.totalFrames++;
 }
 
 bool rg_display_sync(bool block)

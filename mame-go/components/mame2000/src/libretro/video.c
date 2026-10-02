@@ -930,6 +930,49 @@ void osd_update_video_and_audio(struct osd_bitmap *bitmap)
 #endif
 	PROF_POP();
 }
+/* The 8-bit pens -> RGB565 table (gp2x_palette) brought up to date with the
+   palette changes of the frame. Done at the end of each frame below; the band
+   renderer (vidhrdw/neogeo_band.c, NEOBAND >= 2) calls it before its first
+   band, which the display scales while the frame is still being drawn. */
+void mamego_apply_palette8(void)
+{
+	int i;
+	if (dirty_bright)
+	{
+		dirty_bright = 0;
+		for (i = 0;i < 256;i++)
+		{
+			float rate = brightness * brightness_paused_adjust * pow(i / 255.0, 1 / osd_gamma_correction) / 100;
+			bright_lookup[i] = 255 * rate + 0.5;
+		}
+	}
+	if (dirtypalette)
+	{
+		dirtypalette = 0;
+		for (i = 0;i < screen_colors;i++)
+		{
+			if (dirtycolor[i])
+			{
+				unsigned char r,g,b;
+
+				dirtycolor[i] = 0;
+
+				r = current_palette[3*i+0];
+				g = current_palette[3*i+1];
+				b = current_palette[3*i+2];
+				if (i != Machine->uifont->colortable[1])	/* don't adjust the user interface text */
+				{
+					r = bright_lookup[r];
+					g = bright_lookup[g];
+					b = bright_lookup[b];
+				}
+				gp2x_video_color8(i,r,g,b);
+			}
+		}
+		gp2x_video_setpalette();
+	}
+}
+
 static void osd_update_video_and_audio_(struct osd_bitmap *bitmap)
 {
 	int i;
@@ -937,40 +980,7 @@ static void osd_update_video_and_audio_(struct osd_bitmap *bitmap)
 
 	if (bitmap->depth == 8)
 	{
-		if (dirty_bright)
-		{
-			dirty_bright = 0;
-			for (i = 0;i < 256;i++)
-			{
-				float rate = brightness * brightness_paused_adjust * pow(i / 255.0, 1 / osd_gamma_correction) / 100;
-				bright_lookup[i] = 255 * rate + 0.5;
-			}
-		}
-		if (dirtypalette)
-		{
-			dirtypalette = 0;
-			for (i = 0;i < screen_colors;i++)
-			{
-				if (dirtycolor[i])
-				{
-					unsigned char r,g,b;
-
-					dirtycolor[i] = 0;
-
-					r = current_palette[3*i+0];
-					g = current_palette[3*i+1];
-					b = current_palette[3*i+2];
-					if (i != Machine->uifont->colortable[1])	/* don't adjust the user interface text */
-					{
-						r = bright_lookup[r];
-						g = bright_lookup[g];
-						b = bright_lookup[b];
-					}
-					gp2x_video_color8(i,r,g,b);
-				}
-			}
-			gp2x_video_setpalette();
-		}
+		mamego_apply_palette8();
 	}
 	else
 	{

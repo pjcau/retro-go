@@ -46,6 +46,16 @@ static struct nb_node *nb_nodes;
 static uint16_t nb_head[NB_MAX_BANDS], nb_tail[NB_MAX_BANDS];
 static int nb_ntiles, nb_nnodes, nb_overflow;
 static unsigned char *nb_buf;           /* NB_LINES rows of nb_stride bytes, internal RAM */
+#if NEOBAND >= 2
+/* V2: two band buffers; the host (mame-go main.c) scales and sends a finished
+   band on the second core while the next one is drawn into the other buffer */
+static unsigned char *nb_bufs[2];
+extern void mamego_band_wait(int idx);
+extern void mamego_band_present(int idx, const void *rows, int first, int count, int width, int height,
+		int pitch, const unsigned short *pal);
+extern void mamego_apply_palette8(void);
+extern unsigned short gp2x_palette[512];
+#endif
 static unsigned char **nb_lines;        /* the band bitmap's line table, indexed by screen y */
 static int nb_stride, nb_lines_n;
 static struct osd_bitmap nb_bitmap;
@@ -58,6 +68,12 @@ static int nb_init(const struct osd_bitmap *bitmap)
 	nb_stride = ((bitmap->width + 7) & ~7) + 2 * NB_SAFETY;
 	nb_lines_n = bitmap->height;
 	nb_buf = NB_INTERNAL_ALLOC(NB_LINES * nb_stride);
+#if NEOBAND >= 2
+	nb_bufs[0] = nb_buf;
+	nb_bufs[1] = NB_INTERNAL_ALLOC(NB_LINES * nb_stride);
+	if (nb_bufs[1]) memset(nb_bufs[1], 0, NB_LINES * nb_stride);
+	if (!nb_bufs[1]) nb_buf = NULL;
+#endif
 	nb_lines = calloc(nb_lines_n, sizeof *nb_lines);
 	nb_tiles = malloc(NB_MAX_TILES * sizeof *nb_tiles);
 	nb_nodes = malloc(NB_MAX_NODES * sizeof *nb_nodes);
@@ -312,10 +328,19 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 	int nbands = (clip->max_y - clip->min_y) / NB_LINES + 1;
 	int b, y, x, i, width = clip->max_x - clip->min_x + 1;
 
+#if NEOBAND >= 2
+	mamego_apply_palette8();        /* the display scales the first band before the frame ends */
+#endif
 	for (b = 0; b < nbands; b++)
 	{
 		struct rectangle band;
 		int node;
+#if NEOBAND >= 2
+		VPROF_PUSH(PROF_VCOPY);      /* "copy" in V2 builds: waiting for a free band buffer */
+		mamego_band_wait(b & 1);
+		VPROF_POP();
+		nb_buf = nb_bufs[b & 1];
+#endif
 		band.min_x = clip->min_x;
 		band.max_x = clip->max_x;
 		band.min_y = clip->min_y + b * NB_LINES;
@@ -375,11 +400,16 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 			}
 		VPROF_POP();
 
+#if NEOBAND >= 2
+		mamego_band_present(b & 1, nb_lines[band.min_y] + clip->min_x, band.min_y - clip->min_y,
+			band.max_y - band.min_y + 1, width, clip->max_y - clip->min_y + 1, nb_stride, gp2x_palette);
+#else
 		VPROF_PUSH(PROF_VCOPY);
 		for (y = band.min_y; y <= band.max_y; y++)
 			memcpy(bitmap->line[y] + clip->min_x, nb_lines[y] + clip->min_x, width);
 		PROF_BYTES(PROF_VCOPY, 0, width * (band.max_y - band.min_y + 1), 1);
 		VPROF_POP();
+#endif
 
 	}
 }
