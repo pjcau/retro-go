@@ -100,11 +100,14 @@ static struct
     // the stage in PSRAM holding what earlier bands left unscaled
     uint8_t *stage;
     size_t stage_size;
-    int avail_rows;       // source rows [0, avail_rows) can be scaled (stage or live band)
+    int avail_rows;       // source rows [0, avail_rows) of the frame being written can be scaled
     const uint8_t *live_rows;
     int live_first, live_last, live_count;    // cropped-top row space
     void (*live_done)(void *);
     void *live_arg;
+    // the next frame, arriving while this one's tail is still being sent
+    bool next_pending;
+    int next_avail_rows;  // its rows staged or live so far
 } frame;
 
 // The blocks of lines a frame is written in (one lcd buffer each), fixed by the
@@ -354,7 +357,6 @@ static inline void frame_begin(void)
     frame.window_top = -1;
     frame.osd_next_call = 20;
     frame.lines_updated = 0;
-    frame.avail_rows = 0;
     frame.time_start = rg_system_timer();
 }
 
@@ -388,7 +390,10 @@ static inline void write_update(const rg_surface_t *update)
 // the next band arrives first, the live band's rows not yet scaled are copied
 // to a PSRAM stage (the whole frame's layout) and its buffer is released, so
 // the emulator never waits for the display and PSRAM is touched only when
-// the display lags. The blocks are the whole frame's, in order.
+// the display lags. The blocks are the whole frame's, in order. The next
+// frame's bands are accepted while this frame's tail is still being sent
+// (the stage rows they need are above the ones still to be scaled), so the
+// pipeline is a frame deep and the emulator does not stop at the frame edge.
 static void live_release(void)
 {
     if (frame.live_count && frame.live_done)
@@ -401,30 +406,60 @@ static inline int crop_top_rows(void)
     return display.viewport.top < 0 ? -display.viewport.top * display.viewport.step_y : 0;
 }
 
+// the first source row (cropped space) the frame being written still needs
+static inline int need_row(void)
+{
+    return frame.next_block < block_count ? map_viewport_to_source_y[block_start[frame.next_block]] : RG_SCREEN_HEIGHT * 4;
+}
+
+static void stage_live(const rg_surface_t *update)
+{
+    const int stride = update->stride;
+    int from = need_row();
+    if (frame.next_pending)             // the live band belongs to the next frame: keep all of it
+        from = frame.live_first;
+    if (from < frame.live_first)
+        from = frame.live_first;
+    if (from <= frame.live_last)
+        memcpy(frame.stage + (size_t)(from + crop_top_rows()) * stride,
+               frame.live_rows + (size_t)(from - frame.live_first) * stride,
+               (size_t)(frame.live_last - from + 1) * stride);
+    live_release();
+}
+
 // Scale and send the blocks whose rows are available; release the live band
-// once its rows are consumed; unless the frame is complete, stop as soon as
-// another band waits in the queue.
-static void write_available(const rg_surface_t *update, bool complete)
+// once its rows are consumed. Stops when another band waits in the queue
+// unless `drain`; at the end of the frame, the pending next frame takes over.
+static void write_available(const rg_surface_t *update, bool drain)
 {
     const uint8_t *stage_base = frame.stage + (size_t)crop_top_rows() * update->stride;
-    while (frame.next_block < block_count)
+    for (;;)
     {
-        int k = frame.next_block;
-        int last_row = map_viewport_to_source_y[block_start[k + 1] - 1];
-        if (!complete && last_row >= frame.avail_rows)
-            break;
-        if (!complete && rg_task_messages_waiting(display_task_queue))
-            break;
-        write_lines(update, stage_base, 0, k, k + 1);
-        if (frame.live_count && (frame.next_block >= block_count ||
-                                 map_viewport_to_source_y[block_start[frame.next_block]] > frame.live_last))
+        while (frame.next_block < block_count)
+        {
+            int k = frame.next_block;
+            int last_row = map_viewport_to_source_y[block_start[k + 1] - 1];
+            if (last_row >= frame.avail_rows)
+                return;
+            if (!drain && rg_task_messages_waiting(display_task_queue))
+                return;
+            write_lines(update, stage_base, 0, k, k + 1);
+            if (frame.live_count && !frame.next_pending &&
+                (frame.next_block >= block_count || map_viewport_to_source_y[block_start[frame.next_block]] > frame.live_last))
+                live_release();
+        }
+        // the frame is done
+        if (!frame.next_pending)
             live_release();
-    }
-    if (frame.next_block >= block_count)
-    {
-        live_release();
         frame_end();
-        frame.avail_rows = 0;
+        if (!frame.next_pending)
+        {
+            frame.avail_rows = 0;
+            return;
+        }
+        frame_begin();
+        frame.avail_rows = frame.next_avail_rows;
+        frame.next_pending = false;
     }
 }
 
@@ -434,6 +469,7 @@ static void accept_band(const rg_band_t *band)
     const int stride = update->stride;
     size_t need = (size_t)stride * update->height;
     int crop_top = crop_top_rows();
+    int first = band->first - crop_top, last = band->first + band->count - 1 - crop_top;
 
     if (frame.stage_size < need)
     {
@@ -443,31 +479,43 @@ static void accept_band(const rg_band_t *band)
         if (!frame.stage)
             RG_PANIC("band stage");
     }
-    if (band->first == 0)
-    {
-        if (frame.avail_rows > 0 && frame.next_block < block_count)
-            write_available(update, true);            // the previous frame's tail, whatever is waiting
-        frame_begin();
-    }
+    #define FRAME_BUSY() (frame.avail_rows > 0 && frame.next_block < block_count)
+    if (band->first == 0 && frame.next_pending)
+        write_available(update, true);          // two frames behind: finish the old one first
     if (frame.live_count)
     {
-        // the live band is not done: keep its unscaled rows in the stage, free its buffer
-        int need_row = frame.next_block < block_count ? map_viewport_to_source_y[block_start[frame.next_block]] : frame.live_last + 1;
-        if (need_row < frame.live_first)
-            need_row = frame.live_first;
-        if (need_row <= frame.live_last)
-            memcpy(frame.stage + (size_t)(need_row + crop_top) * stride,
-                   frame.live_rows + (size_t)(need_row - frame.live_first) * stride,
-                   (size_t)(frame.live_last - need_row + 1) * stride);
-        live_release();
+        // the live band is not done: its unscaled rows go to the stage, its buffer is freed.
+        // A next-frame band may only use stage rows above what this frame still needs.
+        if (frame.next_pending && FRAME_BUSY() && frame.live_last >= need_row())
+            write_available(update, true);
+        stage_live(update);
     }
+    bool frame_busy = FRAME_BUSY();
+    if (band->first == 0 && frame_busy && !frame.next_pending)
+    {
+        frame.next_pending = true;              // this band starts the next frame
+        frame.next_avail_rows = 0;
+    }
+    else if (band->first == 0)
+        frame_begin();
+    if (frame.next_pending)
+    {
+        if (FRAME_BUSY() && last >= need_row())
+            write_available(update, true);      // the band would reach rows still to be sent
+        if (frame.next_pending)
+            frame.next_avail_rows = last + 1;
+        else
+            frame.avail_rows = last + 1;        // the drain switched frames: this band is the current one
+    }
+    #undef FRAME_BUSY
+    else
+        frame.avail_rows = last + 1;
     frame.live_rows = band->rows;
-    frame.live_first = band->first - crop_top;
-    frame.live_last = band->first + band->count - 1 - crop_top;
+    frame.live_first = first;
+    frame.live_last = last;
     frame.live_count = band->count;
     frame.live_done = band->done;
     frame.live_arg = band->arg;
-    frame.avail_rows = frame.live_last + 1;
 }
 
 static void update_viewport_scaling(void)
@@ -579,6 +627,7 @@ static void display_task(void *arg)
             live_release();
             frame.next_block = block_count;
             frame.avail_rows = 0;
+            frame.next_pending = false;
             update_viewport_scaling();
             // Clear the screen if the viewport doesn't cover the entire screen because garbage could remain on the sides
             if (display.viewport.width < display.screen.width || display.viewport.height < display.screen.height)
@@ -595,10 +644,9 @@ static void display_task(void *arg)
         {
             const rg_band_t *band = msg.dataPtr;
             const rg_surface_t *update = band->frame;
-            bool complete = band->first + band->count >= update->height;
             accept_band(band);
             rg_task_receive(&msg);      // the slot is free before the scaling starts
-            write_available(update, complete);
+            write_available(update, false);
         }
         else
         {
