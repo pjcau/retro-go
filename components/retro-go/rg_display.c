@@ -216,7 +216,9 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
         int y = block_start[k];
         int lines_to_copy = block_start[++k] - y;
 
+        int64_t t_wait = rg_system_timer();
         uint16_t *line_buffer = lcd_get_buffer(LCD_BUFFER_LENGTH);
+        counters.dmaWaitTime += rg_system_timer() - t_wait;
         uint16_t *line_buffer_ptr = line_buffer;
 
         bool need_update = !partial_update;
@@ -332,6 +334,7 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
             if (top != frame.window_top)
                 lcd_set_window(left, top, draw_width, draw_height - (y - lines_to_copy));
             lcd_send_buffer(line_buffer, draw_width * lines_to_copy);
+            counters.sendCount++;
             frame.window_top = top + lines_to_copy;
             frame.lines_updated += lines_to_copy;
         }

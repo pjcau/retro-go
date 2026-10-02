@@ -59,6 +59,8 @@ typedef struct
     int32_t partFrames;
     int64_t blockTime;
     int64_t busyTime;
+    int64_t dmaWaitTime;    // waiting for a free lcd DMA buffer inside the display task (the bus)
+    int64_t sendCount;      // lcd buffers sent
 } rg_display_counters_t;
 
 typedef struct

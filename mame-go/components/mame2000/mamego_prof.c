@@ -20,6 +20,8 @@ int64_t mamego_prof_now(void) { return now_us(); }
 /* host hooks (mame-go main.c): core 1 idle time and display task busy time, in us since start */
 __attribute__((weak)) int64_t mamego_core1_idle_us(void) { return 0; }
 __attribute__((weak)) int64_t mamego_display_busy_us(void) { return 0; }
+__attribute__((weak)) int64_t mamego_display_dmawait_us(void) { return 0; }   /* the display task waiting for a DMA buffer: the LCD bus */
+__attribute__((weak)) int64_t mamego_display_sends(void) { return 0; }        /* lcd buffers sent */
 static int64_t last, total[PROF_ALL], frame_start;
 static uint64_t bytes_r[PROF_ALL], bytes_w[PROF_ALL];
 static uint32_t items[PROF_ALL];
@@ -93,9 +95,13 @@ void mamego_prof_frame(void)
 		printf("\nNEOPROF core1 ms/frame: sprites %.2f convert+display %.2f ym2610 %.2f",
 			mamego_core1_us[0] / 1000.0 / frames, mamego_core1_us[1] / 1000.0 / frames, mamego_core1_us[2] / 1000.0 / frames);
 		{
-			static int64_t idle_prev, disp_prev;
+			static int64_t idle_prev, disp_prev, dma_prev, send_prev;
 			int64_t idle = mamego_core1_idle_us(), disp = mamego_display_busy_us();
-			printf(" display %.2f", (disp - disp_prev) / 1000.0 / frames);
+			int64_t dma = mamego_display_dmawait_us(), sends = mamego_display_sends();
+			printf(" display %.2f dmawait %.2f sends %.0f", (disp - disp_prev) / 1000.0 / frames,
+				(dma - dma_prev) / 1000.0 / frames, (double)(sends - send_prev) / frames);
+			dma_prev = dma;
+			send_prev = sends;
 			if (wall)
 				printf(" | busy core0 %d%% (without blit/wait) core1 %d%% (idle-measured)",
 					(int)(busy0 * 100 / wall), (int)(100 - (idle - idle_prev) * 100 / wall));

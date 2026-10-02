@@ -303,6 +303,14 @@ int64_t mamego_display_busy_us(void)
 {
     return rg_display_get_counters().busyTime;
 }
+int64_t mamego_display_dmawait_us(void)
+{
+    return rg_display_get_counters().dmaWaitTime;
+}
+int64_t mamego_display_sends(void)
+{
+    return rg_display_get_counters().sendCount;
+}
 #endif
 
 /* the conversion task is still needed when the driver left the sprites of the
