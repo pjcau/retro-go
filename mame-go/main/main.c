@@ -712,7 +712,23 @@ static bool load_state_handler(const char *filename)
     bool borrowed;
     void *buf = state_buffer(size, &borrowed);
     FILE *fp = fopen(filename, "rb");
-    bool ok = buf && fp && fread(buf, 1, size, fp) == size && fgetc(fp) == EOF && retro_unserialize(buf, size);
+    size_t got = 0;
+    bool ok = false;
+    const char *why = "no buffer";
+    if (buf && !fp) why = "no file";
+    else if (buf && fp)
+    {
+        got = fread(buf, 1, size, fp);
+        if (got != size) why = "short file";
+        else if (fgetc(fp) != EOF) why = "file larger than the state";
+        else if (!retro_unserialize(buf, size)) why = "refused by the core";
+        else { ok = true; why = "ok"; }
+    }
+    if (!ok)
+    {
+        long len = fp ? (fseek(fp, 0, SEEK_END), ftell(fp)) : -1;
+        RG_LOGW("state %s: %s (state %u bytes, file %ld, read %u)", filename, why, (unsigned)size, len, (unsigned)got);
+    }
     if (fp)
         fclose(fp);
     if (!borrowed)
