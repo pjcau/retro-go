@@ -1,4 +1,5 @@
 #include "rg_system.h"
+#include "rg_line_hash.h"
 #include "rg_display.h"
 
 #include <stdlib.h>
@@ -143,6 +144,19 @@ static inline void write_update(const rg_surface_t *update)
     int window_top = -1;
     int osd_next_call = 20;
 
+    // D1 (Arcade 60 fps plan): the "did this line change" test hashes the source
+    // line (the pixels this viewport line is scaled from) and, once per update,
+    // the palette, instead of the rendered line: fewer bytes (304 pens against
+    // 868 bytes of RGB565 on the Neo Geo), and a block whose lines are all
+    // unchanged is not rendered at all. Same decision as before: identical
+    // source and palette give an identical rendered line.
+    const int src_pixel_size = RG_PIXEL_GET_SIZE(format);
+    const int src_first = fast_2x ? 0 : map_viewport_to_source_x[0];
+    const int src_last = fast_2x ? update->width - 1 : map_viewport_to_source_x[draw_width - 1];
+    const size_t src_offset = src_first * src_pixel_size;
+    const size_t src_line_bytes = (src_last - src_first + 1) * src_pixel_size;
+    const uint32_t pal_hash = (format & RG_PIXEL_PALETTE) ? rg_line_hash(palette, 256 * sizeof(uint16_t), 0) : 0;
+
     for (int y = 0; y < draw_height;)
     {
         int lines_to_copy = RG_MIN(lines_per_buffer, lines_remaining);
@@ -161,9 +175,26 @@ static inline void write_update(const rg_surface_t *update)
         uint16_t *line_buffer = lcd_get_buffer(LCD_BUFFER_LENGTH);
         uint16_t *line_buffer_ptr = line_buffer;
 
-        uint32_t checksum = 0xFFFFFFFF;
         bool need_update = !partial_update;
 
+        if (partial_update)
+        {
+            uint32_t checksum = 0xFFFFFFFF;
+            for (int i = 0; i < lines_to_copy; ++i)
+            {
+                if (!(i > 0 && LINE_IS_REPEATED(y + i))) // a repeated line carries the previous hash
+                    checksum = rg_line_hash(data + map_viewport_to_source_y[y + i] * stride + src_offset, src_line_bytes, pal_hash);
+                if (screen_line_checksum[draw_top + y + i] != checksum)
+                {
+                    screen_line_checksum[draw_top + y + i] = checksum;
+                    need_update = true;
+                }
+            }
+        }
+
+        if (!need_update)
+            y += lines_to_copy;
+        else
         for (int i = 0; i < lines_to_copy; ++i)
         {
             if (i > 0 && LINE_IS_REPEATED(y))
@@ -200,17 +231,6 @@ static inline void write_update(const rg_surface_t *update)
                     RENDER_LINE(uint16_t, (buffer[x] << 8) | (buffer[x] >> 8))
                 else
                     RENDER_LINE(uint16_t, buffer[x])
-
-                if (partial_update)
-                {
-                    checksum = rg_hash((void*)(line_buffer_ptr - draw_width), draw_width * 2);
-                }
-            }
-
-            if (screen_line_checksum[draw_top + y] != checksum)
-            {
-                screen_line_checksum[draw_top + y] = checksum;
-                need_update = true;
             }
 
             ++y;
