@@ -322,7 +322,9 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 		band.max_y = band.min_y + NB_LINES - 1;
 		if (band.max_y > clip->max_y)
 			band.max_y = clip->max_y;
-		for (y = band.min_y; y <= band.max_y; y++)
+		/* every row, not only the band's: drawgfx takes the row pitch from
+		   line[1] - line[0], and the clip keeps it inside the band */
+		for (y = 0; y < nb_bitmap.height; y++)
 			nb_lines[y] = nb_buf + (y - band.min_y) * nb_stride + NB_SAFETY;
 
 		VPROF_PUSH(PROF_VCLEAR);
@@ -330,6 +332,7 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 		VPROF_POP();
 
 		VPROF_PUSH(PROF_VSPR);
+		neoband_exact_top = band.min_y > clip->min_y;
 		for (node = nb_head[b]; node != 0xffff; node = nb_nodes[node].next)
 		{
 			const struct nb_tile *t = &nb_tiles[nb_nodes[node].tile];
@@ -356,6 +359,7 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 			NeoMVSDrawGfx(nb_lines, gfx, t->tileno, t->color, t->flip & 1, t->flip & 2,
 				t->sx, t->sy, t->rzx, t->yskip, &band);
 		}
+		neoband_exact_top = 0;
 		VPROF_POP();
 
 		VPROF_PUSH(PROF_VFIX);
@@ -376,8 +380,6 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 		PROF_BYTES(PROF_VCOPY, 0, width * (band.max_y - band.min_y + 1), 1);
 		VPROF_POP();
 
-		for (y = band.min_y; y <= band.max_y; y++)
-			nb_lines[y] = NULL;
 	}
 }
 

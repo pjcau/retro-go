@@ -611,6 +611,10 @@ WRITE_HANDLER( neo_game_fix_w )
 /******************************************************************************/
 
 
+#if NEOBAND
+static int neoband_exact_top;   /* set by the band renderer below the first band */
+#endif
+
 MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx, /* AJP */
 		unsigned int code,unsigned int color,int flipx,int flipy,int sx,int sy,
 		int zx,int zy,const struct rectangle *clip)
@@ -618,7 +622,7 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 	int /*ox,*/oy,ey,y,dy;
 	unsigned char *bm;
 	int col;
-	int l; /* Line skipping counter */
+	int l, l0; /* Line skipping counter */
 
 	int mydword;
 
@@ -657,6 +661,21 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 
     fspr=get_tile(code);
 
+	l0 = 0;
+#if NEOBAND
+	if (neoband_exact_top && sy > oy && zy != 16)
+	{
+		/* cut at a band boundary: skip the rows above through the y zoom
+		   table, as the full-frame draw (which starts at oy) walks them */
+		int k;
+		dy = flipy ? -2 : 2;
+		fspr += flipy ? 32 - 2 : 0;
+		for (k = 0; k < sy - oy; k++)
+			fspr += l_y_skip[k] * dy;
+		l0 = sy - oy;
+	}
+	else
+#endif
 	if (flipy)	/* Y flip */
 	{
 		dy = -2;
@@ -673,7 +692,7 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 		paldata = &gfx->colortable[gfx->color_granularity * color];
 		if (flipx)	/* X flip */
 		{
-			l=0;
+			l=l0;
 			if(zx==16)
 			{
 				for (y = sy;y <= ey;y++)
@@ -738,7 +757,7 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 		}
 		else		/* normal */
 		{
-	  		l=0;
+	  		l=l0;
 			if(zx==16)
 			{
 				for (y = sy ;y <= ey;y++)
