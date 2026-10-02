@@ -370,6 +370,7 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 				int byte2 = byte1 >> 12;
 				byte1 &= 0xfff;
 				if ((fix_usage[byte1] & ~1) == 0) continue;
+				PROF_BYTES(PROF_VFIX, 64, 64, 1);
 				drawgfx(&nb_bitmap, fixgfx, byte1, byte2, 0, 0, x * 8, y * 8, &band, TRANSPARENCY_PEN, 0);
 			}
 		VPROF_POP();
