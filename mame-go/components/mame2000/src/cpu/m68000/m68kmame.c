@@ -126,6 +126,8 @@ static void jit_report(void)
 		char bytes[160];
 		m68kjit_stats_bytes(bytes, sizeof bytes);
 		printf("; bytes/insn %s", bytes);
+		m68kjit_stats_regs(bytes, sizeof bytes);
+		printf("; regs %s", bytes);
 #ifdef NEOPROF
 		printf("; irq in mem call-out %u", (unsigned)glue31_irq_in_mem);
 #endif
