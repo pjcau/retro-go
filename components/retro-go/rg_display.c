@@ -778,6 +778,8 @@ char *rg_display_get_border(void)
 // from anything else.
 bool rg_display_frozen = false;
 
+static inline bool display_busy(void);
+
 void rg_display_submit(const rg_surface_t *update, uint32_t flags)
 {
     const int64_t time_start = rg_system_timer();
@@ -802,7 +804,7 @@ void rg_display_submit(const rg_surface_t *update, uint32_t flags)
 
     // one update at a time, as when the queue held one message: emulators
     // reuse their frame buffers on the strength of it
-    while (rg_task_messages_waiting(display_task_queue))
+    while (display_busy())
         rg_task_yield();
     rg_task_send(display_task_queue, &(rg_task_msg_t){.dataPtr = update});
 
@@ -842,11 +844,23 @@ void rg_display_submit_band(const rg_band_t *band)
         counters.totalFrames++;
 }
 
+// The display task is busy while a message waits and, with bands (V2h), while
+// a band frame is still being sent after its messages were taken: anyone
+// opening an lcd window of their own meanwhile (rg_display_write_rect, the
+// hourglass of a state load) would interleave two i80 streams and hang the
+// panel. The emulator sends whole frames, so waiting for the frame to end
+// cannot wait for the caller itself.
+static inline bool display_busy(void)
+{
+    return rg_task_messages_waiting(display_task_queue) || frame.next_pending ||
+           (frame.avail_rows > 0 && frame.next_block < block_count);
+}
+
 bool rg_display_sync(bool block)
 {
-    while (block && rg_task_messages_waiting(display_task_queue))
-        continue; // We should probably yield?
-    return !rg_task_messages_waiting(display_task_queue);
+    while (block && display_busy())
+        rg_task_yield();
+    return !display_busy();
 }
 
 void rg_display_write_rect(int left, int top, int width, int height, int stride, const uint16_t *buffer, uint32_t flags)
