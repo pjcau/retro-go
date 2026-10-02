@@ -320,8 +320,9 @@ static bool present_task_needed(void)
  * sends it while the next band is drawn. The PSRAM frame bitmap is no longer
  * written or read. mamego_band_wait(idx) blocks until buffer idx is free. */
 static rg_surface_t band_frame;        /* format, palette, size of the frame the bands belong to */
-static rg_band_t bands[2];
-static SemaphoreHandle_t band_free[2];
+#define BAND_BUFS 4                     /* as NB_BUFS in vidhrdw/neogeo_band.c */
+static rg_band_t bands[BAND_BUFS];
+static SemaphoreHandle_t band_free[BAND_BUFS];
 static bool bands_presented;           /* this frame went out as bands: present_indexed() has nothing to do */
 
 static void band_done(void *arg)

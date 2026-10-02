@@ -23,10 +23,15 @@
 #define NB_INTERNAL_ALLOC(n) malloc(n)
 #endif
 
-#define NB_LINES     16                 /* lines per band */
-#define NB_MAX_BANDS 16                 /* 224 visible lines / 16 = 14 */
+#ifndef NB_LINES
+#define NB_LINES     8                  /* lines per band (V2: 8, so that four buffers fit the internal RAM
+                                           of two 16-line ones and the emulator runs two bands ahead of the
+                                           display's hand-over latency; -DNB_LINES=16 for the old layout) */
+#endif
+#define NB_MAX_BANDS 32                 /* 224 visible lines / 8 = 28 */
+#define NB_BUFS      4                  /* V2: band buffers in flight */
 #define NB_MAX_TILES 4096               /* tile strips per frame; beyond it the frame takes the full-frame path */
-#define NB_MAX_NODES (2 * NB_MAX_TILES) /* a strip of up to 16 lines touches at most two bands */
+#define NB_MAX_NODES (3 * NB_MAX_TILES) /* a strip of up to 16 lines touches at most three 8-line bands */
 #define NB_SAFETY    16                 /* as osd_alloc_bitmap: the plotters write up to 15 pixels past the edges */
 
 struct nb_tile                          /* one NeoMVSDrawGfx call, minus what it recomputes */
@@ -47,9 +52,12 @@ static uint16_t nb_head[NB_MAX_BANDS], nb_tail[NB_MAX_BANDS];
 static int nb_ntiles, nb_nnodes, nb_overflow;
 static unsigned char *nb_buf;           /* NB_LINES rows of nb_stride bytes, internal RAM */
 #if NEOBAND >= 2
-/* V2: two band buffers; the host (mame-go main.c) scales and sends a finished
-   band on the second core while the next one is drawn into the other buffer */
-static unsigned char *nb_bufs[2];
+/* V2: NB_BUFS band buffers; the host (mame-go main.c) scales and sends a
+   finished band on the second core while the next ones are drawn into the
+   others. Every hand-over costs the display's reaction time (~0.4 ms, the
+   block it is sending plus the copy of what is left): with two buffers the
+   emulator paid it on every band, with four it is hidden behind two bands. */
+static unsigned char *nb_bufs[NB_BUFS];
 extern void mamego_band_wait(int idx);
 extern void mamego_band_present(int idx, const void *rows, int first, int count, int width, int height,
 		int pitch, const unsigned short *pal);
@@ -70,9 +78,12 @@ static int nb_init(const struct osd_bitmap *bitmap)
 	nb_buf = NB_INTERNAL_ALLOC(NB_LINES * nb_stride);
 #if NEOBAND >= 2
 	nb_bufs[0] = nb_buf;
-	nb_bufs[1] = NB_INTERNAL_ALLOC(NB_LINES * nb_stride);
-	if (nb_bufs[1]) memset(nb_bufs[1], 0, NB_LINES * nb_stride);
-	if (!nb_bufs[1]) nb_buf = NULL;
+	for (int k = 1; k < NB_BUFS; k++)
+	{
+		nb_bufs[k] = NB_INTERNAL_ALLOC(NB_LINES * nb_stride);
+		if (nb_bufs[k]) memset(nb_bufs[k], 0, NB_LINES * nb_stride);
+		else nb_buf = NULL;
+	}
 #endif
 	nb_lines = calloc(nb_lines_n, sizeof *nb_lines);
 	nb_tiles = malloc(NB_MAX_TILES * sizeof *nb_tiles);
@@ -91,7 +102,7 @@ static int nb_init(const struct osd_bitmap *bitmap)
 	nb_bitmap._private = NULL;
 	nb_bitmap.line = nb_lines;
 	printf("neoband: %d-line bands, %d bytes in internal RAM, %d tile strips a frame\n",
-		NB_LINES, NB_LINES * nb_stride, NB_MAX_TILES);
+		NB_LINES, NB_LINES * nb_stride * (NEOBAND >= 2 ? NB_BUFS : 1), NB_MAX_TILES);
 	nb_ready = 1;
 	return 1;
 }
@@ -337,9 +348,9 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 		int node;
 #if NEOBAND >= 2
 		VPROF_PUSH(PROF_VCOPY);      /* "copy" in V2 builds: waiting for a free band buffer */
-		mamego_band_wait(b & 1);
+		mamego_band_wait(b % NB_BUFS);
 		VPROF_POP();
-		nb_buf = nb_bufs[b & 1];
+		nb_buf = nb_bufs[b % NB_BUFS];
 #endif
 		band.min_x = clip->min_x;
 		band.max_x = clip->max_x;
@@ -401,7 +412,7 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 		VPROF_POP();
 
 #if NEOBAND >= 2
-		mamego_band_present(b & 1, nb_lines[band.min_y] + clip->min_x, band.min_y - clip->min_y,
+		mamego_band_present(b % NB_BUFS, nb_lines[band.min_y] + clip->min_x, band.min_y - clip->min_y,
 			band.max_y - band.min_y + 1, width, clip->max_y - clip->min_y + 1, nb_stride, gp2x_palette);
 #else
 		VPROF_PUSH(PROF_VCOPY);
