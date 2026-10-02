@@ -320,26 +320,60 @@ static bool present_task_needed(void)
  * sends it while the next band is drawn. The PSRAM frame bitmap is no longer
  * written or read. mamego_band_wait(idx) blocks until buffer idx is free. */
 static rg_surface_t band_frame;        /* format, palette, size of the frame the bands belong to */
-#define BAND_BUFS 4                     /* as NB_BUFS in vidhrdw/neogeo_band.c */
-static rg_band_t bands[BAND_BUFS];
-static SemaphoreHandle_t band_free[BAND_BUFS];
+/* Band buffers: BAND_INTERNAL in internal RAM (the fast path), BAND_PSRAM in
+ * PSRAM for the moments the emulator outruns the display (its cheap bands,
+ * sky and flat ground, come faster than the LCD bus takes them): a band drawn
+ * in PSRAM costs that band V1's traffic, but the emulator never waits. */
+#define BAND_INTERNAL 4
+#define BAND_PSRAM 32
+#define BAND_SLOTS (BAND_INTERNAL + BAND_PSRAM)
+static uint8_t *band_buf[BAND_SLOTS];
+static rg_band_t bands[BAND_SLOTS];
+static QueueHandle_t band_free_int, band_free_ps;   /* free slot indices */
 static bool bands_presented;           /* this frame went out as bands: present_indexed() has nothing to do */
 
 static void band_done(void *arg)
 {
-    xSemaphoreGive(band_free[(int)(intptr_t)arg]);
+    int idx = (int)(intptr_t)arg;
+    xQueueSend(idx < BAND_INTERNAL ? band_free_int : band_free_ps, &idx, portMAX_DELAY);
 }
 
-void mamego_band_wait(int idx)
+/* the renderer's band size is known at its first frame */
+bool mamego_band_setup(size_t bytes)
 {
-    if (!band_free[idx])
+    if (band_free_int)
+        return true;
+    band_free_int = xQueueCreate(BAND_INTERNAL, sizeof(int));
+    band_free_ps = xQueueCreate(BAND_PSRAM, sizeof(int));
+    band_frame.palette = malloc(256 * sizeof(uint16_t));
+    int n_int = 0, n_ps = 0;
+    for (int i = 0; i < BAND_SLOTS; i++)
     {
-        band_free[idx] = xSemaphoreCreateBinary();
-        xSemaphoreGive(band_free[idx]);
-        if (!band_frame.palette)
-            band_frame.palette = malloc(256 * sizeof(uint16_t));
+        band_buf[i] = heap_caps_malloc(bytes, i < BAND_INTERNAL ? MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT : MALLOC_CAP_SPIRAM);
+        if (!band_buf[i])
+            continue;
+        memset(band_buf[i], 0, bytes);
+        xQueueSend(i < BAND_INTERNAL ? band_free_int : band_free_ps, &i, 0);
+        if (i < BAND_INTERNAL) n_int++; else n_ps++;
     }
-    xSemaphoreTake(band_free[idx], portMAX_DELAY);
+    RG_LOGI("band buffers: %d internal, %d PSRAM, %u bytes each", n_int, n_ps, (unsigned)bytes);
+    return n_int > 0 && band_frame.palette;
+}
+
+/* a free band buffer: internal when there is one, else a PSRAM slot, else the
+ * next internal one; *psram says which it was */
+void *mamego_band_acquire(int *idx, int *psram)
+{
+    *psram = 0;
+    if (xQueueReceive(band_free_int, idx, 0) == pdTRUE)
+        return band_buf[*idx];
+    if (xQueueReceive(band_free_ps, idx, 0) == pdTRUE)
+    {
+        *psram = 1;
+        return band_buf[*idx];
+    }
+    xQueueReceive(band_free_int, idx, portMAX_DELAY);
+    return band_buf[*idx];
 }
 
 void mamego_band_present(int idx, const void *rows, int first, int count, int width, int height,

@@ -8,7 +8,7 @@
 
 #define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 4) // In pixels
 #define RG_TASK_MSG_BAND 2 // msg.dataPtr is an rg_band_t (rg_display_submit_band)
-#define BAND_QUEUE 4       // bands in flight between the emulator and the display task
+#define BAND_QUEUE 36      // bands in flight between the emulator and the display task (mame-go: 4 internal + 32 PSRAM buffers)
 
 // static rg_display_driver_t driver;
 static rg_task_t *display_task_queue;

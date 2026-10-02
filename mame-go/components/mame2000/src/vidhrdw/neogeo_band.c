@@ -29,7 +29,6 @@
                                            display's hand-over latency; -DNB_LINES=16 for the old layout) */
 #endif
 #define NB_MAX_BANDS 32                 /* 224 visible lines / 8 = 28 */
-#define NB_BUFS      4                  /* V2: band buffers in flight */
 #define NB_MAX_TILES 4096               /* tile strips per frame; beyond it the frame takes the full-frame path */
 #define NB_MAX_NODES (3 * NB_MAX_TILES) /* a strip of up to 16 lines touches at most three 8-line bands */
 #define NB_SAFETY    16                 /* as osd_alloc_bitmap: the plotters write up to 15 pixels past the edges */
@@ -52,13 +51,12 @@ static uint16_t nb_head[NB_MAX_BANDS], nb_tail[NB_MAX_BANDS];
 static int nb_ntiles, nb_nnodes, nb_overflow;
 static unsigned char *nb_buf;           /* NB_LINES rows of nb_stride bytes, internal RAM */
 #if NEOBAND >= 2
-/* V2: NB_BUFS band buffers; the host (mame-go main.c) scales and sends a
-   finished band on the second core while the next ones are drawn into the
-   others. Every hand-over costs the display's reaction time (~0.4 ms, the
-   block it is sending plus the copy of what is left): with two buffers the
-   emulator paid it on every band, with four it is hidden behind two bands. */
-static unsigned char *nb_bufs[NB_BUFS];
-extern void mamego_band_wait(int idx);
+/* V2: the host (mame-go main.c) owns the band buffers - a few in internal RAM
+   and a reserve in PSRAM for when the emulator outruns the display - and
+   scales and sends a finished band on the second core while the next ones
+   are drawn. mamego_band_acquire() never waits as long as the reserve lasts. */
+extern bool mamego_band_setup(size_t bytes);
+extern void *mamego_band_acquire(int *idx, int *psram);
 extern void mamego_band_present(int idx, const void *rows, int first, int count, int width, int height,
 		int pitch, const unsigned short *pal);
 extern void mamego_apply_palette8(void);
@@ -77,13 +75,8 @@ static int nb_init(const struct osd_bitmap *bitmap)
 	nb_lines_n = bitmap->height;
 	nb_buf = NB_INTERNAL_ALLOC(NB_LINES * nb_stride);
 #if NEOBAND >= 2
-	nb_bufs[0] = nb_buf;
-	for (int k = 1; k < NB_BUFS; k++)
-	{
-		nb_bufs[k] = NB_INTERNAL_ALLOC(NB_LINES * nb_stride);
-		if (nb_bufs[k]) memset(nb_bufs[k], 0, NB_LINES * nb_stride);
-		else nb_buf = NULL;
-	}
+	free(nb_buf);
+	nb_buf = mamego_band_setup(NB_LINES * nb_stride) ? (unsigned char *)1 : NULL;   /* the host owns them */
 #endif
 	nb_lines = calloc(nb_lines_n, sizeof *nb_lines);
 	nb_tiles = malloc(NB_MAX_TILES * sizeof *nb_tiles);
@@ -95,14 +88,16 @@ static int nb_init(const struct osd_bitmap *bitmap)
 		nb_ready = -1;
 		return 0;
 	}
+#if NEOBAND < 2
 	memset(nb_buf, 0, NB_LINES * nb_stride);
+#endif
 	nb_bitmap.width = bitmap->width;
 	nb_bitmap.height = bitmap->height;
 	nb_bitmap.depth = 8;
 	nb_bitmap._private = NULL;
 	nb_bitmap.line = nb_lines;
 	printf("neoband: %d-line bands, %d bytes in internal RAM, %d tile strips a frame\n",
-		NB_LINES, NB_LINES * nb_stride * (NEOBAND >= 2 ? NB_BUFS : 1), NB_MAX_TILES);
+		NB_LINES, NB_LINES * nb_stride, NB_MAX_TILES);
 	nb_ready = 1;
 	return 1;
 }
@@ -347,10 +342,10 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 		struct rectangle band;
 		int node;
 #if NEOBAND >= 2
-		VPROF_PUSH(PROF_VCOPY);      /* "copy" in V2 builds: waiting for a free band buffer */
-		mamego_band_wait(b % NB_BUFS);
+		int nb_idx, nb_psram;
+		VPROF_PUSH(PROF_VCOPY);      /* "copy" in V2 builds: waiting for a free band buffer (rare) */
+		nb_buf = mamego_band_acquire(&nb_idx, &nb_psram);
 		VPROF_POP();
-		nb_buf = nb_bufs[b % NB_BUFS];
 #endif
 		band.min_x = clip->min_x;
 		band.max_x = clip->max_x;
@@ -358,6 +353,10 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 		band.max_y = band.min_y + NB_LINES - 1;
 		if (band.max_y > clip->max_y)
 			band.max_y = clip->max_y;
+#if NEOBAND >= 2
+		if (nb_psram)                /* "copy w" KB/frame: bands drawn in PSRAM, the emulator ahead of the display */
+			PROF_BYTES(PROF_VCOPY, 0, width * (band.max_y - band.min_y + 1), 1);
+#endif
 		/* every row, not only the band's: drawgfx takes the row pitch from
 		   line[1] - line[0], and the clip keeps it inside the band */
 		for (y = 0; y < nb_bitmap.height; y++)
@@ -412,7 +411,7 @@ MAMEGO_HOT static void neoband_draw(struct osd_bitmap *bitmap, const struct rect
 		VPROF_POP();
 
 #if NEOBAND >= 2
-		mamego_band_present(b % NB_BUFS, nb_lines[band.min_y] + clip->min_x, band.min_y - clip->min_y,
+		mamego_band_present(nb_idx, nb_lines[band.min_y] + clip->min_x, band.min_y - clip->min_y,
 			band.max_y - band.min_y + 1, width, clip->max_y - clip->min_y + 1, nb_stride, gp2x_palette);
 #else
 		VPROF_PUSH(PROF_VCOPY);
