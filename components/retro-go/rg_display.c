@@ -8,8 +8,6 @@
 
 #define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 4) // In pixels
 #define RG_TASK_MSG_BAND 2 // msg.dataPtr is an rg_band_t (rg_display_submit_band)
-#define CARRY_ROWS 6       // source rows a band may leave to the next one (a block spans at most lines-per-buffer rows when upscaling)
-#define CARRY_STRIDE 512   // bytes per carried row: the band frame's stride must not exceed it
 
 // static rg_display_driver_t driver;
 static rg_task_t *display_task_queue;
@@ -98,8 +96,10 @@ static struct
     int osd_next_call;
     int lines_updated;
     int64_t time_start;
-    int carry_first, carry_count;   // source rows kept from the previous band, see write_band
-    uint8_t carry[CARRY_ROWS * CARRY_STRIDE];
+    // V2: the bands of the frame being written, copied as they arrive (write_band)
+    uint8_t *stage;
+    size_t stage_size;
+    int staged_rows;      // source rows [0, staged_rows) are in stage
 } frame;
 
 // The blocks of lines a frame is written in (one lcd buffer each), fixed by the
@@ -137,12 +137,9 @@ static void compute_blocks(void)
     block_count = n;
 }
 
-// The pixels of source row r (counted from the cropped top): rows + (r - row_base) * stride,
-// or the copy kept in frame.carry when the row came with the previous band.
+// The pixels of source row r (counted from the cropped top)
 static inline const void *source_row(const void *rows, int row_base, int stride, int r)
 {
-    if (r >= frame.carry_first && r < frame.carry_first + frame.carry_count)
-        return frame.carry + (r - frame.carry_first) * stride;
     return rows + (r - row_base) * stride;
 }
 
@@ -349,7 +346,7 @@ static inline void frame_begin(void)
     frame.window_top = -1;
     frame.osd_next_call = 20;
     frame.lines_updated = 0;
-    frame.carry_first = frame.carry_count = 0;
+    frame.staged_rows = 0;
     frame.time_start = rg_system_timer();
 }
 
@@ -377,54 +374,63 @@ static inline void write_update(const rg_surface_t *update)
     frame_end();
 }
 
-// V2 of the Arcade 60 fps plan: a band of source rows, scaled and sent while the
-// emulator draws the next one. Bands come in order; the first one (first == 0)
-// starts the frame, the one reaching the source height ends it. A band writes
-// the whole blocks whose source rows it has (with the rows the previous band
-// left in frame.carry); the rows the next block still needs from this band are
-// copied to frame.carry before the band's buffer is released.
-static inline void write_band(const rg_band_t *band)
+// V2 of the Arcade 60 fps plan: the frame arrives as bands of source rows while
+// the emulator draws the next ones. A band is copied into frame.stage (PSRAM,
+// the whole frame) the moment it arrives, so its buffer and the queue slot go
+// back at once and the emulator never waits for the display; the blocks are
+// scaled and sent from the stage in the gaps between bands and at the end of
+// the frame, in the same order and with the same blocks as a whole frame. The
+// first band of a frame (first == 0) finishes the previous frame first.
+static void stage_band(const rg_band_t *band)
 {
     const rg_surface_t *update = band->frame;
-    const int stride = update->stride;
-    int crop_top = display.viewport.top < 0 ? -display.viewport.top * display.viewport.step_y : 0;
-    int band_lo = band->first - crop_top;                    // the band's rows, cropped-top space
-    int band_hi = band->first + band->count - 1 - crop_top;
-    bool last = band->first + band->count >= update->height;
+    size_t need = (size_t)update->stride * update->height;
 
     if (band->first == 0)
-        frame_begin();
-
-    int k = frame.next_block;
-    if (last)
-        k = block_count;
-    else
-        while (k < block_count && map_viewport_to_source_y[block_start[k + 1] - 1] <= band_hi)
-            k++;
-
-    write_lines(update, band->rows, band_lo, frame.next_block, k);
-
-    if (!last && k < block_count)
     {
-        // the rows of this band the next block starts from
-        int need = map_viewport_to_source_y[block_start[k]];
-        if (need < band_lo)
-            need = band_lo;
-        int count = band_hi - need + 1;
-        if (count > CARRY_ROWS || stride > CARRY_STRIDE)
-            RG_PANIC("band carry");                           // never silently wrong pixels
-        if (count > 0)
-            memcpy(frame.carry, band->rows + (need - band_lo) * stride, count * stride);
-        frame.carry_first = need;
-        frame.carry_count = count > 0 ? count : 0;
+        if (frame.staged_rows > 0 && frame.next_block < block_count)
+        {
+            int crop_top = display.viewport.top < 0 ? -display.viewport.top * display.viewport.step_y : 0;
+            write_lines(update, frame.stage + (size_t)crop_top * update->stride, 0, frame.next_block, block_count);  // the previous frame's tail
+            frame_end();
+        }
+        frame_begin();
     }
-    else
-        frame.carry_count = 0;
-
+    if (frame.stage_size < need)
+    {
+        free(frame.stage);
+        frame.stage = malloc(need);
+        frame.stage_size = frame.stage ? need : 0;
+        if (!frame.stage)
+            RG_PANIC("band stage");
+    }
+    memcpy(frame.stage + (size_t)band->first * update->stride, band->rows, (size_t)band->count * update->stride);
+    frame.staged_rows = band->first + band->count;
     if (band->done)
         band->done(band->arg);
-    if (last)
+}
+
+// Scale and send the blocks whose rows are staged; stop early when another
+// band is waiting (unless the frame is complete), so bands are never kept waiting.
+static void write_staged(const rg_surface_t *update)
+{
+    int crop_top = display.viewport.top < 0 ? -display.viewport.top * display.viewport.step_y : 0;
+    bool complete = frame.staged_rows >= update->height;
+    while (frame.next_block < block_count)
+    {
+        int k = frame.next_block;
+        int last_row = map_viewport_to_source_y[block_start[k + 1] - 1] + crop_top;
+        if (!complete && last_row >= frame.staged_rows)
+            break;
+        if (!complete && rg_task_messages_waiting(display_task_queue))
+            break;
+        write_lines(update, frame.stage + (size_t)crop_top * update->stride, 0, k, k + 1);
+    }
+    if (complete && frame.next_block >= block_count)
+    {
         frame_end();
+        frame.staged_rows = 0;
+    }
 }
 
 static void update_viewport_scaling(void)
@@ -546,11 +552,19 @@ static void display_task(void *arg)
         }
 
         if (msg.type == RG_TASK_MSG_BAND)
-            write_band(msg.dataPtr);
+        {
+            const rg_band_t *band = msg.dataPtr;
+            const rg_surface_t *update = band->frame;
+            stage_band(band);
+            rg_task_receive(&msg);      // the slot is free before the scaling starts
+            write_staged(update);
+        }
         else
+        {
             write_update(msg.dataPtr);
-        // draw_on_screen_display(0, display.screen.height);
-        rg_task_receive(&msg);
+            // draw_on_screen_display(0, display.screen.height);
+            rg_task_receive(&msg);
+        }
 
         lcd_sync();
     }
@@ -708,7 +722,6 @@ void rg_display_submit_band(const rg_band_t *band)
     const rg_surface_t *update = band->frame;
 
     RG_ASSERT_ARG(band && update && band->rows && band->count > 0);
-    RG_ASSERT_ARG(update->stride <= CARRY_STRIDE); // a source row must fit a carry row
 
     if (rg_display_frozen)
     {
@@ -727,8 +740,8 @@ void rg_display_submit_band(const rg_band_t *band)
         display.changed = true;
     }
 
-    // the queue holds one message: this blocks until the display task has
-    // finished the previous band, so the emulator runs at most one band ahead
+    // the queue holds one message; the display task copies a band out and frees
+    // the slot before scaling anything, so this hardly ever waits
     rg_task_send(display_task_queue, &(rg_task_msg_t){.type = RG_TASK_MSG_BAND, .dataPtr = band});
 
     counters.blockTime += rg_system_timer() - time_start;
