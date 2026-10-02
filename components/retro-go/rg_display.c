@@ -8,6 +8,7 @@
 
 #define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 4) // In pixels
 #define RG_TASK_MSG_BAND 2 // msg.dataPtr is an rg_band_t (rg_display_submit_band)
+#define BAND_QUEUE 4       // bands in flight between the emulator and the display task
 
 // static rg_display_driver_t driver;
 static rg_task_t *display_task_queue;
@@ -799,6 +800,10 @@ void rg_display_submit(const rg_surface_t *update, uint32_t flags)
         display.changed = true;
     }
 
+    // one update at a time, as when the queue held one message: emulators
+    // reuse their frame buffers on the strength of it
+    while (rg_task_messages_waiting(display_task_queue))
+        rg_task_yield();
     rg_task_send(display_task_queue, &(rg_task_msg_t){.dataPtr = update});
 
     counters.blockTime += rg_system_timer() - time_start;
@@ -829,8 +834,7 @@ void rg_display_submit_band(const rg_band_t *band)
         display.changed = true;
     }
 
-    // the queue holds one message; the display task copies a band out and frees
-    // the slot before scaling anything, so this hardly ever waits
+    // up to BAND_QUEUE bands wait here; the display task takes them in order
     rg_task_send(display_task_queue, &(rg_task_msg_t){.type = RG_TASK_MSG_BAND, .dataPtr = band});
 
     counters.blockTime += rg_system_timer() - time_start;
@@ -981,7 +985,9 @@ void rg_display_init(void)
     rg_display_clear(C_BLACK);
     rg_task_delay(80); // Wait for the screen be cleared before turning on the backlight (40ms doesn't seem to be enough...)
     lcd_set_backlight(config.backlight);
-    display_task_queue = rg_task_create("rg_display", &display_task, NULL, 4 * 1024, RG_TASK_PRIORITY_6, 1);
+    // V2h: bands queue up to BAND_QUEUE deep; whole-frame updates keep the old
+    // one-at-a-time behaviour (rg_display_submit waits for an empty queue first)
+    display_task_queue = rg_task_create_ex("rg_display", &display_task, NULL, 4 * 1024, RG_TASK_PRIORITY_6, 1, BAND_QUEUE);
     if (config.border_file)
         load_border_file(config.border_file);
     RG_LOGI("Display ready.\n");

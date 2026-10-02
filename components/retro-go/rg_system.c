@@ -52,6 +52,7 @@ struct rg_task_s
 {
     void (*func)(void *arg);
     void *arg;
+    int queueLength;    // messages the task's queue holds (1 unless rg_task_create_ex)
     // bool blocked;
 #ifdef ESP_PLATFORM
     QueueHandle_t queue;
@@ -554,7 +555,7 @@ static void task_wrapper(void *arg)
 {
     rg_task_t *task = arg;
     task->handle = xTaskGetCurrentTaskHandle();
-    task->queue = xQueueCreate(1, sizeof(rg_task_msg_t));
+    task->queue = xQueueCreate(task->queueLength > 0 ? task->queueLength : 1, sizeof(rg_task_msg_t));
     (task->func)(task->arg);
     vQueueDelete(task->queue);
     memset(task, 0, sizeof(rg_task_t));
@@ -573,6 +574,11 @@ static int task_wrapper(void *arg)
 
 rg_task_t *rg_task_create(const char *name, void (*taskFunc)(void *arg), void *arg, size_t stackSize, int priority, int affinity)
 {
+    return rg_task_create_ex(name, taskFunc, arg, stackSize, priority, affinity, 1);
+}
+
+rg_task_t *rg_task_create_ex(const char *name, void (*taskFunc)(void *arg), void *arg, size_t stackSize, int priority, int affinity, int queueLength)
+{
     RG_ASSERT_ARG(name && taskFunc);
     rg_task_t *task = NULL;
 
@@ -587,6 +593,7 @@ rg_task_t *rg_task_create(const char *name, void (*taskFunc)(void *arg), void *a
 
     task->func = taskFunc;
     task->arg = arg;
+    task->queueLength = queueLength;
     task->handle = 0;
     strncpy(task->name, name, 15);
 
