@@ -1,5 +1,6 @@
 #include "rg_system.h"
 #include "rg_line_hash.h"
+#include "rg_scale_line.h"
 #include "rg_display.h"
 
 #include <stdlib.h>
@@ -16,6 +17,10 @@ static rg_display_t display;
 static int16_t map_viewport_to_source_x[RG_SCREEN_WIDTH + 1];
 static int16_t map_viewport_to_source_y[RG_SCREEN_HEIGHT + 1];
 static uint32_t screen_line_checksum[RG_SCREEN_HEIGHT + 1];
+// D2: how many viewport pixels each source pixel is drawn as (rg_scale_line.h);
+// source_x_count = 0 when the source is too wide for the table (map loop then)
+static uint8_t source_x_repeat[RG_SCREEN_WIDTH * 2 + 2];
+static int source_x_count;
 
 #define LINE_IS_REPEATED(Y) (map_viewport_to_source_y[(Y)] == map_viewport_to_source_y[(Y) - 1])
 // This is to avoid flooring a number that is approximated to .9999999 and be explicit about it
@@ -79,23 +84,7 @@ static int draw_on_screen_display(int region_start, int region_end)
     return 0;
 }
 
-static inline unsigned blend_pixels(unsigned a, unsigned b)
-{
-    // Fast path (taken 80-90% of the time)
-    if (a == b)
-        return a;
-
-    // Not the original author, but a good explanation is found at:
-    // https://medium.com/@luc.trudeau/fast-averaging-of-high-color-16-bit-pixels-cb4ac7fd1488
-    a = (a << 8) | (a >> 8);
-    b = (b << 8) | (b >> 8);
-    unsigned s = a ^ b;
-    unsigned v = ((s & 0xF7DEU) >> 1) + (a & b) + (s & 0x0821U);
-    return (v << 8) | (v >> 8);
-
-    // This is my attempt at averaging two 565BE values without swapping bytes (3x the speed of the code above)
-    // return (((a ^ b) & 0b1101111011110110U) >> 1) + (a & b);
-}
+#define blend_pixels rg_blend_pixels // rg_scale_line.h holds the copy the PC test proves
 
 static inline void write_update(const rg_surface_t *update)
 {
@@ -156,6 +145,9 @@ static inline void write_update(const rg_surface_t *update)
     const size_t src_offset = src_first * src_pixel_size;
     const size_t src_line_bytes = (src_last - src_first + 1) * src_pixel_size;
     const uint32_t pal_hash = (format & RG_PIXEL_PALETTE) ? rg_line_hash(palette, 256 * sizeof(uint16_t), 0) : 0;
+    // D2: the fused scaler covers the whole viewport width from source pixel 0 (no crop)
+    const bool fused_scale = !fast_2x && source_x_count > 0 && crop_left == 0 &&
+                             draw_width == display.viewport.width && (format & RG_PIXEL_FORMAT) != RG_PIXEL_888;
 
     for (int y = 0; y < draw_height;)
     {
@@ -225,6 +217,18 @@ static inline void write_update(const rg_surface_t *update)
                     }
                     line_buffer_ptr += draw_width;
                 }
+                else if (fused_scale)
+                {
+                    // D2: pattern-driven scaling with the horizontal filter fused in
+                    const void *src = data + map_viewport_to_source_y[y] * stride;
+                    if (format & RG_PIXEL_PALETTE)
+                        rg_scale_line_pal(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, draw_width, filter_x);
+                    else if (format == RG_PIXEL_565_LE)
+                        rg_scale_line_565le(src, source_x_repeat, source_x_count, line_buffer_ptr, draw_width, filter_x);
+                    else
+                        rg_scale_line_565be(src, source_x_repeat, source_x_count, line_buffer_ptr, draw_width, filter_x);
+                    line_buffer_ptr += draw_width;
+                }
                 else if (format & RG_PIXEL_PALETTE)
                     RENDER_LINE(uint8_t, palette[buffer[x]])
                 else if (format == RG_PIXEL_565_LE)
@@ -236,7 +240,7 @@ static inline void write_update(const rg_surface_t *update)
             ++y;
         }
 
-        if (filter_x && need_update)
+        if (filter_x && need_update && !fused_scale) // the fused scaler has filtered already
         {
             for (int i = 0; i < lines_to_copy; ++i)
             {
@@ -352,6 +356,17 @@ static void update_viewport_scaling(void)
 
     for (int x = 0; x < screen_width; ++x)
         map_viewport_to_source_x[x] = FLOAT_TO_INT(x * display.viewport.step_x);
+    // D2: the horizontal repeat pattern, covering the map's last source index
+    // (one past the source width for some sizes: the map loop always read it)
+    source_x_count = map_viewport_to_source_x[display.viewport.width - 1] + 1;
+    if (source_x_count > (int)sizeof(source_x_repeat))
+        source_x_count = 0;
+    else
+    {
+        memset(source_x_repeat, 0, source_x_count);
+        for (int x = 0; x < display.viewport.width; x++)
+            source_x_repeat[map_viewport_to_source_x[x]]++;
+    }
     for (int y = 0; y < screen_height; ++y)
         map_viewport_to_source_y[y] = FLOAT_TO_INT(y * display.viewport.step_y);
 
