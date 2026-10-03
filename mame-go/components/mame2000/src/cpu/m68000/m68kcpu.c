@@ -960,7 +960,9 @@ void m68k_pchist(unsigned pc, unsigned cycles)
  * one of: ADDQ/SUBQ #q,abs  CLR abs  TST abs  CMPI #imm,abs  BTST #imm,abs
  * Bcc, with absolute addresses only. Then everything the loop reads and writes
  * is known: one counter (the single ADDQ/SUBQ), constants (CLR), and reads
- * that must not touch the counter nor the I/O window. Its registers do not
+ * that must not touch the counter nor the I/O window, and no branch sees the
+ * flags of the counter's own ADDQ/SUBQ (a CLR, TST or CMPI must come between;
+ * BTST only sets Z and does not count). Its registers do not
  * change (checked every turn, as for the plain skip). Nothing inside the time
  * slice can change what its branches test (interrupts are taken between
  * slices, as the plain skip already relies on), so every remaining turn of the
@@ -989,6 +991,7 @@ static int cl_verify(uint top, uint last)
 {
 	static const uint bytes[3] = { 1, 2, 4 };
 	uint pc = top, n = 0, i, counters = 0, other[12][2];
+	uint live = 0;      /* N Z V C still come from the counter's ADDQ/SUBQ */
 
 	while (pc <= last)
 	{
@@ -997,6 +1000,9 @@ static int cl_verify(uint top, uint last)
 		if ((op & 0xf000) == 0x6000)                         /* Bcc (not BRA, not BSR) */
 		{
 			if (((op >> 8) & 0xf) < 2 || (op & 0xff) == 0xff) return 0;
+			/* no branch may test the counter's own flags: "subq #1,cnt / bne loop" is a
+			   delay loop that ends when the counter reaches zero, not a wait */
+			if (live) return 0;
 			if (at == last) return counters == 1;        /* the loop's own backward branch: done */
 			/* a branch inside the loop may only go forward: no loop within the loop,
 			   so no instruction runs twice in a turn */
@@ -1009,17 +1015,20 @@ static int cl_verify(uint top, uint last)
 		{
 			if (!cl_abs(op, &pc, &addr) || counters++) return 0;
 			cl_addr = addr; cl_size = bytes[sz]; cl_sub = (op >> 8) & 1; cl_q = ((op >> 9) & 7) ? ((op >> 9) & 7) : 8;
+			live = 1;
 			continue;
 		}
 		if (n >= 12) return 0;
 		if (((op & 0xff00) == 0x4200 || (op & 0xff00) == 0x4a00) && sz != 3)   /* CLR abs, TST abs */
 		{
 			if (!cl_abs(op, &pc, &addr)) return 0;
+			live = 0;                                    /* N Z V C redefined */
 		}
 		else if ((op & 0xff00) == 0x0c00 && sz != 3)         /* CMPI #imm,abs */
 		{
 			pc += sz == 2 ? 4 : 2;
 			if (!cl_abs(op, &pc, &addr)) return 0;
+			live = 0;
 		}
 		else if ((op & 0xffc0) == 0x0800)                    /* BTST #imm,abs (a byte) */
 		{
