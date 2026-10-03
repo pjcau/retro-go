@@ -603,33 +603,40 @@ static size_t audio_batch_cb(const int16_t *data, size_t frames)
        measured as a duller top octave on the PC (scripts/audio_compare.py).
        The 12 last samples of each channel are kept across calls; the output is
        6 input samples (0.4 ms) late. */
-    static const int16_t tap[12] = { -21, 73, -173, 359, -764, 2574, 2574, -764, 359, -173, 73, -21 };
+    /* the taps are symmetric: -21 73 -173 359 -764 2574 | 2574 -764 359 -173 73 -21 */
     static rg_audio_frame_t *out;        /* 2.2 KB, in PSRAM: the internal RAM has none to spare */
-    static int16_t hist[2][12];
+    static int16_t tail[2][11];          /* the last 11 samples of each channel, across calls */
     const rg_audio_frame_t *in = (const rg_audio_frame_t *)data;
     if (!out && !(out = heap_caps_malloc(2 * 280 * sizeof(*out), MALLOC_CAP_SPIRAM)))
         return frames;                   /* no buffer: silence rather than a crash */
     while (frames)
     {
         size_t n = frames > 280 ? 280 : frames;
+        /* each channel laid out in a line, its 11 older samples first: the 12 samples
+           around a midpoint are then p[0..11], no shifting per sample (the first
+           version moved its history for every sample and cost 0.9 ms a frame) */
+        int16_t lin[2][11 + 280];
+        for (int c = 0; c < 2; c++)
+        {
+            int16_t *l = lin[c];
+            memcpy(l, tail[c], sizeof(tail[c]));
+            if (c)
+                for (size_t i = 0; i < n; i++) l[11 + i] = in[i].right;
+            else
+                for (size_t i = 0; i < n; i++) l[11 + i] = in[i].left;
+            memcpy(tail[c], l + n, sizeof(tail[c]));
+        }
         for (size_t i = 0; i < n; i++)
         {
-            int32_t mid[2];
-            for (int c = 0; c < 2; c++)
-            {
-                int16_t *h = hist[c];
-                int32_t acc = 0;
-                memmove(h, h + 1, 11 * sizeof(*h));
-                h[11] = c ? in[i].right : in[i].left;
-                for (int k = 0; k < 12; k++)
-                    acc += h[k] * tap[k];
-                acc = (acc + 2048) >> 12;           /* halfway between h[5] and h[6] */
-                mid[c] = acc > 32767 ? 32767 : acc < -32768 ? -32768 : acc;
-            }
-            out[2 * i].left = hist[0][5];
-            out[2 * i].right = hist[1][5];
-            out[2 * i + 1].left = (int16_t)mid[0];
-            out[2 * i + 1].right = (int16_t)mid[1];
+            const int16_t *p = lin[0] + i, *q = lin[1] + i;
+            int32_t ml = ((p[0] + p[11]) * -21 + (p[1] + p[10]) * 73 + (p[2] + p[9]) * -173
+                        + (p[3] + p[8]) * 359 + (p[4] + p[7]) * -764 + (p[5] + p[6]) * 2574 + 2048) >> 12;
+            int32_t mr = ((q[0] + q[11]) * -21 + (q[1] + q[10]) * 73 + (q[2] + q[9]) * -173
+                        + (q[3] + q[8]) * 359 + (q[4] + q[7]) * -764 + (q[5] + q[6]) * 2574 + 2048) >> 12;
+            out[2 * i].left = p[5];
+            out[2 * i].right = q[5];
+            out[2 * i + 1].left = (int16_t)(ml > 32767 ? 32767 : ml < -32768 ? -32768 : ml);
+            out[2 * i + 1].right = (int16_t)(mr > 32767 ? 32767 : mr < -32768 ? -32768 : mr);
         }
         rg_audio_submit(out, n * 2);
         in += n;
