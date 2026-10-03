@@ -708,6 +708,7 @@ void applications_init(void)
     application("OpenTyrian", "opentyrian", "tyr", "opentyrian-go", 0);
     application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
     application("Neo Geo", "neogeo", "zip", "mame-go", 0); /* mame-go too; neogeo.zip (BIOS) lives in the folder */
+    application("Capcom CPS-1", "cps1", "zip", "mame-go", 0); /* mame-go too: its own tab, apart from the 8-bit arcade games */
 
     // Special app to bootstrap native esp32 binaries from the SD card
     // application("Bootstrap", "apps", "bin elf", "bootstrap", 0);
