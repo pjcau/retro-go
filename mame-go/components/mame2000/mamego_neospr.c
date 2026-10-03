@@ -51,6 +51,19 @@ struct neospr_region
 	uint32_t first_page;    /* global page number of this region's tile 0 */
 };
 
+/* NEOPROF: the card reads of the two pagers, counted and timed (mamego_prof.c
+   prints them per frame): [0] sprite tile pages (core 0, while drawing),
+   [1] sound sample pages (the sound board's job on core 1) */
+volatile unsigned mamego_page_n[2], mamego_page_us[2];
+#ifdef NEOPROF
+extern long long mamego_prof_now(void);
+#define PAGE_T0()      long long page_t0 = mamego_prof_now()
+#define PAGE_DONE(i)   do { mamego_page_n[i]++; mamego_page_us[i] += (unsigned)(mamego_prof_now() - page_t0); } while (0)
+#else
+#define PAGE_T0()      do {} while (0)
+#define PAGE_DONE(i)   do { mamego_page_n[i]++; } while (0)
+#endif
+
 static struct neospr_region regions[NEOSPR_MAX_REGIONS];
 static int neosnd_alloc(void);
 unsigned neosnd_take_misses(void);
@@ -498,9 +511,13 @@ uint32_t *neospr_tile(int tileno)
 		if (slot_page[slot] >= 0)
 			page_slot[slot_page[slot]] = -1;
 		dst = cache + (size_t)slot * NEOSPR_PAGE;
-		fseek(reg->f, reg->data_offset + first_tile * NEOSPR_TILE, SEEK_SET);
-		if (fread(dst, NEOSPR_TILE, count, reg->f) != count)
-			memset(dst, 0, NEOSPR_PAGE);
+		{
+			PAGE_T0();
+			fseek(reg->f, reg->data_offset + first_tile * NEOSPR_TILE, SEEK_SET);
+			if (fread(dst, NEOSPR_TILE, count, reg->f) != count)
+				memset(dst, 0, NEOSPR_PAGE);
+			PAGE_DONE(0);
+		}
 		slot_page[slot] = page;
 		page_slot[page] = slot;
 		misses_frame++;
@@ -764,9 +781,13 @@ uint8_t neosnd_read(const uint8_t *base, uint32_t offset)
 		}
 		if (snd_slot_page[slot] >= 0)
 			snd_page_slot[snd_slot_page[slot]] = -1;
-		fseek(reg->f, reg->data_offset + (offset & ~(NEOSND_PAGE - 1)), SEEK_SET);
-		if (fread(snd_cache + (size_t)slot * NEOSND_PAGE, 1, NEOSND_PAGE, reg->f) == 0)
-			memset(snd_cache + (size_t)slot * NEOSND_PAGE, 0, NEOSND_PAGE);
+		{
+			PAGE_T0();
+			fseek(reg->f, reg->data_offset + (offset & ~(NEOSND_PAGE - 1)), SEEK_SET);
+			if (fread(snd_cache + (size_t)slot * NEOSND_PAGE, 1, NEOSND_PAGE, reg->f) == 0)
+				memset(snd_cache + (size_t)slot * NEOSND_PAGE, 0, NEOSND_PAGE);
+			PAGE_DONE(1);
+		}
 		snd_slot_page[slot] = page;
 		snd_page_slot[page] = slot;
 		snd_misses++;
