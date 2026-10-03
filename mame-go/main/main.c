@@ -882,8 +882,13 @@ static void mame_task(void *arg)
         if (++bench_frame % 300 == 0)
             printf("MAMEBENCH frames %u hash %08x\n", (unsigned)bench_frame, (unsigned)bench_hash);
 #ifdef MAMEPROF
+#if MAMEBENCH >= 2
+        if (bench_frame == 1300) samp_start();      /* mission 1 being played */
+        if (bench_frame == 2800) samp_dump();
+#else
         if (bench_frame == 300) samp_start();       /* after the warm-up */
         if (bench_frame == 1800) samp_dump();
+#endif
 #endif
 #endif
     }
