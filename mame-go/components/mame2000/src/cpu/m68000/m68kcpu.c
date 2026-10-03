@@ -624,6 +624,9 @@ MAMEGO_HOT int m68k_execute(int num_cycles)
 	/* Make sure we're not stopped */
 	if(!CPU_STOPPED)
 	{
+#if defined(MAMEGO) && !defined(ESP_PLATFORM)
+		{ extern void m68ki_idle_asked(int cycles); m68ki_idle_asked(num_cycles); }
+#endif
 		/* Set our pool of clock cycles available */
 		SET_CYCLES(num_cycles);
 		m68ki_initial_cycles = num_cycles;
@@ -900,9 +903,15 @@ static uint idle_pc, idle_whash, idle_count, idle_regs[16];
 #include <stdlib.h>
 struct idle_stat { uint pc, ppc, n, wrote, regs, idle; };
 static struct idle_stat idle_stats[256];
+/* how much of the CPU's time the idle skip removes: cycles asked of
+   m68k_execute(), and cycles thrown away by USE_ALL_CYCLES() in the idle check */
+static unsigned long long idle_asked, idle_skipped;
+void m68ki_idle_asked(int cycles) { idle_asked += cycles; }
 static void idle_stat_dump(void)
 {
 	int i, j;
+	fprintf(stderr, "IDLESTAT cycles asked %llu, skipped as idle %llu (%.1f %%), executed %.1f %%\n", idle_asked, idle_skipped,
+		idle_asked ? 100.0 * idle_skipped / idle_asked : 0.0, idle_asked ? 100.0 - 100.0 * idle_skipped / idle_asked : 0.0);
 	for (i = 0; i < 256; i++) for (j = i + 1; j < 256; j++)
 		if (idle_stats[j].n > idle_stats[i].n) { struct idle_stat t = idle_stats[i]; idle_stats[i] = idle_stats[j]; idle_stats[j] = t; }
 	for (i = 0; i < 8 && idle_stats[i].n; i++)
@@ -952,6 +961,9 @@ MAMEGO_HOT void m68ki_idle_check(void)
 		if (++idle_count >= 3)
 		{
 			idle_count = 0;
+#ifndef ESP_PLATFORM
+			if (GET_CYCLES() > 0) idle_skipped += GET_CYCLES();
+#endif
 			USE_ALL_CYCLES();
 		}
 		return;
