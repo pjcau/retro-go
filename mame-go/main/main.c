@@ -595,11 +595,17 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
 static size_t audio_batch_cb(const int16_t *data, size_t frames)
 {
 #if AUDIO_MIX_HZ == 16000
-    /* 16 kHz from the core, 32 kHz to the speaker: every sample, then the
-       midpoint to the next one (the last sample of the previous call is kept
-       so the line is unbroken across calls) */
+    /* 16 kHz from the core, 32 kHz to the speaker. Each input sample goes out
+       as it is, and between two of them the value a band-limited signal would
+       have there: 12 taps of a Kaiser-windowed sinc (x 4096), flat to 6 kHz
+       (-1.3 dB at 7 kHz), images below -55 dB. The plain midpoint of the two
+       neighbours is a filter too, and a poor one: -1.4 dB at 4 kHz, -3.2 at 6,
+       measured as a duller top octave on the PC (scripts/audio_compare.py).
+       The 12 last samples of each channel are kept across calls; the output is
+       6 input samples (0.4 ms) late. */
+    static const int16_t tap[12] = { -21, 73, -173, 359, -764, 2574, 2574, -764, 359, -173, 73, -21 };
     static rg_audio_frame_t *out;        /* 2.2 KB, in PSRAM: the internal RAM has none to spare */
-    static int16_t prev_l, prev_r;
+    static int16_t hist[2][12];
     const rg_audio_frame_t *in = (const rg_audio_frame_t *)data;
     if (!out && !(out = heap_caps_malloc(2 * 280 * sizeof(*out), MALLOC_CAP_SPIRAM)))
         return frames;                   /* no buffer: silence rather than a crash */
@@ -608,11 +614,22 @@ static size_t audio_batch_cb(const int16_t *data, size_t frames)
         size_t n = frames > 280 ? 280 : frames;
         for (size_t i = 0; i < n; i++)
         {
-            out[2 * i].left = (int16_t)(((int)prev_l + in[i].left) >> 1);
-            out[2 * i].right = (int16_t)(((int)prev_r + in[i].right) >> 1);
-            out[2 * i + 1] = in[i];
-            prev_l = in[i].left;
-            prev_r = in[i].right;
+            int32_t mid[2];
+            for (int c = 0; c < 2; c++)
+            {
+                int16_t *h = hist[c];
+                int32_t acc = 0;
+                memmove(h, h + 1, 11 * sizeof(*h));
+                h[11] = c ? in[i].right : in[i].left;
+                for (int k = 0; k < 12; k++)
+                    acc += h[k] * tap[k];
+                acc = (acc + 2048) >> 12;           /* halfway between h[5] and h[6] */
+                mid[c] = acc > 32767 ? 32767 : acc < -32768 ? -32768 : acc;
+            }
+            out[2 * i].left = hist[0][5];
+            out[2 * i].right = hist[1][5];
+            out[2 * i + 1].left = (int16_t)mid[0];
+            out[2 * i + 1].right = (int16_t)mid[1];
         }
         rg_audio_submit(out, n * 2);
         in += n;
