@@ -134,8 +134,25 @@ static void samp_dump(void)
 static uint32_t bench_frame, bench_hash;
 static bool bench_hash_next;
 
+/* MAMEBENCH=2: a coin and START before the script, so that it plays the first
+ * mission instead of watching the attract loop (a save state cannot be used: it
+ * only loads in the firmware that wrote it). Same numbers as tools/neoframes.c
+ * "--input play". */
+#define BENCH_COIN_AT  600
+#define BENCH_START_AT 720
+#define BENCH_PLAY_AT  900
+
 static uint32_t bench_input(uint32_t f)
 {
+#if MAMEBENCH >= 2
+    if (f < BENCH_PLAY_AT)
+    {
+        if (f >= BENCH_COIN_AT && f < BENCH_COIN_AT + 6) return RG_KEY_SELECT;      /* coin */
+        if (f >= BENCH_START_AT && f < BENCH_START_AT + 6) return RG_KEY_START;
+        return 0;
+    }
+    f -= BENCH_PLAY_AT;
+#endif
     uint32_t k = RG_KEY_RIGHT;                           /* walk right, fire and jump now and then */
     if (f % 20 < 2) k |= RG_KEY_A;
     if (f % 90 < 3) k |= RG_KEY_B;

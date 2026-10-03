@@ -62,8 +62,10 @@ if(DEFINED ENV{MAMEPROF} AND NOT "$ENV{MAMEPROF}" STREQUAL "0")
         idf_build_set_property(COMPILE_DEFINITIONS "-DMAMEPROF_CORE1=1" APPEND)
     endif()
 endif()
-# `MAMEBENCH=1`: deterministic benchmark from the resumed state (main/main.c)
+# `MAMEBENCH=1`: deterministic benchmark, scripted input from the first frame (the
+# attract loop on a cold boot). `MAMEBENCH=2`: the script first inserts a coin and
+# presses START, so the run measures the game being played (main/main.c)
 if(DEFINED ENV{MAMEBENCH} AND NOT "$ENV{MAMEBENCH}" STREQUAL "0")
-    idf_build_set_property(COMPILE_DEFINITIONS "-DMAMEBENCH=1" APPEND)
+    idf_build_set_property(COMPILE_DEFINITIONS "-DMAMEBENCH=$ENV{MAMEBENCH}" APPEND)
 endif()
 project(mame-go)

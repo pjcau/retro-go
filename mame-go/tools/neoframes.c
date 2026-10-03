@@ -142,6 +142,11 @@ static uint16_t script(unsigned f)
 		return bench_input(f - 300);
 	case 2:
 		return 0;
+	case 3:                                  /* the board's MAMEBENCH=2 (main.c BENCH_*_AT) */
+		if (f >= 600 && f < 606) return 1 << RETRO_DEVICE_ID_JOYPAD_SELECT;   /* coin */
+		if (f >= 720 && f < 726) return 1 << RETRO_DEVICE_ID_JOYPAD_START;
+		if (f < 900) return 0;
+		return bench_input(f - 900);
 	default:
 		return bench_input(f);
 	}
@@ -173,7 +178,7 @@ int main(int argc, char **argv)
 
 	if (argc < 4)
 	{
-		fprintf(stderr, "usage: %s <sysdir> <game.zip> <frames> [--every N] [--load FILE] [--save FILE@N] [--dump DIR@N] [--input bench|attract|none]\n", argv[0]);
+		fprintf(stderr, "usage: %s <sysdir> <game.zip> <frames> [--every N] [--load FILE] [--save FILE@N] [--dump DIR@N] [--input bench|attract|none|play]\n", argv[0]);
 		return 2;
 	}
 	sysdir = argv[1];
@@ -185,7 +190,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--load")) load = argv[i + 1];
 		else if (!strcmp(argv[i], "--save") && (at = strrchr(argv[i + 1], '@'))) { *at = 0; save = argv[i + 1]; save_at = atoi(at + 1); }
 		else if (!strcmp(argv[i], "--dump") && (at = strrchr(argv[i + 1], '@'))) { *at = 0; dump_dir = argv[i + 1]; dump_at = atoi(at + 1); }
-		else if (!strcmp(argv[i], "--input")) input_mode = !strcmp(argv[i + 1], "attract") ? 1 : !strcmp(argv[i + 1], "none") ? 2 : 0;
+		else if (!strcmp(argv[i], "--input")) input_mode = !strcmp(argv[i + 1], "attract") ? 1 : !strcmp(argv[i + 1], "none") ? 2 : !strcmp(argv[i + 1], "play") ? 3 : 0;
 		else { fprintf(stderr, "neoframes: bad option %s\n", argv[i]); return 2; }
 	}
 	if (!hash_every) hash_every = 1;
