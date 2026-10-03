@@ -971,7 +971,7 @@ void m68k_pchist(unsigned pc, unsigned cycles)
  * ADDQ/SUBQ would leave it; N is the largest count the cycle budget allows the
  * interpreter to run in full. The rest of the slice runs normally.
  * M68KCOUNT=0 (PC) turns it off: frames and samples must match with it on. */
-uint m68ki_count_enable = 1;
+uint m68ki_count_enable;      /* set by the board that has been gated for it (the Neo Geo init); off elsewhere */
 static uint cl_pc = ~0u, cl_ppc, cl_ok, cl_addr, cl_size, cl_sub, cl_q, cl_turns, cl_lastv;
 static int cl_prev, cl_cpp;
 
