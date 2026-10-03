@@ -429,6 +429,18 @@ void cps1snd_disable(void)
  * pending events and YM2151 timers, and the YM2151 and OKIM6295 chips. The
  * program ROM stays out (read-only), which keeps the state small enough for
  * PSRAM next to the 2 MB of tiles. */
+/* The sound Z80's region on the YM2151 boards (sound_readmem / sound_writemem):
+   ROM, the banked ROM, and RAM at 0xd000-0xd7ff. Only the RAM belongs in a
+   save state. */
+int cps1_region_ram(int type, unsigned *offset, unsigned *length)
+{
+	if (type != REGION_CPU2)
+		return 0;
+	*offset = 0xd000;
+	*length = 0x0800;
+	return 1;
+}
+
 size_t cps1_mamego_state(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
 {
 	extern unsigned char *cps1_gfxram, *cps1_output;

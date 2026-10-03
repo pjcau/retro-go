@@ -2952,6 +2952,9 @@ static unsigned Dummy_dasm(char *buffer, unsigned pc)
    (Neo Geo: work/video/palette RAM, latches, YM2610); 0 size, 1 save, 2 load */
 size_t (*mamego_driver_state)(unsigned char *buf, size_t size, int mode);
 
+/* set by a driver: the RAM part of a CPU region (offset, length), non-zero when it knows */
+int (*mamego_region_ram)(int type, unsigned *offset, unsigned *length);
+
 static size_t mamego_state_walk(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
 {
 	size_t pos = 0;
@@ -3033,7 +3036,15 @@ static size_t mamego_state_walk(unsigned char *buf, size_t size, int mode) /* 0 
 		   main CPU region is its program ROM, the RAM being elsewhere */
 		if (mamego_region_flash[i] || (mamego_driver_state && type == REGION_CPU1))
 			continue;
-		MG_IO(Machine->memory_region[i], Machine->memory_region_length[i]);
+		{
+			/* a driver may say which part of a CPU region is RAM: the rest is ROM
+			   and stays out (CPS1: the sound Z80's region is 96 KB of ROM around
+			   2 KB of RAM, and its states did not fit the largest free block) */
+			unsigned off = 0, len = Machine->memory_region_length[i];
+			if (mamego_region_ram && mamego_region_ram(type, &off, &len) && (off > Machine->memory_region_length[i] || len > Machine->memory_region_length[i] - off))
+				off = 0, len = Machine->memory_region_length[i];
+			MG_IO(Machine->memory_region[i] + off, len);
+		}
 	}
 #undef MG_IO
 

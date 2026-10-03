@@ -1322,7 +1322,12 @@ int cps1_vh_start(void)
 		extern size_t cps1_mamego_state(unsigned char *buf, size_t size, int mode);
 		/* exact save states on the YM2151 boards (drivers/cps1.c) */
 		if (Machine->drv->sound[0].sound_type == SOUND_YM2151)
+		{
+			extern int (*mamego_region_ram)(int type, unsigned *offset, unsigned *length);
+			extern int cps1_region_ram(int type, unsigned *offset, unsigned *length);
 			mamego_driver_state = cps1_mamego_state;
+			mamego_region_ram = cps1_region_ram;
+		}
 		m68ki_idle_enable = 1;
 		m68ki_idle_io_lo = 0x800000;
 		m68ki_idle_io_hi = 0x8fffff;
@@ -1460,6 +1465,7 @@ void cps1_vh_stop(void)
 #ifdef MAMEGO
 	{ extern void cps1snd_disable(void); cps1snd_disable(); }
 	{ extern size_t (*mamego_driver_state)(unsigned char *, size_t, int); mamego_driver_state = 0; }
+	{ extern int (*mamego_region_ram)(int type, unsigned *offset, unsigned *length); mamego_region_ram = 0; }
 	{ extern unsigned int m68ki_idle_enable; extern unsigned z80_idle_enable; m68ki_idle_enable = 0; z80_idle_enable = 0; }
 	{ extern unsigned int m68ki_turn_enable, m68ki_idle_span; m68ki_turn_enable = 0; m68ki_idle_span = 32; }
 #endif
