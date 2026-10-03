@@ -74,7 +74,13 @@ extern "C" void a26_main(void)
 
     void *rom_data;
     size_t rom_size;
-    if (!rg_storage_read_file(app->romPath, &rom_data, &rom_size, 0))
+    if (rg_extension_match(app->romPath, "zip"))
+    {
+        // the launcher lists .zip for this tab: the cartridge is the file inside
+        if (!rg_storage_unzip_file(app->romPath, NULL, &rom_data, &rom_size, 0))
+            RG_PANIC("ROM file unzipping failed!");
+    }
+    else if (!rg_storage_read_file(app->romPath, &rom_data, &rom_size, 0))
         RG_PANIC("ROM load failed!");
 
     string cartMD5 = MD5((uInt8 *)rom_data, (uInt32)rom_size);

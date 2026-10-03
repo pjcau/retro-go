@@ -133,13 +133,21 @@ void ngp_main(void)
     race_cz80_bind();
     race_alloc_sprites(rg_alloc(40 * 1024, MEM_SLOW), rg_alloc(40 * 1024, MEM_SLOW), rg_alloc(40 * 1024, MEM_SLOW));
 
-    void *rom_data;
-    size_t rom_size;
-    if (!rg_storage_read_file(app->romPath, &rom_data, &rom_size, 0))
-        RG_PANIC("ROM load failed!");
-    if (!handleInputFile(app->romPath, rom_data, rom_size))
+    if (rg_extension_match(app->romPath, "zip"))
+    {
+        // the launcher lists .zip for this tab: the cartridge is the file inside
+        void *rom_data;
+        size_t rom_size;
+        if (!rg_storage_unzip_file(app->romPath, NULL, &rom_data, &rom_size, 0))
+            RG_PANIC("ROM file unzipping failed!");
+        if (!handleInputFile(app->romPath, rom_data, rom_size))
+            RG_PANIC("Not a valid NGP/NGPC ROM");
+        free(rom_data);
+    }
+    // a plain file is read straight into mainrom: no second copy, so a 4 MB
+    // cartridge (Metal Slug 2nd Mission) fits next to the 4 MB mainrom
+    else if (!handleInputFile(app->romPath, NULL, 0))
         RG_PANIC("Not a valid NGP/NGPC ROM");
-    free(rom_data);
 
     system_sound_chipreset(NGP_SAMPLE_RATE);
     neopop_audio_accurate = 0;
