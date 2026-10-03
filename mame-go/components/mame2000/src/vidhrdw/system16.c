@@ -26,7 +26,9 @@ void dump_tilemap(void);
 
 #ifdef TRANSPARENT_SHADOWS
 #define ShadowColorsShift 8
-uint16_t shade_table[MAXCOLOURS];
+/* mame-go: these two tables (48 KB) are allocated when a System 16 game starts
+   instead of sitting in the firmware's static memory for every other game */
+uint16_t *shade_table;
 int sys16_sh_shadowpal;
 #endif
 
@@ -88,7 +90,7 @@ unsigned char *sys18_splittab_fg_x;
 unsigned char *sys18_splittab_fg_y;
 
 static int sys16_freezepalette;
-static int sys16_palettedirty[MAXCOLOURS];
+static int *sys16_palettedirty;
 
 #ifdef SPACEHARRIER_OFFSETS
 unsigned char *spaceharrier_patternoffsets;
@@ -443,6 +445,8 @@ READ_HANDLER( sys16_textram_r ){
 /***************************************************************************/
 
 void sys16_vh_stop( void ){
+	free(shade_table); shade_table = 0;
+	free(sys16_palettedirty); sys16_palettedirty = 0;
 
 #ifdef SPACEHARRIER_OFFSETS
 	if(spaceharrier_patternoffsets) free(spaceharrier_patternoffsets);
@@ -451,6 +455,9 @@ void sys16_vh_stop( void ){
 }
 
 int sys16_vh_start( void ){
+	if( !shade_table ) shade_table = calloc(MAXCOLOURS, sizeof(*shade_table));
+	if( !sys16_palettedirty ) sys16_palettedirty = calloc(MAXCOLOURS, sizeof(*sys16_palettedirty));
+	if( !shade_table || !sys16_palettedirty ) return 1;
 	if( !sys16_bg1_trans )
 		background = tilemap_create(
 			get_bg_tile_info,
