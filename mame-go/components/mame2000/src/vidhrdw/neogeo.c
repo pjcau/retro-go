@@ -615,6 +615,9 @@ WRITE_HANDLER( neo_game_fix_w )
 static int neoband_exact_top;   /* set by the band renderer below the first band */
 #endif
 
+/* eight 4-bit pixels, none transparent: every nibble has a bit set */
+#define NEO_OPAQUE8(v) ((((v) | ((v) >> 1) | ((v) >> 2) | ((v) >> 3)) & 0x11111111u) == 0x11111111u)
+
 MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx, /* AJP */
 		unsigned int code,unsigned int color,int flipx,int flipy,int sx,int sy,
 		int zx,int zy,const struct rectangle *clip)
@@ -689,7 +692,9 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 
 	{
 		const unsigned short *paldata;	/* ASG 980209 */
+		unsigned char pal8[16];			/* the strip's 16 pens on the stack (internal RAM) */
 		paldata = &gfx->colortable[gfx->color_granularity * color];
+		for (col = 0; col < 16; col++) pal8[col] = (unsigned char)paldata[col];
 		if (flipx)	/* X flip */
 		{
 			l=l0;
@@ -702,24 +707,58 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 					fspr+=l_y_skip[l]*dy;
 
 					mydword = fspr[1];
-					col = (mydword>> 0)&0xf; if (col) bm[ 0] = paldata[col];
-					col = (mydword>> 4)&0xf; if (col) bm[ 1] = paldata[col];
-					col = (mydword>> 8)&0xf; if (col) bm[ 2] = paldata[col];
-					col = (mydword>>12)&0xf; if (col) bm[ 3] = paldata[col];
-					col = (mydword>>16)&0xf; if (col) bm[ 4] = paldata[col];
-					col = (mydword>>20)&0xf; if (col) bm[ 5] = paldata[col];
-					col = (mydword>>24)&0xf; if (col) bm[ 6] = paldata[col];
-					col = (mydword>>28)&0xf; if (col) bm[ 7] = paldata[col];
+					if (mydword)
+					{
+						if (NEO_OPAQUE8(mydword))
+						{
+							bm[ 0] = pal8[(mydword>> 0)&0xf];
+							bm[ 1] = pal8[(mydword>> 4)&0xf];
+							bm[ 2] = pal8[(mydword>> 8)&0xf];
+							bm[ 3] = pal8[(mydword>>12)&0xf];
+							bm[ 4] = pal8[(mydword>>16)&0xf];
+							bm[ 5] = pal8[(mydword>>20)&0xf];
+							bm[ 6] = pal8[(mydword>>24)&0xf];
+							bm[ 7] = pal8[(mydword>>28)&0xf];
+						}
+						else
+						{
+							col = (mydword>> 0)&0xf; if (col) bm[ 0] = pal8[col];
+							col = (mydword>> 4)&0xf; if (col) bm[ 1] = pal8[col];
+							col = (mydword>> 8)&0xf; if (col) bm[ 2] = pal8[col];
+							col = (mydword>>12)&0xf; if (col) bm[ 3] = pal8[col];
+							col = (mydword>>16)&0xf; if (col) bm[ 4] = pal8[col];
+							col = (mydword>>20)&0xf; if (col) bm[ 5] = pal8[col];
+							col = (mydword>>24)&0xf; if (col) bm[ 6] = pal8[col];
+							col = (mydword>>28)&0xf; if (col) bm[ 7] = pal8[col];
+						}
+					}
 
 					mydword = fspr[0];
-					col = (mydword>> 0)&0xf; if (col) bm[ 8] = paldata[col];
-					col = (mydword>> 4)&0xf; if (col) bm[ 9] = paldata[col];
-					col = (mydword>> 8)&0xf; if (col) bm[10] = paldata[col];
-					col = (mydword>>12)&0xf; if (col) bm[11] = paldata[col];
-					col = (mydword>>16)&0xf; if (col) bm[12] = paldata[col];
-					col = (mydword>>20)&0xf; if (col) bm[13] = paldata[col];
-					col = (mydword>>24)&0xf; if (col) bm[14] = paldata[col];
-					col = (mydword>>28)&0xf; if (col) bm[15] = paldata[col];
+					if (mydword)
+					{
+						if (NEO_OPAQUE8(mydword))
+						{
+							bm[ 8] = pal8[(mydword>> 0)&0xf];
+							bm[ 9] = pal8[(mydword>> 4)&0xf];
+							bm[10] = pal8[(mydword>> 8)&0xf];
+							bm[11] = pal8[(mydword>>12)&0xf];
+							bm[12] = pal8[(mydword>>16)&0xf];
+							bm[13] = pal8[(mydword>>20)&0xf];
+							bm[14] = pal8[(mydword>>24)&0xf];
+							bm[15] = pal8[(mydword>>28)&0xf];
+						}
+						else
+						{
+							col = (mydword>> 0)&0xf; if (col) bm[ 8] = pal8[col];
+							col = (mydword>> 4)&0xf; if (col) bm[ 9] = pal8[col];
+							col = (mydword>> 8)&0xf; if (col) bm[10] = pal8[col];
+							col = (mydword>>12)&0xf; if (col) bm[11] = pal8[col];
+							col = (mydword>>16)&0xf; if (col) bm[12] = pal8[col];
+							col = (mydword>>20)&0xf; if (col) bm[13] = pal8[col];
+							col = (mydword>>24)&0xf; if (col) bm[14] = pal8[col];
+							col = (mydword>>28)&0xf; if (col) bm[15] = pal8[col];
+						}
+					}
 
 					l++;
 				}
@@ -732,24 +771,24 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 					fspr+=l_y_skip[l]*dy;
 
 					mydword = fspr[1];
-					if (dda_x_skip[ 0]) { col = (mydword>> 0)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 1]) { col = (mydword>> 4)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 2]) { col = (mydword>> 8)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 3]) { col = (mydword>>12)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 4]) { col = (mydword>>16)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 5]) { col = (mydword>>20)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 6]) { col = (mydword>>24)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 7]) { col = (mydword>>28)&0xf; if (col) *bm = paldata[col]; bm++; }
+					if (dda_x_skip[ 0]) { col = (mydword>> 0)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 1]) { col = (mydword>> 4)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 2]) { col = (mydword>> 8)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 3]) { col = (mydword>>12)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 4]) { col = (mydword>>16)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 5]) { col = (mydword>>20)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 6]) { col = (mydword>>24)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 7]) { col = (mydword>>28)&0xf; if (col) *bm = pal8[col]; bm++; }
 
 					mydword = fspr[0];
-					if (dda_x_skip[ 8]) { col = (mydword>> 0)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 9]) { col = (mydword>> 4)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[10]) { col = (mydword>> 8)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[11]) { col = (mydword>>12)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[12]) { col = (mydword>>16)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[13]) { col = (mydword>>20)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[14]) { col = (mydword>>24)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[15]) { col = (mydword>>28)&0xf; if (col) *bm = paldata[col]; bm++; }
+					if (dda_x_skip[ 8]) { col = (mydword>> 0)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 9]) { col = (mydword>> 4)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[10]) { col = (mydword>> 8)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[11]) { col = (mydword>>12)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[12]) { col = (mydword>>16)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[13]) { col = (mydword>>20)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[14]) { col = (mydword>>24)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[15]) { col = (mydword>>28)&0xf; if (col) *bm = pal8[col]; bm++; }
 
 					l++;
 				}
@@ -766,24 +805,58 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 					fspr+=l_y_skip[l]*dy;
 
 					mydword = fspr[0];
-					col = (mydword>>28)&0xf; if (col) bm[ 0] = paldata[col];
-					col = (mydword>>24)&0xf; if (col) bm[ 1] = paldata[col];
-					col = (mydword>>20)&0xf; if (col) bm[ 2] = paldata[col];
-					col = (mydword>>16)&0xf; if (col) bm[ 3] = paldata[col];
-					col = (mydword>>12)&0xf; if (col) bm[ 4] = paldata[col];
-					col = (mydword>> 8)&0xf; if (col) bm[ 5] = paldata[col];
-					col = (mydword>> 4)&0xf; if (col) bm[ 6] = paldata[col];
-					col = (mydword>> 0)&0xf; if (col) bm[ 7] = paldata[col];
+					if (mydword)
+					{
+						if (NEO_OPAQUE8(mydword))
+						{
+							bm[ 0] = pal8[(mydword>>28)&0xf];
+							bm[ 1] = pal8[(mydword>>24)&0xf];
+							bm[ 2] = pal8[(mydword>>20)&0xf];
+							bm[ 3] = pal8[(mydword>>16)&0xf];
+							bm[ 4] = pal8[(mydword>>12)&0xf];
+							bm[ 5] = pal8[(mydword>> 8)&0xf];
+							bm[ 6] = pal8[(mydword>> 4)&0xf];
+							bm[ 7] = pal8[(mydword>> 0)&0xf];
+						}
+						else
+						{
+							col = (mydword>>28)&0xf; if (col) bm[ 0] = pal8[col];
+							col = (mydword>>24)&0xf; if (col) bm[ 1] = pal8[col];
+							col = (mydword>>20)&0xf; if (col) bm[ 2] = pal8[col];
+							col = (mydword>>16)&0xf; if (col) bm[ 3] = pal8[col];
+							col = (mydword>>12)&0xf; if (col) bm[ 4] = pal8[col];
+							col = (mydword>> 8)&0xf; if (col) bm[ 5] = pal8[col];
+							col = (mydword>> 4)&0xf; if (col) bm[ 6] = pal8[col];
+							col = (mydword>> 0)&0xf; if (col) bm[ 7] = pal8[col];
+						}
+					}
 
 					mydword = fspr[1];
-					col = (mydword>>28)&0xf; if (col) bm[ 8] = paldata[col];
-					col = (mydword>>24)&0xf; if (col) bm[ 9] = paldata[col];
-					col = (mydword>>20)&0xf; if (col) bm[10] = paldata[col];
-					col = (mydword>>16)&0xf; if (col) bm[11] = paldata[col];
-					col = (mydword>>12)&0xf; if (col) bm[12] = paldata[col];
-					col = (mydword>> 8)&0xf; if (col) bm[13] = paldata[col];
-					col = (mydword>> 4)&0xf; if (col) bm[14] = paldata[col];
-					col = (mydword>> 0)&0xf; if (col) bm[15] = paldata[col];
+					if (mydword)
+					{
+						if (NEO_OPAQUE8(mydword))
+						{
+							bm[ 8] = pal8[(mydword>>28)&0xf];
+							bm[ 9] = pal8[(mydword>>24)&0xf];
+							bm[10] = pal8[(mydword>>20)&0xf];
+							bm[11] = pal8[(mydword>>16)&0xf];
+							bm[12] = pal8[(mydword>>12)&0xf];
+							bm[13] = pal8[(mydword>> 8)&0xf];
+							bm[14] = pal8[(mydword>> 4)&0xf];
+							bm[15] = pal8[(mydword>> 0)&0xf];
+						}
+						else
+						{
+							col = (mydword>>28)&0xf; if (col) bm[ 8] = pal8[col];
+							col = (mydword>>24)&0xf; if (col) bm[ 9] = pal8[col];
+							col = (mydword>>20)&0xf; if (col) bm[10] = pal8[col];
+							col = (mydword>>16)&0xf; if (col) bm[11] = pal8[col];
+							col = (mydword>>12)&0xf; if (col) bm[12] = pal8[col];
+							col = (mydword>> 8)&0xf; if (col) bm[13] = pal8[col];
+							col = (mydword>> 4)&0xf; if (col) bm[14] = pal8[col];
+							col = (mydword>> 0)&0xf; if (col) bm[15] = pal8[col];
+						}
+					}
 
 					l++;
 				}
@@ -796,24 +869,24 @@ MAMEGO_HOT void NeoMVSDrawGfx(unsigned char **line,const struct GfxElement *gfx,
 					fspr+=l_y_skip[l]*dy;
 
 					mydword = fspr[0];
-					if (dda_x_skip[ 0]) { col = (mydword>>28)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 1]) { col = (mydword>>24)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 2]) { col = (mydword>>20)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 3]) { col = (mydword>>16)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 4]) { col = (mydword>>12)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 5]) { col = (mydword>> 8)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 6]) { col = (mydword>> 4)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 7]) { col = (mydword>> 0)&0xf; if (col) *bm = paldata[col]; bm++; }
+					if (dda_x_skip[ 0]) { col = (mydword>>28)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 1]) { col = (mydword>>24)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 2]) { col = (mydword>>20)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 3]) { col = (mydword>>16)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 4]) { col = (mydword>>12)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 5]) { col = (mydword>> 8)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 6]) { col = (mydword>> 4)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 7]) { col = (mydword>> 0)&0xf; if (col) *bm = pal8[col]; bm++; }
 
 					mydword = fspr[1];
-					if (dda_x_skip[ 8]) { col = (mydword>>28)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[ 9]) { col = (mydword>>24)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[10]) { col = (mydword>>20)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[11]) { col = (mydword>>16)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[12]) { col = (mydword>>12)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[13]) { col = (mydword>> 8)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[14]) { col = (mydword>> 4)&0xf; if (col) *bm = paldata[col]; bm++; }
-					if (dda_x_skip[15]) { col = (mydword>> 0)&0xf; if (col) *bm = paldata[col]; bm++; }
+					if (dda_x_skip[ 8]) { col = (mydword>>28)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[ 9]) { col = (mydword>>24)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[10]) { col = (mydword>>20)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[11]) { col = (mydword>>16)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[12]) { col = (mydword>>12)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[13]) { col = (mydword>> 8)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[14]) { col = (mydword>> 4)&0xf; if (col) *bm = pal8[col]; bm++; }
+					if (dda_x_skip[15]) { col = (mydword>> 0)&0xf; if (col) *bm = pal8[col]; bm++; }
 
 					l++;
 				}
