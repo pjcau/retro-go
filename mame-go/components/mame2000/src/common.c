@@ -49,6 +49,8 @@ extern unsigned char mamego_region_flash[MAX_MEMORY_REGIONS];
 /* banked part (above 1 MB) of a Neo Geo program split between PSRAM and
    flash by mamego_regions_to_flash(), NULL when the program is in one piece */
 unsigned char *mamego_prog_hi;
+int mamego_prog_ram;                    /* bench switch neo_program: the first program MB in PSRAM */
+static int mamego_prog_ram_checked;
 extern size_t mamego_flash_offset;
 static unsigned char *mamego_sound_to_flash(const struct RomModule *region_hdr, unsigned region_size);
 unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t *offset);
@@ -1231,7 +1233,23 @@ void mamego_regions_to_flash(void)
 				|| Machine->memory_region_length[i] < 1024 * 1024)
 				continue;
 		}
-		if (type == REGION_CPU1 && Machine->memory_region_length[i] > 0x400000)
+#ifdef ESP_PLATFORM
+		if (type == REGION_CPU1 && !mamego_prog_ram_checked)
+		{
+			/* bench switch (play benchmark, core-0 profile: 15 % of the time in the
+			   68000's opcode fetch, waiting for the flash behind the data cache):
+			   with this file on the card the first MB of a 1-4 MB program stays in
+			   PSRAM, which fills a cache line about three times faster than the
+			   quad flash, and the sprite page cache gives up the room */
+			FILE *f = fopen("/sd/retro-go/mame/neo_program", "r");
+			mamego_prog_ram_checked = 1;
+			if (f) { fclose(f); mamego_prog_ram = 1; printf("mamego: program's first MB stays in PSRAM (neo_program)\n"); }
+		}
+		if (type == REGION_CPU1 && mamego_prog_ram && Machine->memory_region_length[i] == 0x100000)
+			continue;       /* a 1 MB program: all of it stays in PSRAM */
+#endif
+		if (type == REGION_CPU1 && (Machine->memory_region_length[i] > 0x400000
+			|| (mamego_prog_ram && Machine->memory_region_length[i] > 0x100000)))
 		{
 			/* 5 MB programs (Shock Troopers, KOF '97): larger than the
 			   partition. The first MB (fixed at 0x000000) stays in PSRAM, the

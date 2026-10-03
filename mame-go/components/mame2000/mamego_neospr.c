@@ -398,7 +398,12 @@ int neospr_start(uint32_t *pen_usage, unsigned total_tiles)
 		/* leave 1.5 MB: the frame bitmaps and display surfaces of the
 		   second-core video path (~420 KB) are allocated after this */
 		size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+		extern int mamego_prog_ram;
 		bytes = largest > 2048 * 1024 ? largest - 1536 * 1024 : 512 * 1024;
+		/* neo_program: the program's first MB took 1 MB of this block. The 1.5 MB
+		   reserve leaves ~850 KB unused in play (HEAP ext 852 KB): spend most of it */
+		if (mamego_prog_ram && largest > 1536 * 1024)
+			bytes = largest - 832 * 1024;
 	}
 #else
 	bytes = getenv("NEOSPR_CACHE_KB") ? (size_t)atoi(getenv("NEOSPR_CACHE_KB")) * 1024 : 2048 * 1024;
