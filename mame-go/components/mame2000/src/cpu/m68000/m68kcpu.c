@@ -948,6 +948,164 @@ void m68k_pchist(unsigned pc, unsigned cycles)
 #define idle_stat(w, r, i) ((void)0)
 #endif
 
+/* ---- wait loops that count -------------------------------------------------
+ * Metal Slug waits for the vertical blank in a loop that also counts its own
+ * turns:
+ *     addq.w #1,$106ee0 / clr.b $106edd / cmpi.b #0,$106ede / beq / cmpi.b #1,$106ed9 / bls
+ * about 970 turns a frame, 55 % of the 68000's cycles in play (PCHIST). The
+ * skip above calls it busy, because what it writes changes every turn.
+ *
+ * Such a loop is skipped exactly when it is PROVEN to be one. The code between
+ * the loop's top and its backward branch is decoded; every instruction must be
+ * one of: ADDQ/SUBQ #q,abs  CLR abs  TST abs  CMPI #imm,abs  BTST #imm,abs
+ * Bcc, with absolute addresses only. Then everything the loop reads and writes
+ * is known: one counter (the single ADDQ/SUBQ), constants (CLR), and reads
+ * that must not touch the counter nor the I/O window. Its registers do not
+ * change (checked every turn, as for the plain skip). Nothing inside the time
+ * slice can change what its branches test (interrupts are taken between
+ * slices, as the plain skip already relies on), so every remaining turn of the
+ * slice is the same turn. N turns are then N times the turn's cycles (measured
+ * on two consecutive turns) and N times the counter's step, with X as the last
+ * ADDQ/SUBQ would leave it; N is the largest count the cycle budget allows the
+ * interpreter to run in full. The rest of the slice runs normally.
+ * M68KCOUNT=0 (PC) turns it off: frames and samples must match with it on. */
+uint m68ki_count_enable = 1;
+static uint cl_pc = ~0u, cl_ppc, cl_ok, cl_addr, cl_size, cl_sub, cl_q, cl_turns, cl_lastv;
+static int cl_prev, cl_cpp;
+
+static uint cl_op16(uint a) { return m68k_read_immediate_16(ADDRESS_68K(a)); }
+
+/* the absolute operand at *pc (mode 7, reg 0 or 1): its address; 0 = not absolute */
+static int cl_abs(uint op, uint *pc, uint *addr)
+{
+	if ((op & 0x3f) == 0x38) { *addr = ADDRESS_68K((uint)MAKE_INT_16(cl_op16(*pc))); *pc += 2; return 1; }
+	if ((op & 0x3f) == 0x39) { *addr = ADDRESS_68K((cl_op16(*pc) << 16) | cl_op16(*pc + 2)); *pc += 4; return 1; }
+	return 0;
+}
+
+static int cl_overlap(uint a, uint an, uint b, uint bn) { return a < b + bn && b < a + an; }
+
+static int cl_verify(uint top, uint last)
+{
+	static const uint bytes[3] = { 1, 2, 4 };
+	uint pc = top, n = 0, i, counters = 0, other[12][2];
+
+	while (pc <= last)
+	{
+		uint at = pc, op = cl_op16(pc), sz = (op >> 6) & 3, addr;
+		pc += 2;
+		if ((op & 0xf000) == 0x6000)                         /* Bcc (not BRA, not BSR) */
+		{
+			if (((op >> 8) & 0xf) < 2 || (op & 0xff) == 0xff) return 0;
+			if (at == last) return counters == 1;        /* the loop's own backward branch: done */
+			/* a branch inside the loop may only go forward: no loop within the loop,
+			   so no instruction runs twice in a turn */
+			if ((op & 0xff) ? (op & 0x80) != 0 : (cl_op16(pc) & 0x8000) != 0) return 0;
+			if (!(op & 0xff)) pc += 2;
+			continue;
+		}
+		if (at == last) return 0;                            /* the branch must be the last instruction */
+		if ((op & 0xf000) == 0x5000 && sz != 3)              /* ADDQ / SUBQ #q,abs */
+		{
+			if (!cl_abs(op, &pc, &addr) || counters++) return 0;
+			cl_addr = addr; cl_size = bytes[sz]; cl_sub = (op >> 8) & 1; cl_q = ((op >> 9) & 7) ? ((op >> 9) & 7) : 8;
+			continue;
+		}
+		if (n >= 12) return 0;
+		if (((op & 0xff00) == 0x4200 || (op & 0xff00) == 0x4a00) && sz != 3)   /* CLR abs, TST abs */
+		{
+			if (!cl_abs(op, &pc, &addr)) return 0;
+		}
+		else if ((op & 0xff00) == 0x0c00 && sz != 3)         /* CMPI #imm,abs */
+		{
+			pc += sz == 2 ? 4 : 2;
+			if (!cl_abs(op, &pc, &addr)) return 0;
+		}
+		else if ((op & 0xffc0) == 0x0800)                    /* BTST #imm,abs (a byte) */
+		{
+			pc += 2;
+			sz = 0;
+			if (!cl_abs(op, &pc, &addr)) return 0;
+		}
+		else
+			return 0;
+		/* reads of the I/O window may change by themselves; CLR there has side effects */
+		if (addr - m68ki_idle_io_lo <= m68ki_idle_io_hi - m68ki_idle_io_lo) return 0;
+		other[n][0] = addr; other[n][1] = bytes[sz]; n++;
+	}
+	(void)i;
+	return 0;                                                    /* ran past the branch: not an instruction boundary */
+}
+
+/* in the idle check, same PC and registers as the last turn, no I/O: 1 = a proven counting wait loop (turns skipped when measured) */
+static int cl_check(void)
+{
+	int rem = GET_CYCLES(), cpp;
+	if (!m68ki_count_enable)
+		return 0;
+	if (cl_pc != REG_PC || cl_ppc != REG_PPC)
+	{
+		uint n, k;
+		cl_pc = REG_PC; cl_ppc = REG_PPC; cl_turns = 0; cl_prev = 0;
+		cl_ok = cl_verify(REG_PC, REG_PPC);
+		if (cl_ok)
+		{
+			/* nothing else in the loop may touch the counter: decode once more for the operands */
+			static const uint bytes[3] = { 1, 2, 4 };
+			uint pc = REG_PC;
+			while (pc <= REG_PPC && cl_ok)
+			{
+				uint op = cl_op16(pc), sz = (op >> 6) & 3, addr = 0, isctr = 0;
+				pc += 2;
+				if ((op & 0xf000) == 0x6000) { if (!(op & 0xff)) pc += 2; continue; }
+				if ((op & 0xf000) == 0x5000) isctr = 1;
+				else if ((op & 0xff00) == 0x0c00) pc += sz == 2 ? 4 : 2;
+				else if ((op & 0xffc0) == 0x0800) { pc += 2; sz = 0; }
+				cl_abs(op, &pc, &addr);
+				if (!isctr && cl_overlap(addr, bytes[sz], cl_addr, cl_size)) cl_ok = 0;
+			}
+			if (cl_addr - m68ki_idle_io_lo <= m68ki_idle_io_hi - m68ki_idle_io_lo) cl_ok = 0;
+		}
+		(void)n; (void)k;
+	}
+	if (!cl_ok)
+		return 0;
+	cpp = cl_prev - rem;                 /* the cycles of the turn that just ended */
+	{
+		/* a turn counts when it cost what the one before it cost and moved the
+		   counter by exactly one step (the ADDQ/SUBQ ran once, on this path) */
+		uint mask = cl_size == 4 ? 0xffffffffu : (1u << (8 * cl_size)) - 1;
+		uint cur = cl_size == 1 ? m68k_read_memory_8(cl_addr) : cl_size == 2 ? m68k_read_memory_16(cl_addr) : m68k_read_memory_32(cl_addr);
+		uint step = (cl_sub ? cl_lastv - cur : cur - cl_lastv) & mask;
+		cl_turns = (cl_prev > rem && cpp == cl_cpp && step == cl_q) ? cl_turns + 1 : 0;
+		cl_lastv = cur & mask;
+	}
+	cl_cpp = cpp;
+	cl_prev = rem;
+	if (cl_turns >= 2 && cpp > 0 && rem > cpp)
+	{
+		/* every check the interpreter makes during a turn sees more than rem - cpp
+		   cycles left, so it runs n full turns from here exactly when rem - n*cpp > 0 */
+		uint n = (uint)(rem - 1) / (uint)cpp, mask = cl_size == 4 ? 0xffffffffu : (1u << (8 * cl_size)) - 1, v, last;
+		v = cl_lastv;
+		v = (cl_sub ? v - n * cl_q : v + n * cl_q) & mask;
+		last = (cl_sub ? v + cl_q : v - cl_q) & mask;     /* the counter before the last turn's step */
+		if (cl_size == 1) m68k_write_memory_8(cl_addr, v);
+		else if (cl_size == 2) m68k_write_memory_16(cl_addr, v);
+		else m68k_write_memory_32(cl_addr, v);
+		/* X as the last ADDQ/SUBQ leaves it (carry or borrow of that step); the other
+		   flags come from the instructions after it, the same every turn */
+		FLAG_X = (cl_sub ? last < cl_q : v < cl_q) ? XFLAG_SET : 0;
+		USE_CYCLES(n * cpp);
+		cl_prev = GET_CYCLES();
+		cl_lastv = v;
+#ifndef ESP_PLATFORM
+		idle_skipped += (unsigned long long)n * cpp;
+#endif
+	}
+	return 1;
+}
+
 MAMEGO_HOT void m68ki_idle_check(void)
 {
 	uint whash = m68ki_idle_whash, io = m68ki_idle_io;
@@ -956,6 +1114,13 @@ MAMEGO_HOT void m68ki_idle_check(void)
 	m68ki_idle_whash = 0; /* hashes cover one pass of the loop */
 	m68ki_idle_io = 0;
 	idle_stat(io || (REG_PC == idle_pc && whash != idle_whash), REG_PC == idle_pc && memcmp(idle_regs, REG_DA, sizeof(idle_regs)) != 0, same && idle_count >= 2);
+	/* same place, same registers, but what it wrote changed: a wait loop that counts? */
+	if (!same && !io && REG_PC == idle_pc && !memcmp(idle_regs, REG_DA, sizeof(idle_regs)) && cl_check())
+	{
+		idle_whash = whash;
+		idle_count = 0;
+		return;
+	}
 	if (same)
 	{
 		if (++idle_count >= 3)

@@ -138,6 +138,21 @@ void init_neogeo(void)
 		if (getenv("M68KIDLE") && !strcmp(getenv("M68KIDLE"), "0")) /* PC A/B runs */
 			m68ki_idle_enable = 0;
 #endif
+		{
+			/* the exact skip of wait loops that count (m68kcpu.c cl_check) */
+			extern unsigned int m68ki_count_enable;
+			m68ki_count_enable = 1;
+#ifndef ESP_PLATFORM
+			if (getenv("M68KCOUNT") && !strcmp(getenv("M68KCOUNT"), "0"))
+				m68ki_count_enable = 0;
+#else
+			{
+				/* bench switch: this file on the card turns it off */
+				FILE *f = fopen("/sd/retro-go/mame/neo_nocount", "r");
+				if (f) { fclose(f); m68ki_count_enable = 0; printf("neogeo: counting wait loops not skipped (neo_nocount)\n"); }
+			}
+#endif
+		}
 	}
 #endif
 	extern struct YM2610interface neogeo_ym2610_interface;
