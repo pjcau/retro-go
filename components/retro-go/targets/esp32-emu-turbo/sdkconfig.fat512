@@ -1,0 +1,7 @@
+# A measurement (RG_SDKCONFIG_EXTRA=components/retro-go/targets/esp32-emu-turbo/sdkconfig.fat512):
+# FatFs sized for 512-byte sectors only. With 4096 every open file and every
+# mounted volume carries a 4 KB sector buffer; an SD card has 512-byte sectors,
+# and 4096 is only needed by a wear-levelled FAT in flash, which this board
+# does not mount. Frees about 3.5 KB of heap per open file and per volume.
+CONFIG_FATFS_SECTOR_512=y
+# CONFIG_FATFS_SECTOR_4096 is not set
