@@ -237,7 +237,10 @@ LoadFile(const char *name)
 	}
 
 	fseek(fp, 0, SEEK_SET);
-	fread(data, 1, fsize, fp);
+	{
+		extern size_t rg_storage_fread(void *buffer, size_t length, FILE *fp); /* fread with the loading percentage */
+		rg_storage_fread(data, fsize, fp);
+	}
 	fclose(fp);
 
 	return LoadCard(data, fsize);

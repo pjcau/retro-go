@@ -664,9 +664,7 @@ static void input_poll_cb(void)
    changes (a first launch of a Neo Geo game converts its sprites: minutes). */
 static void load_show(int percent)
 {
-    char text[12];
-    snprintf(text, sizeof(text), " %2d%% ", percent);
-    rg_gui_draw_text(RG_GUI_CENTER, rg_display_get_height() / 2 + 28, 0, text, C_WHITE, C_BLACK, RG_TEXT_BIGGER);
+    rg_gui_draw_loading(percent);
 }
 
 static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id)

@@ -409,7 +409,10 @@ int load_rom_file(const char *filename)
   buf = calloc(1, buf_size);
   if (!buf) abort();
 
-  fread(buf, file_size, 1, fd);
+  {
+    extern size_t rg_storage_fread(void *buffer, size_t length, FILE *fp); /* fread with the loading percentage */
+    rg_storage_fread(buf, file_size, fd);
+  }
   fclose(fd);
 
   if (strcasecmp(filename + (strlen(filename) - 4), ".col") == 0)

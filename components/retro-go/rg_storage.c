@@ -459,6 +459,51 @@ int64_t rg_storage_get_free_space(const char *path)
     return -1;
 }
 
+// Loading progress: on from rg_system_init() to the application's first
+// rg_system_tick(), so it covers the game being loaded and nothing after it.
+// Small files (settings, images) and the launcher draw nothing.
+static bool progress_enabled;
+static int progress_shown;
+
+void rg_storage_set_progress(bool enabled)
+{
+    progress_enabled = enabled;
+    progress_shown = -1;
+}
+
+static void show_progress(size_t done, size_t total)
+{
+    if (!progress_enabled || total < 256 * 1024 || rg_system_get_app()->isLauncher)
+        return;
+    int percent = RG_MIN(99, (int)((uint64_t)done * 100 / total));
+    if (percent != progress_shown)
+        rg_gui_draw_loading(progress_shown = percent);
+}
+
+// fread() of a large block, 64KB at a time, with the loading percentage. Returns the bytes read.
+size_t rg_storage_fread(void *buffer, size_t length, FILE *fp)
+{
+    long pos = ftell(fp);
+    size_t total = length, done = 0;
+    if (pos >= 0 && fseek(fp, 0, SEEK_END) == 0)
+    {
+        long end = ftell(fp);
+        fseek(fp, pos, SEEK_SET);
+        if (end >= pos)
+            total = RG_MIN(length, (size_t)(end - pos));
+    }
+    while (done < length)
+    {
+        size_t chunk = RG_MIN(length - done, 0x10000);
+        size_t got = fread((uint8_t *)buffer + done, 1, chunk, fp);
+        done += got;
+        show_progress(done, total);
+        if (got != chunk)
+            break;
+    }
+    return done;
+}
+
 bool rg_storage_read_file(const char *path, void **data_out, size_t *data_len, uint32_t flags)
 {
     RG_ASSERT_ARG(data_out && data_len);
@@ -502,7 +547,7 @@ bool rg_storage_read_file(const char *path, void **data_out, size_t *data_len, u
         return false;
     }
 
-    if (!fread(output_buffer, output_buffer_size, 1, fp))
+    if (!output_buffer_size || rg_storage_fread(output_buffer, output_buffer_size, fp) != output_buffer_size)
     {
         RG_LOGE("File read failed (%d): '%s'", errno, path);
         fclose(fp);
@@ -664,6 +709,7 @@ bool rg_storage_unzip_file(const char *zip_path, const char *filter, void **data
             decomp, read_buffer, &input_size, output_buffer, output_buffer + output_buffer_pos, &output_size,
             TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF | (stream_remaining ? TINFL_FLAG_HAS_MORE_INPUT : 0));
         output_buffer_pos += output_size;
+        show_progress(output_buffer_pos, output_buffer_size);
     } while (status == TINFL_STATUS_NEEDS_MORE_INPUT);
 
     // With user-provided buffer we might not reach TINFL_STATUS_DONE, but it doesn't mean we've failed

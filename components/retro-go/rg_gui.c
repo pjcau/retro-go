@@ -629,6 +629,16 @@ void rg_gui_draw_hourglass(void)
         (uint16_t*)image_hourglass.pixel_data, 0);
 }
 
+// The loading percentage, under the hourglass (rg_storage.c for the games read
+// through it, mame-go for its ROM sets)
+void rg_gui_draw_loading(int percent)
+{
+    char text[12];
+    snprintf(text, sizeof(text), " %2d%% ", RG_MIN(RG_MAX(percent, 0), 100));
+    rg_gui_draw_text(RG_GUI_CENTER, get_vertical_position(RG_GUI_CENTER, image_hourglass.height) + image_hourglass.height + 4,
+                     0, text, C_WHITE, C_BLACK, RG_TEXT_BIGGER);
+}
+
 void rg_gui_draw_status_bars(void)
 {
     size_t max_len = gui.screen_width / 8;

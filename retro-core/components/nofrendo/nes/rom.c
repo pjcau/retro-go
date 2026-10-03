@@ -230,6 +230,7 @@ rom_t *rom_loadmem(uint8 *data, size_t size)
 /* Load a ROM from file */
 rom_t *rom_loadfile(const char *filename)
 {
+   extern size_t rg_storage_fread(void *buffer, size_t length, FILE *fp); /* fread with the loading percentage */
    uint8 *data = NULL;
    long size = 0;
    FILE *fp;
@@ -253,7 +254,7 @@ rom_t *rom_loadfile(const char *filename)
       {
          MESSAGE_ERROR("ROM: Memory allocation failed\n");
       }
-      else if (fread(data, size, 1, fp) != 1)
+      else if (rg_storage_fread(data, size, fp) != (size_t)size)
       {
          MESSAGE_ERROR("ROM: Read error\n");
          free(data);

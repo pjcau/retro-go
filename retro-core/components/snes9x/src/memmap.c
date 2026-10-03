@@ -243,7 +243,10 @@ bool LoadROM(const char* filename)
       fseek(fp, 0, SEEK_END);
       TotalFileSize = ftell(fp);
       fseek(fp, 0, SEEK_SET);
-      fread(Memory.ROM, Memory.ROM_AllocSize, 1, fp);
+      {
+         extern size_t rg_storage_fread(void *buffer, size_t length, FILE *fp); /* fread with the loading percentage */
+         rg_storage_fread(Memory.ROM, Memory.ROM_AllocSize, fp);
+      }
       fclose(fp);
    }
    else

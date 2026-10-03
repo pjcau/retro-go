@@ -514,6 +514,7 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
     app.romPath = app.bootArgs ?: ""; // For whatever reason some of our code isn't NULL-aware, sigh..
 
     rg_gui_draw_hourglass();
+    rg_storage_set_progress(true); // the loading percentage, until the first rg_system_tick()
     rg_audio_init(sampleRate);
 
     rg_system_set_timezone(rg_settings_get_string(NS_GLOBAL, SETTING_TIMEZONE, "EST+5"));
@@ -884,7 +885,8 @@ void rg_system_tick(int busyTime)
     rg_input_console_tick(); // bench console actions run here, at the frame boundary
     statistics.lastTick = rg_system_timer();
     statistics.busyTime += busyTime;
-    statistics.ticks++;
+    if (statistics.ticks++ == 0)
+        rg_storage_set_progress(false); // the game runs: nothing is drawn over it
     if (hud_enabled && !app.isLauncher)
         draw_debug_hud();
     // WDT_RELOAD(WDT_TIMEOUT);

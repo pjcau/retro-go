@@ -76,5 +76,7 @@ enum
     RG_FILE_ATOMIC_WRITE = (1 << 5),    // Will write to a temp file before replacing the target
 };
 bool rg_storage_read_file(const char *path, void **data_out, size_t *data_len, uint32_t flags);
+size_t rg_storage_fread(void *buffer, size_t length, FILE *fp);
+void rg_storage_set_progress(bool enabled);
 bool rg_storage_write_file(const char *path, const void *data_ptr, size_t data_len, uint32_t flags);
 bool rg_storage_unzip_file(const char *zip_path, const char *filter, void **data_out, size_t *data_len, uint32_t flags);
