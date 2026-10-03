@@ -632,9 +632,6 @@ MAMEGO_HOT int m68k_execute(int num_cycles)
 		USE_CYCLES(CPU_INT_CYCLES);
 		CPU_INT_CYCLES = 0;
 
-#ifdef MAMEGO
-		const uint8 *const cyc_instruction = CYC_INSTRUCTION;
-#endif
 		/* Main loop.  Keep going until we run out of clock cycles */
 		do
 		{
@@ -651,23 +648,9 @@ MAMEGO_HOT int m68k_execute(int num_cycles)
 			REG_PPC = REG_PC;
 
 			/* Read an instruction and call its handler */
-#ifdef MAMEGO
-			/* The opcode and the cycle table's address stay in registers across
-			   the handler (the play profile puts 15 % of core 0 on this loop's
-			   dozen instructions; reloading IR and the table pointer from memory
-			   after every handler was two of them). No handler writes REG_IR, and
-			   the cycle table only changes with the CPU type, outside this loop. */
-			{
-				uint ir = m68ki_read_imm_16();
-				REG_IR = ir;
-				m68ki_instruction_jump_table[ir]();
-				USE_CYCLES(cyc_instruction[ir]);
-			}
-#else
 			REG_IR = m68ki_read_imm_16();
 			m68ki_instruction_jump_table[REG_IR]();
 			USE_CYCLES(CYC_INSTRUCTION[REG_IR]);
-#endif
 #ifdef PCHIST /* PC analysis builds only (-DPCHIST): cycles per 16-byte block */
 			{ extern void m68k_pchist(unsigned pc, unsigned cycles); m68k_pchist(REG_PPC, CYC_INSTRUCTION[REG_IR]); }
 #endif
