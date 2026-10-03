@@ -206,7 +206,8 @@ int main(int argc, char **argv)
 	{
 		quiet = 1;                       /* the first frame is only there to start the video */
 		joy = 0;
-		retro_run();
+		for (int i = 0; i < 6; i++)  /* as the board: the sound board's state exists a few frames in */
+			retro_run();
 		if (!state_io(load, 0)) return 1;
 		quiet = 0;
 		frame_no = 0;

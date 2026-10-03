@@ -815,7 +815,13 @@ static void mame_task(void *arg)
 
     if (app->bootFlags & RG_BOOT_RESUME)
     {
-        retro_run(); /* the machine is fully up only after its first frame */
+        /* the machine is fully up only after its first frame, and the Neo Geo
+         * and CPS1 sound boards move to core 1 a few frames in: from then on
+         * their state is part of every save (4280 bytes on the Neo Geo), so a
+         * state saved in play was "larger than the state" when loaded after
+         * one frame and no resume ever worked. Load where saves are made. */
+        for (int i = 0; i < 6; i++)
+            retro_run();
         rg_emu_load_state(app->saveSlot);
     }
 
