@@ -1112,6 +1112,33 @@ bool retro_load_game(const struct retro_game_info *info)
 
    /* parse generic (os-independent) options */
    //parse_cmdline (argc, argv, game_index);
+#ifdef MAMEGO
+	{
+		/* here and not in parse_cmdline(): mame-go never calls it */
+		extern int underclock_cpu;
+		/* bench switch: the main CPU's clock cut by N percent (the 68000 then
+		   runs N % fewer cycles a frame; a game that uses its whole frame slows
+		   down, as it does on the real board when overloaded). The number is the
+		   content of /sd/retro-go/mame/neo_uclock; NEOUCLOCK on the PC. */
+		int n = 0;
+#ifdef ESP_PLATFORM
+		FILE *f = fopen("/sd/retro-go/mame/neo_uclock", "r");
+		if (f)
+		{
+			if (fscanf(f, "%d", &n) != 1)
+				n = 0;
+			fclose(f);
+		}
+#else
+		if (getenv("NEOUCLOCK"))
+			n = atoi(getenv("NEOUCLOCK"));
+#endif
+		if (n > 0 && n <= 50)
+			underclock_cpu = n;
+		if (underclock_cpu)
+			printf("mamego: main CPU underclocked by %d %%\n", underclock_cpu);
+	}
+#endif
 
    //Set default path
    nvdir=(char *) malloc(PATH_BUF_SIZE);snprintf(nvdir,PATH_BUF_SIZE,"%s%c%s",core_save_directory,slash,"nvram");
