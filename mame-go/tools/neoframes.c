@@ -175,6 +175,11 @@ static uint16_t script(unsigned f)
 		if (f >= 720 && f < 726) return 1 << RETRO_DEVICE_ID_JOYPAD_START;
 		if (f < 900) return 0;
 		return bench_input(f - 900);
+	case 4:                                  /* the board's MAMEBENCH=4: CPS1, 30-frame presses given twice */
+		if ((f >= 600 && f < 630) || (f >= 1500 && f < 1530)) return 1 << RETRO_DEVICE_ID_JOYPAD_SELECT;
+		if ((f >= 900 && f < 930) || (f >= 1800 && f < 1830)) return 1 << RETRO_DEVICE_ID_JOYPAD_START;
+		if (f < 1900) return 0;
+		return bench_input(f - 1900);
 	default:
 		return bench_input(f);
 	}
@@ -206,7 +211,7 @@ int main(int argc, char **argv)
 
 	if (argc < 4)
 	{
-		fprintf(stderr, "usage: %s <sysdir> <game.zip> <frames> [--every N] [--load FILE] [--save FILE@N] [--dump DIR@N] [--input bench|attract|none|play]\n", argv[0]);
+		fprintf(stderr, "usage: %s <sysdir> <game.zip> <frames> [--every N] [--load FILE] [--save FILE@N] [--dump DIR@N] [--input bench|attract|none|play|play2]\n", argv[0]);
 		return 2;
 	}
 	sysdir = argv[1];
@@ -220,7 +225,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--dump") && (at = strrchr(argv[i + 1], '@'))) { *at = 0; dump_dir = argv[i + 1]; dump_at = atoi(at + 1); }
 		else if (!strcmp(argv[i], "--rate")) sample_rate = argv[i + 1];
 		else if (!strcmp(argv[i], "--wav")) { wav_fp = fopen(argv[i + 1], "wb"); if (!wav_fp) { perror(argv[i + 1]); return 2; } wav_header(0, 0); }
-		else if (!strcmp(argv[i], "--input")) input_mode = !strcmp(argv[i + 1], "attract") ? 1 : !strcmp(argv[i + 1], "none") ? 2 : !strcmp(argv[i + 1], "play") ? 3 : 0;
+		else if (!strcmp(argv[i], "--input")) input_mode = !strcmp(argv[i + 1], "attract") ? 1 : !strcmp(argv[i + 1], "none") ? 2 : !strcmp(argv[i + 1], "play") ? 3 : !strcmp(argv[i + 1], "play2") ? 4 : 0;
 		else { fprintf(stderr, "neoframes: bad option %s\n", argv[i]); return 2; }
 	}
 	if (!hash_every) hash_every = 1;

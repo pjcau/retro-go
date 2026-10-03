@@ -154,10 +154,23 @@ static bool bench_hash_next;
 #define BENCH_COIN_AT  600
 #define BENCH_START_AT 720
 #define BENCH_PLAY_AT  900
+/* MAMEBENCH=4: the same for the CPS1, which does not take 6-frame presses
+ * (Final Fight ignores the coin, Street Fighter II the START) and may still be
+ * in its boot test at frame 600 (Ghouls'n Ghosts): 30-frame presses, given
+ * twice. "--input play2" of tools/neoframes.c. */
+#define BENCH4_PLAY_AT 1900
 
 static uint32_t bench_input(uint32_t f)
 {
-#if MAMEBENCH >= 2
+#if MAMEBENCH == 4
+    if (f < BENCH4_PLAY_AT)
+    {
+        if ((f >= 600 && f < 630) || (f >= 1500 && f < 1530)) return RG_KEY_SELECT;  /* coin */
+        if ((f >= 900 && f < 930) || (f >= 1800 && f < 1830)) return RG_KEY_START;
+        return 0;
+    }
+    f -= BENCH4_PLAY_AT;
+#elif MAMEBENCH >= 2
     if (f < BENCH_PLAY_AT)
     {
         if (f >= BENCH_COIN_AT && f < BENCH_COIN_AT + 6) return RG_KEY_SELECT;      /* coin */
@@ -940,7 +953,7 @@ static void mame_task(void *arg)
         loop_start = now;
 #ifdef MAMEBENCH
         if (audio_buffer_status)
-#if MAMEBENCH >= 3
+#if MAMEBENCH == 3
             audio_buffer_status(true, 50, bench_frame & 1);  /* MAMEBENCH=3: every other frame not drawn
                                                                 (the fixed 1-in-2 frameskip), same script as 2 */
 #else
@@ -968,7 +981,10 @@ static void mame_task(void *arg)
         if (++bench_frame % 300 == 0)
             printf("MAMEBENCH frames %u hash %08x\n", (unsigned)bench_frame, (unsigned)bench_hash);
 #ifdef MAMEPROF
-#if MAMEBENCH >= 2
+#if MAMEBENCH == 4
+        if (bench_frame == 2300) samp_start();      /* CPS1 script: in play from 1900 */
+        if (bench_frame == 3800) samp_dump();
+#elif MAMEBENCH >= 2
         if (bench_frame == 1300) samp_start();      /* mission 1 being played */
         if (bench_frame == 2800) samp_dump();
 #else
