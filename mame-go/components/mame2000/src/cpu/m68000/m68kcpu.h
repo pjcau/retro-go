@@ -1221,7 +1221,8 @@ static INLINE void m68ki_jump_vector(uint vector)
  * remaining cycles in this timeslice are given away; the other CPU and the
  * timers run, and the loop resumes in the next slice as it would have. */
 void m68ki_idle_check(void);
-#define M68KI_IDLE_CHECK() do { if (m68ki_idle_enable && REG_PC < REG_PPC && REG_PPC - REG_PC <= 32) m68ki_idle_check(); } while (0)
+extern uint m68ki_idle_span;   /* how far back a branch may go and still be looked at (32; 64 with the turn skip) */
+#define M68KI_IDLE_CHECK() do { if (m68ki_idle_enable && REG_PC < REG_PPC && REG_PPC - REG_PC <= m68ki_idle_span) m68ki_idle_check(); } while (0)
 #else
 #define M68KI_IDLE_CHECK() ((void)0)
 #endif

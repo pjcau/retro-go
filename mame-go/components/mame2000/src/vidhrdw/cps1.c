@@ -1332,6 +1332,24 @@ int cps1_vh_start(void)
 #ifndef ESP_PLATFORM
 		if (getenv("M68KIDLE") && !strcmp(getenv("M68KIDLE"), "0")) m68ki_idle_enable = 0;
 #endif
+		{
+			/* the exact skip of idle turns longer than one loop (m68kcpu.c turn_check):
+			   Capcom's task scheduler waits for the vertical blank in a scan of 16
+			   slots, 44 to 52 bytes from end to top */
+			extern unsigned int m68ki_turn_enable, m68ki_idle_span;
+			m68ki_turn_enable = 1;
+			m68ki_idle_span = 64;
+#ifndef ESP_PLATFORM
+			if (getenv("M68KTURN") && !strcmp(getenv("M68KTURN"), "0"))
+				m68ki_turn_enable = 0, m68ki_idle_span = 32;
+#else
+			{
+				/* bench switch: this file on the card turns it off */
+				FILE *f = fopen("/sd/retro-go/mame/cps1_noturn", "r");
+				if (f) { fclose(f); m68ki_turn_enable = 0; m68ki_idle_span = 32; printf("cps1: idle turns not skipped (cps1_noturn)\n"); }
+			}
+#endif
+		}
 	}
 #endif
 	cps1_init_machine();
@@ -1443,6 +1461,7 @@ void cps1_vh_stop(void)
 	{ extern void cps1snd_disable(void); cps1snd_disable(); }
 	{ extern size_t (*mamego_driver_state)(unsigned char *, size_t, int); mamego_driver_state = 0; }
 	{ extern unsigned int m68ki_idle_enable; extern unsigned z80_idle_enable; m68ki_idle_enable = 0; z80_idle_enable = 0; }
+	{ extern unsigned int m68ki_turn_enable, m68ki_idle_span; m68ki_turn_enable = 0; m68ki_idle_span = 32; }
 #endif
 	if (cps1_old_palette)
 		free(cps1_old_palette);

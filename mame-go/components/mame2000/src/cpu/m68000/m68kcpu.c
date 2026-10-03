@@ -1115,6 +1115,74 @@ static int cl_check(void)
 	return 1;
 }
 
+/* ---- idle turns longer than one loop --------------------------------------
+ * Capcom's CPS1 games wait for the vertical blank in their task scheduler:
+ *     clr.b flag / lea table,a0 / move.w #15,d0
+ *  l: move.w #$2600,sr / tst.b flag / bne top / move.b (a0),d1 / cmpi.b #4,d1 /
+ *     bcc run / move.w #$2000,sr / lea $10(a0),a0 / dbra d0,l / bra top
+ * 50 to 66 % of the 68000's cycles of every CPS1 game measured (PCHIST). The
+ * skip above never sees it: its turn is the outer loop, 44 bytes back, and the
+ * inner DBRA, whose registers change every time, keeps resetting the single
+ * loop it tracks.
+ *
+ * Here every backward branch within m68ki_idle_span bytes has a slot of its
+ * own, by the address it lands on. A turn is what happens between two visits
+ * of the same slot. When three consecutive turns start with the same
+ * registers and SR, wrote the same things (the sum of the write hashes of the
+ * checks in between) with nothing in the I/O window, and cost the same
+ * cycles, the turns that fit in the rest of the time slice are identical to
+ * them: memory is what those writes left, nothing inside a slice changes it,
+ * and the CPU is deterministic. They are taken off the cycle count in one go,
+ * as many whole turns as the interpreter would have run in full; the rest of
+ * the slice runs normally. Exact, unlike the skip above, which drops the
+ * unfinished turn too. (As that one, it does not see a loop polling an I/O
+ * location that changes with time by itself.) Off unless a board's init turns
+ * it on; M68KTURN=0 on the PC. */
+uint m68ki_turn_enable, m68ki_idle_span = 32;
+#define TURN_SLOTS 8
+static struct turn_slot { uint pc, sr, regs[16], wsum, delta, io, count; int rem, cost; } turn_slots[TURN_SLOTS];
+static uint turn_wsum, turn_io;
+
+static void turn_check(uint whash, uint io)
+{
+	struct turn_slot *t = &turn_slots[(REG_PC >> 1) & (TURN_SLOTS - 1)];
+	int rem = GET_CYCLES();
+	uint sr = m68ki_get_sr();
+
+	turn_wsum += whash;       /* every write since the last check, whoever it was for */
+	turn_io += io;
+	if (t->pc == REG_PC && t->sr == sr && t->io == turn_io && !memcmp(t->regs, REG_DA, sizeof(t->regs)))
+	{
+		uint delta = turn_wsum - t->wsum;
+		int cost = t->rem - rem;
+		t->count = (t->rem > rem && delta == t->delta && cost == t->cost) ? t->count + 1 : 0;
+		t->delta = delta;
+		t->cost = cost;
+		if (t->count >= 2 && cost > 0 && rem > cost)
+		{
+			/* the interpreter runs n more whole turns exactly when rem - n*cost > 0 */
+			uint n = (uint)(rem - 1) / (uint)cost;
+			USE_CYCLES(n * cost);
+			rem = GET_CYCLES();
+#ifndef ESP_PLATFORM
+			idle_skipped += (unsigned long long)n * cost;
+#endif
+		}
+	}
+	else
+	{
+		t->pc = REG_PC;
+		t->sr = sr;
+		memcpy(t->regs, REG_DA, sizeof(t->regs));
+		t->count = 0;
+		t->cost = 0;
+		t->delta = ~0u;
+	}
+	t->wsum = turn_wsum;
+	t->io = turn_io;
+	t->rem = rem;
+}
+
 MAMEGO_HOT void m68ki_idle_check(void)
 {
 	uint whash = m68ki_idle_whash, io = m68ki_idle_io;
@@ -1122,6 +1190,8 @@ MAMEGO_HOT void m68ki_idle_check(void)
 
 	m68ki_idle_whash = 0; /* hashes cover one pass of the loop */
 	m68ki_idle_io = 0;
+	if (m68ki_turn_enable)
+		turn_check(whash, io);
 	idle_stat(io || (REG_PC == idle_pc && whash != idle_whash), REG_PC == idle_pc && memcmp(idle_regs, REG_DA, sizeof(idle_regs)) != 0, same && idle_count >= 2);
 	/* same place, same registers, but what it wrote changed: a wait loop that counts? */
 	if (!same && !io && REG_PC == idle_pc && !memcmp(idle_regs, REG_DA, sizeof(idle_regs)) && cl_check())
