@@ -700,6 +700,8 @@ void applications_init(void)
     application("Sega Mega Drive", "md", "md gen bin zip", "gwenesis", 0);
     application("Coleco ColecoVision", "col", "col rom zip", "retro-core", 0);
     application("NEC PC Engine", "pce", "pce zip", "retro-core", 0);
+    application("Atari Lynx", "lnx", "lnx zip", "retro-core", 64);
+    application("Atari 2600", "a26", "a26 bin zip", "retro-extra", 0);
     application("Neo Geo Pocket", "ngp", "ngp ngc npc zip", "retro-extra", 0);
     application("DOOM", "doom", "wad zip", "prboom-go", 0);
     application("Duke Nukem 3D", "duke3d", "grp", "duke3d-go", 0);

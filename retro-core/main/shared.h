@@ -14,4 +14,5 @@ void gbc_main();
 void nes_main();
 void pce_main();
 void sms_main();
+void lynx_main();
 void snes_main();

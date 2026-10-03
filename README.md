@@ -34,7 +34,7 @@ Docs: [firmware](https://pjcau.github.io/esp32-emu-turbo/docs/software/firmware)
 ### Launcher
 - "GAME BRO!" boot splash on cold boot, real-time on the board (`2a1b4fc3`, `1d891c8f`).
 - Tabs added: SG-1000 (enabled), Neo Geo Pocket, Duke Nukem 3D, Wolfenstein 3D, Quake, OpenTyrian, Arcade (MAME), Neo Geo.
-- Art for Arcade, Duke3D, SG-1000, GBA, NGP from [rxbrad/es-theme-gbz35](https://github.com/rxbrad/es-theme-gbz35) (`801cbe9f`).
+- Art for Arcade, Duke3D, SG-1000, Atari 2600, GBA, NGP from [rxbrad/es-theme-gbz35](https://github.com/rxbrad/es-theme-gbz35) (`801cbe9f`).
 
 ### retro-core
 - **SNES (snes9x)** — the Phase 4 renderer work that brought most games to 60 fps: audio samples per frame from the ROM fps, 32 KB I-cache / 64 KB D-cache, z-buffer in internal SRAM, blank-tile cache, colour-math fast path, Mode 7 hoisting, `restrict` tile writers, backdrop colour and CGRAM 0-15 per line, save-state loader heap-corruption fix, Native 12-button keymap default, SNES_PROF counters (`8164755a` .. `c16ff62f`). See [snes-optimization.md](https://github.com/pjcau/esp32-emu-turbo/blob/main/website/docs/software/snes-optimization.md).
@@ -48,12 +48,12 @@ Docs: [firmware](https://pjcau.github.io/esp32-emu-turbo/docs/software/firmware)
 - **gwenesis**: YM2612 synthesis on core 1 (register writes logged with their clock, replayed one frame later); GEN_PROF profiler (`1dbfee8a`).
 - **prboom-go (DOOM)**: in-game crash fixed with a 16 KB game task stack and a PSRAM reserve for the lump cache (`66d251ed`).
 - **fmsx (MSX) removed** (2026-09-29): not needed on this console; its 640 KB partition went to the GBA app (`gbsp`).
-- **Lynx (handy), Atari 2600 (Stella) and Game & Watch removed** (2026-09-29): not needed on this console; cores, launcher tabs and art deleted.
+- **Lynx (handy), Atari 2600 (Stella) and Game & Watch removed** (2026-09-29); **Lynx and Atari 2600 brought back** (2026-10-03, the user): Lynx in `retro-core`, Atari 2600 in `retro-extra` with Stella's cartridge database cut to the 936 entries that change the emulation (`compact_props.py`, 540 KB to ~45 KB of flash) so it fits the 1.25 MB partition.
 
 ### New apps (partition table in `rg_tool.py`)
 | App | What | Source / credit | Commits |
 |-----|------|-----------------|---------|
-| `retro-extra` | Neo Geo Pocket (RACE) | [libretro RACE](https://github.com/libretro/RACE) | `8f3f0ad1` |
+| `retro-extra` | Neo Geo Pocket (RACE) + Atari 2600 (Stella) | [libretro RACE](https://github.com/libretro/RACE), stella-odroid-go | `8f3f0ad1` |
 | `duke3d-go` | Duke Nukem 3D, ported to the current API, FatFs/menu/level fixes, 32 kHz audio | Chocolate Duke3D port by jkirsons (upstream `duke3d` branch) | `b75e5a38`, `704748f1`, `877b5d31` |
 | `wolf3d-go` | Wolfenstein 3D (id source license + MAME fmopl license shipped) | [pcgamer404/retro-go-pro](https://github.com/pcgamer404/retro-go-pro) (GPL) | `fac26d34`, `5e4bc37d` |
 | `quake-go` | Quake | pcgamer404/retro-go-pro (GPL) | `fac26d34` |
@@ -96,6 +96,7 @@ optimized to reduce their cpu, memory, and flash needs without reducing compatib
 - Sega: **SG-1000, Master System, Mega Drive / Genesis, Game Gear**
 - Coleco: **Colecovision**
 - NEC: **PC Engine**
+- Atari: **Lynx, 2600**
 - Others: **DOOM** (including mods!)
 
 ### Retro-Go features:
@@ -255,9 +256,10 @@ If you wish to build or modify Retro-Go, you can find help in the following docu
 - PNG support is provided by [lodepng](https://github.com/lvandeve/lodepng/).
 - PCE cover art is from [Christian_Haitian](https://github.com/christianhaitian).
 - Some icons from [Rokey](https://iconarchive.com/show/seed-icons-by-rokey.html).
-- Background images from [es-theme-gbz35](https://github.com/rxbrad/es-theme-gbz35); logos, banners and backgrounds of the systems added by this fork (Arcade, Duke Nukem 3D, SG-1000, GBA, NGP) too, via `tools/import_gbz35_art.py`.
+- Background images from [es-theme-gbz35](https://github.com/rxbrad/es-theme-gbz35); logos, banners and backgrounds of the systems added by this fork (Arcade, Duke Nukem 3D, SG-1000, Atari 2600, GBA, NGP) too, via `tools/import_gbz35_art.py`.
 - Special thanks to [RGHandhelds](https://www.rghandhelds.com/) and [MyRetroGamecase](https://www.myretrogamecase.com/) for sending me a [G32](https://www.myretrogamecase.com/products/game-mini-g32-esp32-retro-gaming-console-1) device.
 - The [ODROID-GO](https://forum.odroid.com/viewtopic.php?f=159&t=37599) community for encouraging the development of retro-go!
 
 # License
-Everything in this project is licensed under the [GPLv2 license](COPYING).
+Everything in this project is licensed under the [GPLv2 license](COPYING) with the exception of the following components:
+- retro-core/components/handy (Lynx emulator, zlib)

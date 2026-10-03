@@ -1,6 +1,6 @@
 #include "shared.h"
 
-// retro-extra: Neo Geo Pocket (RACE); Atari 2600 removed 2026-09-29 (not needed) — see CMakeLists.txt
+// retro-extra: Neo Geo Pocket (RACE) and Atari 2600 (Stella) — see CMakeLists.txt
 
 void app_main(void)
 {
@@ -10,6 +10,8 @@ void app_main(void)
 
     if (strcmp(app->configNs, "ngp") == 0 || strcmp(app->configNs, "ngpc") == 0)
         ngp_main();
+    else if (strcmp(app->configNs, "a26") == 0)
+        a26_main();
     else
         RG_PANIC("Unknown app for retro-extra");
 

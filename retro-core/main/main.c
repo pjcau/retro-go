@@ -23,6 +23,10 @@ void app_main(void)
         sms_main();   // SG-1000: main_sms picks console 5 from the .sg extension
     else if (strcmp(app->configNs, "snes") == 0)
         snes_main();
+#ifndef __TINYC__
+    else if (strcmp(app->configNs, "lnx") == 0)
+        lynx_main();
+#endif
     else
         launcher_main();
 
