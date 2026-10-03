@@ -31,6 +31,7 @@ PROJECT_APPS = {
   'quake-go':     [0, 16, 786432],
   'gbsp':         [0, 16, 851968],  # GBA (gpSP interpreter, from upstream); fMSX removed 2026-09-29 to make room
   'opentyrian-go': [0, 16, 655360],
+  'cannonball':   [0, 16, 655360],  # OutRun (the Cannonball engine); the flash has 704 KB left after it
 }
 # PROJECT_APPS = {}
 # for t in glob.glob("*/CMakeLists.txt"):
