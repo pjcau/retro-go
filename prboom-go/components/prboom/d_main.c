@@ -971,11 +971,11 @@ static void D_DoomMainSetup(void)
   lprintf(LO_INFO, "D_InitNetGame: Checking for network game.\n");
   D_InitNetGame();
 
-  rg_gui_draw_loading(2);
+  rg_gui_draw_loading(1);
   lprintf(LO_INFO, "W_Init: Init WADfiles.\n");
   W_Init(); // CPhipps - handling of wadfiles init changed
 
-  rg_gui_draw_loading(10);
+  rg_gui_draw_loading(4);
   lprintf(LO_INFO, "V_Init: Setting up video.\n");
   V_Init(SCREENWIDTH, SCREENHEIGHT, default_videomode);
 
@@ -986,7 +986,7 @@ static void D_DoomMainSetup(void)
       D_ProcessDehFile(NULL, D_dehout(), p);
 #endif
 
-  rg_gui_draw_loading(15);
+  rg_gui_draw_loading(4);
   lprintf(LO_INFO, "M_Init: Init miscellaneous info.\n");
   M_Init();
 
@@ -996,24 +996,26 @@ static void D_DoomMainSetup(void)
 #endif
 
   /* the loading percentage under the hourglass: Doom reads its WAD lump by
-     lump, so the figure follows the start-up stages (here and in R_InitData) */
-  rg_gui_draw_loading(20);
+     lump, so the figure follows the start-up stages (here and in R_InitData),
+     each given its share of the time measured on the board with freedoom1.wad:
+     the translucency table 25 %, S_Init 60 % */
+  rg_gui_draw_loading(5);
   lprintf(LO_INFO, "R_Init: Init DOOM refresh daemon:\n");
   R_Init();
 
-  rg_gui_draw_loading(75);
+  rg_gui_draw_loading(31);
   lprintf(LO_INFO, "P_Init: Init Playloop state.\n");
   P_Init();
 
-  rg_gui_draw_loading(90);
+  rg_gui_draw_loading(32);
   lprintf(LO_INFO, "S_Init: Setting up sound.\n");
   S_Init(snd_SfxVolume, snd_MusicVolume);
 
-  rg_gui_draw_loading(95);
+  rg_gui_draw_loading(90);
   lprintf(LO_INFO, "HU_Init: Setting up heads up display.\n");
   HU_Init();
 
-  rg_gui_draw_loading(98);
+  rg_gui_draw_loading(93);
   lprintf(LO_INFO, "ST_Init: Init status bar.\n");
   ST_Init();
 

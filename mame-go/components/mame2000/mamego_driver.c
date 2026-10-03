@@ -64,6 +64,23 @@ extern const struct GameDriver driver_gorfpgm1;
 extern const struct GameDriver driver_robby;
 extern const struct GameDriver driver_profpac;
 extern const struct GameDriver driver_starfire;
+/* Sega System 16 (drivers/system16.c, a subset) */
+extern const struct GameDriver driver_aliensyn;
+extern const struct GameDriver driver_altbeast;
+extern const struct GameDriver driver_altbeas2;
+extern const struct GameDriver driver_aurail;
+extern const struct GameDriver driver_auraila;
+extern const struct GameDriver driver_bayroute;
+extern const struct GameDriver driver_eswatbl;
+extern const struct GameDriver driver_fantzone;
+extern const struct GameDriver driver_fantzono;
+extern const struct GameDriver driver_goldnaxe;
+extern const struct GameDriver driver_goldnaxa;
+extern const struct GameDriver driver_shinobi;
+extern const struct GameDriver driver_shinobl;
+extern const struct GameDriver driver_tetrisbl;
+extern const struct GameDriver driver_wb3;
+extern const struct GameDriver driver_wb3bl;
 extern const struct GameDriver driver_fireone;
 extern const struct GameDriver driver_victory;
 extern const struct GameDriver driver_victorba;
@@ -680,6 +697,22 @@ const struct GameDriver *drivers[] = {
 	&driver_robby,
 	&driver_profpac,
 	&driver_starfire,
+	&driver_aliensyn,
+	&driver_altbeast,
+	&driver_altbeas2,
+	&driver_aurail,
+	&driver_auraila,
+	&driver_bayroute,
+	&driver_eswatbl,
+	&driver_fantzone,
+	&driver_fantzono,
+	&driver_goldnaxe,
+	&driver_goldnaxa,
+	&driver_shinobi,
+	&driver_shinobl,
+	&driver_tetrisbl,
+	&driver_wb3,
+	&driver_wb3bl,
 	&driver_fireone,
 	&driver_victory,
 	&driver_victorba,

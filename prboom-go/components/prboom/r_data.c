@@ -519,20 +519,20 @@ void R_InitData(void)
   extern void rg_gui_draw_loading(int percent);
   lprintf(LO_INFO, "R_InitData: Textures\n");
   R_InitTextures();
-  rg_gui_draw_loading(40);
+  rg_gui_draw_loading(6);
   lprintf(LO_INFO, "R_InitData: Flats\n");
   R_InitFlats();
-  rg_gui_draw_loading(45);
+  rg_gui_draw_loading(6);
   lprintf(LO_INFO, "R_InitData: Sprites\n");
   R_InitSpriteLumps();
-  rg_gui_draw_loading(50);
+  rg_gui_draw_loading(7);
   lprintf(LO_INFO, "R_InitData: Translucency\n");
   if (default_translucency)             // killough 3/1/98
     R_InitTranMap(1);                   // killough 2/21/98, 3/6/98
-  rg_gui_draw_loading(65);
+  rg_gui_draw_loading(30);
   lprintf(LO_INFO, "R_InitData: Colourmaps\n");
   R_InitColormaps();                    // killough 3/20/98
-  rg_gui_draw_loading(70);
+  rg_gui_draw_loading(31);
 }
 
 //

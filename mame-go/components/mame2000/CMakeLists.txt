@@ -33,6 +33,7 @@ set(COMPONENT_SRCS
     src/drivers/pacman.c
     src/drivers/scramble.c
     src/drivers/starfire.c
+    src/drivers/system16.c
     src/drivers/victory.c
     src/gfxobj.c
     src/hiscore.c
@@ -84,6 +85,7 @@ set(COMPONENT_SRCS
     src/sound/ym2151.c
     src/sound/samples.c
     src/sound/sn76496.c
+    src/sound/upd7759.c
     src/sound/streams.c
     src/sound/votrax.c
     src/sound/ymdeltat.c
@@ -133,6 +135,6 @@ rg_setup_compile_options(
     -D__LIBRETRO__ -DLSB_FIRST -DMAMEGO
     -DHAS_Z80=1 -DHAS_M68000=1 -DHAS_M6502=1 -DHAS_M65C02=1 -DHAS_N2A03=1 -DHAS_I8035=1 -DHAS_S2650=1
     -DHAS_NAMCO=1 -DHAS_CUSTOM=1 -DHAS_SN76496=1 -DHAS_AY8910=1 -DHAS_YM2203=1 -DHAS_YM2610=1 -DHAS_YM3812=1 -DHAS_QSOUND=1
-    -DHAS_DAC=1 -DHAS_SAMPLES=1 -DHAS_HC55516=1 -DHAS_ASTROCADE=1 -DHAS_TMS5220=1 -DHAS_NES=1 -DHAS_OKIM6295=1 -DHAS_ADPCM=1 -DHAS_YM2151=1
+    -DHAS_DAC=1 -DHAS_SAMPLES=1 -DHAS_HC55516=1 -DHAS_ASTROCADE=1 -DHAS_TMS5220=1 -DHAS_NES=1 -DHAS_OKIM6295=1 -DHAS_ADPCM=1 -DHAS_YM2151=1 -DHAS_UPD7759=1 -DHAS_N7751=1
 )
 
