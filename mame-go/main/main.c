@@ -899,7 +899,12 @@ static void mame_task(void *arg)
         loop_start = now;
 #ifdef MAMEBENCH
         if (audio_buffer_status)
+#if MAMEBENCH >= 3
+            audio_buffer_status(true, 50, bench_frame & 1);  /* MAMEBENCH=3: every other frame not drawn
+                                                                (the fixed 1-in-2 frameskip), same script as 2 */
+#else
             audio_buffer_status(true, 50, false);    /* draw every frame */
+#endif
         joystick = rg_input_read_gamepad();
         if (!(joystick & (RG_KEY_MENU | RG_KEY_OPTION)))
             joystick = bench_input(bench_frame);
