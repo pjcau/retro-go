@@ -1308,6 +1308,25 @@ static INLINE void cps1_get_video_base(void )
 
 ***************************************************************************/
 
+#ifdef MAMEGO
+/* A save state's buffer when the heap has none (Street Fighter II in play:
+   77 KB of PSRAM left for a 314 KB state): the scroll-2 cache bitmap, 1 MB.
+   Every tile of it is marked changed, so the next frame draws it again in full.
+   Called between frames, like neospr_borrow(). */
+void *cps1_state_borrow(size_t size)
+{
+	struct osd_bitmap *b = cps1_scroll2_bitmap;
+	size_t have;
+	if (!b || !cps1_scroll2_old)
+		return NULL;
+	have = (size_t)(b->line[b->height - 1] - b->line[0]) + (size_t)b->width * (b->depth == 16 ? 2 : 1);
+	if (have < size)
+		return NULL;
+	memset(cps1_scroll2_old, 0xff, cps1_scroll2_size);
+	return b->line[0];
+}
+#endif
+
 int cps1_vh_start(void)
 {
 	int i;
@@ -1475,6 +1494,8 @@ void cps1_vh_stop(void)
 		bitmap_free(cps1_scroll2_bitmap);
 	if (cps1_scroll2_old)
 		free(cps1_scroll2_old);
+	cps1_scroll2_bitmap = 0; /* cps1_state_borrow() must not find them */
+	cps1_scroll2_old = 0;
 	if (cps1_buffered_obj)
 		free(cps1_buffered_obj);
 	cps1_gfx_stop();

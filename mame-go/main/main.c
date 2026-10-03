@@ -760,11 +760,12 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
 static void *state_buffer(size_t size, bool *borrowed)
 {
     extern void *neospr_borrow(size_t size);
+    extern void *cps1_state_borrow(size_t size);
     if (present_task)
         present_indexed(NULL, 0, 0, 0, 0, NULL, 0); /* core 1 done with the frame and the page cache */
     void *buf = size ? malloc(size) : NULL;
     *borrowed = false;
-    if (!buf && size && (buf = neospr_borrow(size)))
+    if (!buf && size && ((buf = neospr_borrow(size)) || (buf = cps1_state_borrow(size))))
         *borrowed = true;
     return buf;
 }
