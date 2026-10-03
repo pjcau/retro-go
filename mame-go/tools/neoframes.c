@@ -20,9 +20,12 @@
  * end "FRAMES <n> all <hex>" with the hash of every hashed frame's hash.
  * The sound: "AUDIO <n> hash <hex>" on the same frames, the running hash of
  * every sample delivered so far, and at the end "AUDIO all <hex> samples <n>
- * nonzero <n>" (a run that is silent proves nothing about the mixer).
+ * nonzero <n>" (a run that is silent proves nothing about the mixer), and every
+ * 300 frames "LEVEL <n> rms <x> peak <p> samples <n>". "--rate 16000" makes
+ * the chips render at that rate (the board's AUDIO_MIX_HZ).
  */
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -51,7 +54,7 @@ static bool env(unsigned cmd, void *data)
 	case RETRO_ENVIRONMENT_GET_VARIABLE:
 	{
 		struct retro_variable *v = data;
-		if (!strcmp(v->key, "mame2000-sample_rate")) { v->value = "32000"; return true; }
+		if (!strcmp(v->key, "mame2000-sample_rate")) { v->value = sample_rate; return true; }
 		if (!strcmp(v->key, "mame2000-frameskip_type")) { v->value = "disabled"; return true; }
 		return false;
 	}
@@ -100,6 +103,9 @@ static void video(const void *d, unsigned w, unsigned h, size_t pitch)
 		dump_ppm(d, w, h, pitch);
 }
 static void sample(int16_t l, int16_t r) {}
+static const char *sample_rate = "32000";     /* --rate N: the rate the chips render at */
+static double audio_sq;                       /* sum of squares since the last LEVEL line */
+static unsigned long audio_n, audio_peak;
 static uint32_t audio_hash = 2166136261u;
 static unsigned long audio_samples, audio_nonzero;
 static size_t batch(const int16_t *d, size_t n)
@@ -107,7 +113,11 @@ static size_t batch(const int16_t *d, size_t n)
 	if (quiet) return n;
 	for (size_t i = 0; i < n * 2; i++)       /* interleaved left, right */
 	{
+		int v = d[i] < 0 ? -d[i] : d[i];
 		audio_hash = (audio_hash ^ (uint16_t)d[i]) * 16777619u;
+		audio_sq += (double)d[i] * d[i];
+		audio_n++;
+		if ((unsigned long)v > audio_peak) audio_peak = v;
 		audio_nonzero += d[i] != 0;
 	}
 	audio_samples += n * 2;                  /* values, both channels, like the non-zero count */
@@ -190,6 +200,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--load")) load = argv[i + 1];
 		else if (!strcmp(argv[i], "--save") && (at = strrchr(argv[i + 1], '@'))) { *at = 0; save = argv[i + 1]; save_at = atoi(at + 1); }
 		else if (!strcmp(argv[i], "--dump") && (at = strrchr(argv[i + 1], '@'))) { *at = 0; dump_dir = argv[i + 1]; dump_at = atoi(at + 1); }
+		else if (!strcmp(argv[i], "--rate")) sample_rate = argv[i + 1];
 		else if (!strcmp(argv[i], "--input")) input_mode = !strcmp(argv[i + 1], "attract") ? 1 : !strcmp(argv[i + 1], "none") ? 2 : !strcmp(argv[i + 1], "play") ? 3 : 0;
 		else { fprintf(stderr, "neoframes: bad option %s\n", argv[i]); return 2; }
 	}
@@ -223,6 +234,12 @@ int main(int argc, char **argv)
 		retro_run();
 		if (frame_no % hash_every == 0)
 			printf("AUDIO %u hash %08x\n", frame_no, audio_hash);
+		if (frame_no % 300 == 299)
+		{
+			/* the loudness of the last 300 frames: compares two sample rates on the same scene */
+			printf("LEVEL %u rms %.1f peak %lu samples %lu\n", frame_no + 1, audio_n ? sqrt(audio_sq / audio_n) : 0.0, audio_peak, audio_n);
+			audio_sq = 0; audio_n = 0; audio_peak = 0;
+		}
 		if (save && frame_no == save_at && !state_io(save, 1)) return 1;
 	}
 	printf("FRAMES %u all %08x\n", frames, all_hash);
