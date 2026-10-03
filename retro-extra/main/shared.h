@@ -8,3 +8,4 @@
 
 void ngp_main(void);
 void a26_main(void);
+void arcade3d_main(void);

@@ -709,6 +709,7 @@ void applications_init(void)
     application("Quake", "quake", "pak", "quake-go", 0);
     application("OpenTyrian", "opentyrian", "tyr", "opentyrian-go", 0);
     application("OutRun (Cannonball)", "cannonball", "ball", "cannonball", 0); /* the OutRun ROMs sit in the folder, an empty <name>.ball starts it */
+    application("Arcade 3D Racing", "arcade3d", "a3d", "retro-extra", 0); /* a native game: an empty <name>.a3d in the folder starts it */
     application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
     application("Neo Geo", "neogeo", "zip", "mame-go", 0); /* mame-go too; neogeo.zip (BIOS) lives in the folder */
     application("Capcom CPS-1", "cps1", "zip", "mame-go", 0); /* mame-go too: its own tab, apart from the 8-bit arcade games */

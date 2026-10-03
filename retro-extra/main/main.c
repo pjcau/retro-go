@@ -12,6 +12,8 @@ void app_main(void)
         ngp_main();
     else if (strcmp(app->configNs, "a26") == 0)
         a26_main();
+    else if (strcmp(app->configNs, "arcade3d") == 0)
+        arcade3d_main();
     else
         RG_PANIC("Unknown app for retro-extra");
 
