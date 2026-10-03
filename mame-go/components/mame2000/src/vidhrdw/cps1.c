@@ -1340,10 +1340,10 @@ int cps1_vh_start(void)
 		{
 			/* the exact skip of idle turns longer than one loop (m68kcpu.c turn_check):
 			   Capcom's task scheduler waits for the vertical blank in a scan of 16
-			   slots, 44 to 52 bytes from end to top */
+			   slots, 44 to 92 bytes from end to top */
 			extern unsigned int m68ki_turn_enable, m68ki_idle_span;
 			m68ki_turn_enable = 1;
-			m68ki_idle_span = 64;
+			m68ki_idle_span = 96;   /* Final Fight's scheduler turn closes 92 bytes back */
 #ifndef ESP_PLATFORM
 			if (getenv("M68KTURN") && !strcmp(getenv("M68KTURN"), "0"))
 				m68ki_turn_enable = 0, m68ki_idle_span = 32;

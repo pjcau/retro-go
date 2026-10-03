@@ -624,6 +624,9 @@ MAMEGO_HOT int m68k_execute(int num_cycles)
 	/* Make sure we're not stopped */
 	if(!CPU_STOPPED)
 	{
+#ifdef MAMEGO
+		{ extern uint m68ki_slice; m68ki_slice++; }   /* a new time slice (the exact idle skips, below) */
+#endif
 #if defined(MAMEGO) && !defined(ESP_PLATFORM)
 		{ extern void m68ki_idle_asked(int cycles); m68ki_idle_asked(num_cycles); }
 #endif
@@ -895,6 +898,7 @@ void m68k_load_context(unsigned int (*load_value)(char*))
 
 #ifdef MAMEGO
 uint m68ki_idle_enable, m68ki_idle_whash, m68ki_idle_io;
+uint m68ki_slice;             /* counts the calls of m68k_execute(): a turn of an exact skip lies inside one */
 uint m68ki_idle_io_lo = 1, m68ki_idle_io_hi = 0; /* empty window until a driver sets one */
 static uint idle_pc, idle_whash, idle_count, idle_regs[16];
 
@@ -972,7 +976,7 @@ void m68k_pchist(unsigned pc, unsigned cycles)
  * interpreter to run in full. The rest of the slice runs normally.
  * M68KCOUNT=0 (PC) turns it off: frames and samples must match with it on. */
 uint m68ki_count_enable;      /* set by the board that has been gated for it (the Neo Geo init); off elsewhere */
-static uint cl_pc = ~0u, cl_ppc, cl_ok, cl_addr, cl_size, cl_sub, cl_q, cl_turns, cl_lastv;
+static uint cl_pc = ~0u, cl_ppc, cl_ok, cl_addr, cl_size, cl_sub, cl_q, cl_turns, cl_lastv, cl_slice;
 static int cl_prev, cl_cpp;
 
 static uint cl_op16(uint a) { return m68k_read_immediate_16(ADDRESS_68K(a)); }
@@ -1086,7 +1090,9 @@ static int cl_check(void)
 		uint mask = cl_size == 4 ? 0xffffffffu : (1u << (8 * cl_size)) - 1;
 		uint cur = cl_size == 1 ? m68k_read_memory_8(cl_addr) : cl_size == 2 ? m68k_read_memory_16(cl_addr) : m68k_read_memory_32(cl_addr);
 		uint step = (cl_sub ? cl_lastv - cur : cur - cl_lastv) & mask;
-		cl_turns = (cl_prev > rem && cpp == cl_cpp && step == cl_q) ? cl_turns + 1 : 0;
+		/* and lay inside one time slice (interrupts and timers run between slices) */
+		cl_turns = (cl_slice == m68ki_slice && cl_prev > rem && cpp == cl_cpp && step == cl_q) ? cl_turns + 1 : 0;
+		cl_slice = m68ki_slice;
 		cl_lastv = cur & mask;
 	}
 	cl_cpp = cpp;
@@ -1135,12 +1141,18 @@ static int cl_check(void)
  * and the CPU is deterministic. They are taken off the cycle count in one go,
  * as many whole turns as the interpreter would have run in full; the rest of
  * the slice runs normally. Exact, unlike the skip above, which drops the
- * unfinished turn too. (As that one, it does not see a loop polling an I/O
- * location that changes with time by itself.) Off unless a board's init turns
- * it on; M68KTURN=0 on the PC. */
-uint m68ki_turn_enable, m68ki_idle_span = 32;
+ * unfinished turn too. Two things it relies on, both checked or stated:
+ * - no access to the I/O window inside the turn, reads included (a read there
+ *   may have a side effect or change with time by itself): M68KI_COUNT_READ;
+ * - a turn lies inside one time slice (interrupts and timers run between
+ *   slices): the slot remembers the slice it was last visited in.
+ * And one it cannot check: nothing else changes what the 68000 reads during a
+ * slice. True on the PC and on the board for the CPS1 YM2151 boards, whose
+ * sound Z80 on core 1 reaches the 68000 only through the I/O window's latches.
+ * Off unless a board's init turns it on; M68KTURN=0 on the PC. */
+uint m68ki_turn_enable, m68ki_idle_span = 32, m68ki_idle_ior;
 #define TURN_SLOTS 8
-static struct turn_slot { uint pc, sr, regs[16], wsum, delta, io, count; int rem, cost; } turn_slots[TURN_SLOTS];
+static struct turn_slot { uint pc, sr, regs[16], wsum, delta, io, count, slice; int rem, cost; } turn_slots[TURN_SLOTS];
 static uint turn_wsum, turn_io;
 
 static void turn_check(uint whash, uint io)
@@ -1150,12 +1162,14 @@ static void turn_check(uint whash, uint io)
 	uint sr = m68ki_get_sr();
 
 	turn_wsum += whash;       /* every write since the last check, whoever it was for */
-	turn_io += io;
-	if (t->pc == REG_PC && t->sr == sr && t->io == turn_io && !memcmp(t->regs, REG_DA, sizeof(t->regs)))
+	turn_io += io + m68ki_idle_ior;   /* any access to the I/O window, write or read */
+	m68ki_idle_ior = 0;
+	if (t->pc == REG_PC && t->sr == sr && t->io == turn_io && t->slice == m68ki_slice
+		&& !memcmp(t->regs, REG_DA, sizeof(t->regs)))
 	{
 		uint delta = turn_wsum - t->wsum;
 		int cost = t->rem - rem;
-		t->count = (t->rem > rem && delta == t->delta && cost == t->cost) ? t->count + 1 : 0;
+		t->count = (cost > 0 && delta == t->delta && cost == t->cost) ? t->count + 1 : 0;
 		t->delta = delta;
 		t->cost = cost;
 		if (t->count >= 2 && cost > 0 && rem > cost)
@@ -1181,6 +1195,7 @@ static void turn_check(uint whash, uint io)
 	t->wsum = turn_wsum;
 	t->io = turn_io;
 	t->rem = rem;
+	t->slice = m68ki_slice;
 }
 
 MAMEGO_HOT void m68ki_idle_check(void)

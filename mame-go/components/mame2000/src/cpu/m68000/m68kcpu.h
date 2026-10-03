@@ -923,18 +923,33 @@ static INLINE uint m68ki_read_imm_32(void)
 
 /* ------------------------- Top level read/write ------------------------- */
 
+#ifdef MAMEGO
+/* The exact idle skips (m68kcpu.c turn_check) must know about reads in the I/O
+   window too: a read there may have a side effect or return something that
+   changes with time, and N skipped turns would make none of them. Tracked
+   only while that skip is on (m68ki_turn_enable), so the other boards pay one
+   test of a flag. */
+extern uint m68ki_turn_enable, m68ki_idle_ior, m68ki_idle_io_lo, m68ki_idle_io_hi;
+#define M68KI_COUNT_READ(A) do { if (m68ki_turn_enable && (uint)((A) & 0xffffff) - m68ki_idle_io_lo <= m68ki_idle_io_hi - m68ki_idle_io_lo) m68ki_idle_ior = 1; } while (0)
+#else
+#define M68KI_COUNT_READ(A) ((void)0)
+#endif
+
 static INLINE uint m68ki_read_8_fc(uint address, uint fc)
 {
+	M68KI_COUNT_READ(address);
 	m68ki_set_fc(fc);
 	return m68k_read_memory_8(ADDRESS_68K(address));
 }
 static INLINE uint m68ki_read_16_fc(uint address, uint fc)
 {
+	M68KI_COUNT_READ(address);
 	m68ki_set_fc(fc);
 	return m68k_read_memory_16(ADDRESS_68K(address));
 }
 static INLINE uint m68ki_read_32_fc(uint address, uint fc)
 {
+	M68KI_COUNT_READ(address);
 	m68ki_set_fc(fc);
 	return m68k_read_memory_32(ADDRESS_68K(address));
 }
