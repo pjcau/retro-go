@@ -883,9 +883,28 @@ static const unsigned char *palette_recalc_16_palettized(void)
    entering or leaving use), printed at exit. Measures before step O2 of the
    Arcade 60 fps plan changes anything. */
 static unsigned long ps_frames, ps_idle, ps_dirty_frames, ps_dirty, ps_used_frames, ps_in, ps_out, ps_blocks;
+static unsigned long ps_short_frames, ps_short_colours;
+/* a frame that asked for more colours than there are pens: some are left
+   without a pen of their own and draw with whatever their old pen holds now
+   (Metal Slug: an explosion's white flash drawn black) */
+static void palstat_short(int left_out)
+{
+	if (!getenv("PALSTAT")) return;
+	ps_short_frames++;
+	ps_short_colours += left_out;
+	if (ps_short_frames <= 20)
+	{
+		int i, visible = 0;
+		for (i = 0; i < Machine->drv->total_colors; i++)
+			visible += (palette_used_colors[i] & PALETTE_COLOR_VISIBLE) != 0;
+		printf("PALSHORT recalc %lu: %d colours left without a pen (%d visible colours, %d pens)\n",
+			ps_frames, left_out, visible, DYNAMIC_MAX_PENS - RESERVED_PENS);
+	}
+}
 static void palstat_print(void)
 {
 	if (!ps_frames) return;
+	printf("PALSHORT total: %lu frames short of pens, %lu colours left out\n", ps_short_frames, ps_short_colours);
 	printf("PALSTAT frames %lu | nothing to do %lu (%.1f%%) | game wrote colours on %lu frames, %.1f colours each"
 		" | colours in use changed on %lu frames: %.1f in, %.1f out, %.1f of 256 palettes touched each\n",
 		ps_frames, ps_idle, ps_idle * 100.0 / ps_frames,
@@ -1232,6 +1251,10 @@ retry:
 		}
 	}
 
+#if defined(MAMEGO) && !defined(ESP_PLATFORM)
+	if (ran_out > 1)
+		palstat_short(ran_out - 1);
+#endif
 	if (ran_out > 1)
 	{
 logerror("Error: no way to shrink the palette to 256 colors, left out %d colors.\n",ran_out-1);
