@@ -32,7 +32,14 @@ SYSTEMS = {
     "a26": "atari2600",
     "gba": "gba",
     "ngp": "ngp",
+    "cannonball": "mame",  # OutRun is a Sega arcade game: the cabinet art
+    "arcade3d": "ports",   # a native game, like the ports
 }
+
+# Tabs whose theme logo would name the wrong thing (MAME, PORTS): the banner is
+# the tab's name as text instead, in the colours of the Capcom CPS-1 banner.
+TEXT_BANNERS = {"cannonball": "OUTRUN", "arcade3d": "ARCADE 3D RACING"}
+TEXT_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 THEME_DIR = os.path.join(os.path.dirname(__file__), "..", "themes", "default")
 MAGENTA = (255, 0, 255)
 
@@ -76,6 +83,16 @@ def banner(logo, black_to_white=False):
     return pal
 
 
+def text_banner(text):
+    """The text 22 px high, yellow with a navy outline, on the transparent colour."""
+    from PIL import ImageDraw, ImageFont
+    font = ImageFont.truetype(TEXT_FONT, 19)
+    out = Image.new("RGB", (272, 24), MAGENTA)
+    d = ImageDraw.Draw(out)
+    d.text((3, 1), text, font=font, fill=(245, 200, 40), stroke_width=2, stroke_fill=(20, 40, 90))
+    return out.quantize(colors=8, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+
+
 def logo_from_background(bg):
     """The theme draws the system (cabinet, handheld, controller...) big in the
     background, a darker shade on a flat colour. The logo is that icon as a
@@ -113,7 +130,8 @@ def main():
         bg = Image.open(os.path.join(src, "background.png"))
         jobs = {
             "background_%s.png" % tab: lambda: to_palette(bg.resize((320, 240), Image.LANCZOS), 16),
-            "banner_%s.png" % tab: lambda: banner(render_svg(chrome, os.path.join(src, "system.svg")), tab in BLACK_LOGOS),
+            "banner_%s.png" % tab: (lambda: text_banner(TEXT_BANNERS[tab])) if tab in TEXT_BANNERS else
+                                   (lambda: banner(render_svg(chrome, os.path.join(src, "system.svg")), tab in BLACK_LOGOS)),
             "logo_%s.png" % tab: lambda: logo_from_background(bg),
         }
         for name, make in jobs.items():
