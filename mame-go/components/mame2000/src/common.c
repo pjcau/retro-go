@@ -54,6 +54,26 @@ static int mamego_prog_ram_checked;
 extern size_t mamego_flash_offset;
 static unsigned char *mamego_sound_to_flash(const struct RomModule *region_hdr, unsigned region_size);
 unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t *offset);
+
+/* Loading progress for the front end: the ROM bytes read so far against the
+   bytes this game has to read. Every reader of ROM data reports here
+   (readroms(), the stream reader of mamego_neospr.c, the copy to flash); the
+   front end sets mamego_load_show and draws the percentage. */
+void (*mamego_load_show)(int percent);
+static unsigned mamego_load_total, mamego_load_done;
+static int mamego_load_shown;
+void mamego_load_add(unsigned bytes)
+{
+	int pct;
+	mamego_load_done += bytes;
+	if (!mamego_load_show || !mamego_load_total)
+		return;
+	pct = (int)((unsigned long long)mamego_load_done * 100 / mamego_load_total);
+	if (pct > 99)
+		pct = 99;
+	if (pct != mamego_load_shown)
+		mamego_load_show(mamego_load_shown = pct);
+}
 #endif
 
 int readroms(void)
@@ -68,6 +88,10 @@ int readroms(void)
 
 	total_roms = current_rom = 0;
 	romp = Machine->gamedrv->rom;
+#ifdef MAMEGO
+	mamego_load_total = mamego_load_done = 0;
+	mamego_load_shown = -1;
+#endif
 
 	if (!romp) return 0;
 
@@ -75,6 +99,9 @@ int readroms(void)
 	{
 		if (romp->name && romp->name != (char *)-1)
 			total_roms++;
+#ifdef MAMEGO
+		mamego_load_total += romp->length & ~ROMFLAG_MASK; /* a region header has no length */
+#endif
 
 		romp++;
 	}
@@ -106,14 +133,20 @@ int readroms(void)
 		for (region = 0; (p->name || p->offset || p->length) && region < MAX_MEMORY_REGIONS; region++)
 		{
 			int type = p->crc & ~REGIONFLAG_MASK, entries = 0;
+			unsigned before = mamego_load_done, bytes = 0;
 			while (p[1 + entries].length)
-				entries++;
+				bytes += p[1 + entries++].length & ~ROMFLAG_MASK;
 			if (neospr_wanted(type))
 				neospr_stub[region] = neospr_region_load(type, p + 1, entries, p->offset);
 			else if (type == REGION_GFX1 && Machine->drv && (neospr_stub[region] = cps1gfx_region_stub(type, p + 1, entries, p->offset)))
 				; /* CPS1 graphics: streamed from the zip in vh_start (vidhrdw/cps1.c) */
 			else if (neosnd_wanted(type, p->offset))
 				neospr_stub[region] = neosnd_region_load(type, p + 1, entries, p->offset);
+			/* a region already on the card has nothing to read: out of the total
+			   (the CPS1 graphics stay in: vh_start streams them) */
+			if (neospr_stub[region] && !(type == REGION_GFX1 && !neospr_wanted(type))
+				&& mamego_load_done - before < bytes)
+				mamego_load_total -= bytes - (mamego_load_done - before);
 			p += 1 + entries;
 		}
 	}
@@ -397,6 +430,9 @@ int readroms(void)
 						}
 					}
 
+#ifdef MAMEGO
+					mamego_load_add(length);
+#endif
 					romp++;
 				} while (romp->length && (romp->name == 0 || romp->name == (char *)-1));
 
@@ -1103,7 +1139,10 @@ static unsigned char *mamego_sound_to_flash(const struct RomModule *region_hdr, 
 		printf("loading %-12s (to flash)\n", r->name);
 		data = osd_fdata(f, &got);
 		if (data)
+		{
 			copy = got >= length ? mamego_flash_store(data, length, &mamego_flash_offset) : NULL;
+			mamego_load_add(length);
+		}
 		else
 		{
 			/* a big file read straight from the zip: to flash 64 KB at a time
@@ -1123,6 +1162,7 @@ static unsigned char *mamego_sound_to_flash(const struct RomModule *region_hdr, 
 				if (!copy)
 					copy = p;
 				done += k;
+				mamego_load_add(k);
 			}
 			free(chunk);
 			if (done < length)

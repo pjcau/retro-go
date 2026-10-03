@@ -228,6 +228,8 @@ static int romrd_open(struct romrd *r, const struct RomModule *rom)
 
 static int romrd_read(struct romrd *r, void *buf, unsigned len)
 {
+	extern void mamego_load_add(unsigned bytes);
+	mamego_load_add(len); /* loading progress (src/common.c) */
 	return r->zs ? zipstream_read(r->zs, buf, len) : osd_fread(r->f, buf, len);
 }
 

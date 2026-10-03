@@ -659,6 +659,16 @@ static void input_poll_cb(void)
 {
 }
 
+/* The loading percentage under the hourglass: src/common.c counts the ROM bytes
+   read against the bytes the game has to read, and calls this when the figure
+   changes (a first launch of a Neo Geo game converts its sprites: minutes). */
+static void load_show(int percent)
+{
+    char text[12];
+    snprintf(text, sizeof(text), " %2d%% ", percent);
+    rg_gui_draw_text(RG_GUI_CENTER, rg_display_get_height() / 2 + 28, 0, text, C_WHITE, C_BLACK, RG_TEXT_BIGGER);
+}
+
 static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id)
 {
     if (port != 0 || device != RETRO_DEVICE_JOYPAD)
@@ -857,8 +867,16 @@ static void mame_task(void *arg)
         extern int (*mamego_present_indexed)(const void *, int, int, int, int, const void *, int);
         mamego_present_indexed = present_indexed;
     }
+    {
+        extern void (*mamego_load_show)(int);
+        mamego_load_show = load_show;
+    }
     if (!retro_load_game(&game))
         RG_PANIC("This game is not supported, or its ROM set is incomplete");
+    {
+        extern void (*mamego_load_show)(int);
+        mamego_load_show = NULL; /* a reader that works during the game must not draw over it */
+    }
 
     struct retro_system_av_info av;
     retro_get_system_av_info(&av);
