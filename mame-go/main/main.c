@@ -18,7 +18,12 @@ void hs_close(void); /* hiscore.c */
 /* Same rate as the other apps: the PDM driver derives its DAC-mode clocks
  * from sample_rate / 100, and 22050 made mame-go far louder than the volume
  * setting allowed. */
-#define AUDIO_SAMPLE_RATE 32000
+#ifndef AUDIO_SAMPLE_RATE
+#define AUDIO_SAMPLE_RATE 32000         /* `AUDIO_HZ=22050` builds another rate (a measurement: the
+                                           sound board's cost follows the rate, the chips render at it) */
+#endif
+#define AUDIO_STR_(x) #x
+#define AUDIO_STR(x) AUDIO_STR_(x)
 #define SYSTEM_DIR RG_STORAGE_ROOT "/retro-go/mame"
 #define SAVE_DIR RG_BASE_PATH_SAVES "/arcade"
 
@@ -48,7 +53,7 @@ static bool environment_cb(unsigned cmd, void *data)
     {
         struct retro_variable *var = data;
         if (strcmp(var->key, "mame2000-sample_rate") == 0)
-            var->value = "32000"; /* AUDIO_SAMPLE_RATE */
+            var->value = AUDIO_STR(AUDIO_SAMPLE_RATE);
         else if (strcmp(var->key, "mame2000-frameskip") == 0)
             var->value = "auto"; /* driven by audio_buffer_status, see mame_task() */
         else if (strcmp(var->key, "mame2000-frameskip_interval") == 0)
