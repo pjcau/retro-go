@@ -64,15 +64,17 @@ class CRam : public CLynxBase
       CRam(const UBYTE *filedata, ULONG filesize)
       {
          if (filedata && filesize > 64 && memcmp(filedata + 6, "BS93", 4) == 0) {
-            #ifdef MSB_FIRST
+            // The BS93 header is big-endian whatever the host is (the old
+            // little-endian branch swapped the bytes: load address 0x0400 read
+            // as 0x0004, and sizes cut short).
             mHomebrewAddr = filedata[2] << 8 | filedata[3];
             mHomebrewSize = filedata[4] << 8 | filedata[5];
-            #else
-            mHomebrewAddr = filedata[3] << 8 | filedata[2];
-            mHomebrewSize = filedata[5] << 8 | filedata[4];
-            #endif
             mHomebrewSize = filesize > mHomebrewSize ? mHomebrewSize : filesize;
-            mHomebrewAddr -= 10;
+            mHomebrewAddr -= 10;   // the 10-byte header lands just before the load address
+            if (mHomebrewAddr > RAM_SIZE - 1)
+               mHomebrewAddr = 0;
+            if (mHomebrewAddr + mHomebrewSize > RAM_SIZE)
+               mHomebrewSize = RAM_SIZE - mHomebrewAddr;
             mHomebrewData = new UBYTE[mHomebrewSize];
             memcpy(mHomebrewData, filedata, mHomebrewSize);
             log_printf("Homebrew found: size=%u, addr=0x%04X\n", (unsigned int)mHomebrewSize, (unsigned int)mHomebrewAddr);

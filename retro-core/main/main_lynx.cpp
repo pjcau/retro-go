@@ -265,11 +265,15 @@ extern "C" void lynx_main(void)
             gPrimaryFrameBuffer = (UBYTE*)currentUpdate->data;
         }
 
-        // The Lynx has a variable tick rate, I don't know of a better way to guess than from audio stream
-        rg_system_set_tick_rate(AUDIO_SAMPLE_RATE / (gAudioBufferPointer / 2));
+        // The Lynx has a variable tick rate, I don't know of a better way to guess than from audio stream.
+        // Some carts (homebrew demos) produce frames with no audio at all: keep the last rate then.
+        int samples = gAudioBufferPointer / 2;
+        if (samples > 0)
+            rg_system_set_tick_rate(AUDIO_SAMPLE_RATE / samples);
         rg_system_tick(rg_system_timer() - startTime);
 
-        rg_audio_submit((const rg_audio_frame_t *)gAudioBuffer, gAudioBufferPointer / 2);
+        if (samples > 0)
+            rg_audio_submit((const rg_audio_frame_t *)gAudioBuffer, samples);
 
         // See if we need to skip a frame to keep up
         if (skipFrames == 0)
