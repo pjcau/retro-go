@@ -844,6 +844,51 @@ static const unsigned char *palette_recalc_16_palettized(void)
 	else return 0;
 }
 
+#if defined(MAMEGO) && !defined(ESP_PLATFORM)
+/* PC harness, PALSTAT=1: what palette_recalc_8() has to do per frame (how
+   often nothing, how many colours written by the game, how many colours
+   entering or leaving use), printed at exit. Measures before step O2 of the
+   Arcade 60 fps plan changes anything. */
+static unsigned long ps_frames, ps_idle, ps_dirty_frames, ps_dirty, ps_used_frames, ps_in, ps_out, ps_blocks;
+static void palstat_print(void)
+{
+	if (!ps_frames) return;
+	printf("PALSTAT frames %lu | nothing to do %lu (%.1f%%) | game wrote colours on %lu frames, %.1f colours each"
+		" | colours in use changed on %lu frames: %.1f in, %.1f out, %.1f of 256 palettes touched each\n",
+		ps_frames, ps_idle, ps_idle * 100.0 / ps_frames,
+		ps_dirty_frames, ps_dirty_frames ? (double)ps_dirty / ps_dirty_frames : 0.0,
+		ps_used_frames, ps_used_frames ? (double)ps_in / ps_used_frames : 0.0,
+		ps_used_frames ? (double)ps_out / ps_used_frames : 0.0,
+		ps_used_frames ? (double)ps_blocks / ps_used_frames : 0.0);
+}
+static void palstat_frame(void)
+{
+	static int on = -1;
+	int i, dirty = 0, in = 0, out = 0, blocks = 0, last_block = -1, total = Machine->drv->total_colors;
+	if (on < 0)
+	{
+		on = getenv("PALSTAT") != NULL;
+		if (on) atexit(palstat_print);
+	}
+	if (!on) return;
+	for (i = 0; i < total; i++)
+	{
+		int now = palette_used_colors[i] & PALETTE_COLOR_VISIBLE, was = old_used_colors[i] & PALETTE_COLOR_VISIBLE;
+		dirty += palette_dirty[i] != 0;
+		if (palette_dirty[i] || palette_used_colors[i] != old_used_colors[i])
+		{
+			in += now && !was;
+			out += was && !now;
+			if (i >> 4 != last_block) { blocks++; last_block = i >> 4; }
+		}
+	}
+	ps_frames++;
+	if (!palette_dirty_any && !memcmp(palette_used_colors, old_used_colors, total)) ps_idle++;
+	if (dirty) { ps_dirty_frames++; ps_dirty += dirty; }
+	if (in || out) { ps_used_frames++; ps_in += in; ps_out += out; ps_blocks += blocks; }
+}
+#endif
+
 static const unsigned char *palette_recalc_8(void)
 {
 	int i,color;
@@ -855,6 +900,9 @@ static const unsigned char *palette_recalc_8(void)
 	int need,avail;
 
 
+#if defined(MAMEGO) && !defined(ESP_PLATFORM)
+	palstat_frame();
+#endif
 #ifdef MAMEGO
 	/* nothing to apply and the same colours in use as last time: every loop
 	 * below would leave everything as it is, and the result would be 0 */
