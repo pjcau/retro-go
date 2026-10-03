@@ -971,9 +971,11 @@ static void D_DoomMainSetup(void)
   lprintf(LO_INFO, "D_InitNetGame: Checking for network game.\n");
   D_InitNetGame();
 
+  rg_gui_draw_loading(2);
   lprintf(LO_INFO, "W_Init: Init WADfiles.\n");
   W_Init(); // CPhipps - handling of wadfiles init changed
 
+  rg_gui_draw_loading(10);
   lprintf(LO_INFO, "V_Init: Setting up video.\n");
   V_Init(SCREENWIDTH, SCREENHEIGHT, default_videomode);
 
@@ -984,6 +986,7 @@ static void D_DoomMainSetup(void)
       D_ProcessDehFile(NULL, D_dehout(), p);
 #endif
 
+  rg_gui_draw_loading(15);
   lprintf(LO_INFO, "M_Init: Init miscellaneous info.\n");
   M_Init();
 
@@ -992,18 +995,25 @@ static void D_DoomMainSetup(void)
   D_CheckNetGame();
 #endif
 
+  /* the loading percentage under the hourglass: Doom reads its WAD lump by
+     lump, so the figure follows the start-up stages (here and in R_InitData) */
+  rg_gui_draw_loading(20);
   lprintf(LO_INFO, "R_Init: Init DOOM refresh daemon:\n");
   R_Init();
 
+  rg_gui_draw_loading(75);
   lprintf(LO_INFO, "P_Init: Init Playloop state.\n");
   P_Init();
 
+  rg_gui_draw_loading(90);
   lprintf(LO_INFO, "S_Init: Setting up sound.\n");
   S_Init(snd_SfxVolume, snd_MusicVolume);
 
+  rg_gui_draw_loading(95);
   lprintf(LO_INFO, "HU_Init: Setting up heads up display.\n");
   HU_Init();
 
+  rg_gui_draw_loading(98);
   lprintf(LO_INFO, "ST_Init: Init status bar.\n");
   ST_Init();
 

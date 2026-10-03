@@ -553,9 +553,18 @@ void app_main(void)
     // load_bios(RG_BASE_PATH_BIOS "/gba_bios.bin");
 
     memset(gamepak_backup, 0xff, sizeof(gamepak_backup));
+    {
+        /* the loading percentage under the hourglass: the ROM is read 1 MB at a time */
+        extern void (*gamepak_load_progress)(int percent);
+        gamepak_load_progress = rg_gui_draw_loading;
+    }
     if (load_gamepak(NULL, app->romPath, FEAT_DISABLE, FEAT_DISABLE, SERIAL_MODE_DISABLED) != 0)
     {
         RG_PANIC("Could not load the game file.");
+    }
+    {
+        extern void (*gamepak_load_progress)(int percent);
+        gamepak_load_progress = NULL;
     }
 
     gbsp_render_start();

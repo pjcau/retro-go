@@ -154,10 +154,11 @@ static bool bench_hash_next;
 #define BENCH_COIN_AT  600
 #define BENCH_START_AT 720
 #define BENCH_PLAY_AT  900
-/* MAMEBENCH=4: the same for the CPS1, which does not take 6-frame presses
- * (Final Fight ignores the coin, Street Fighter II the START) and may still be
- * in its boot test at frame 600 (Ghouls'n Ghosts): 30-frame presses, given
- * twice. "--input play2" of tools/neoframes.c. */
+/* MAMEBENCH=4: the same for the CPS1, whose games do not read the coin and
+ * START that early (Final Fight no coin before about frame 800, Street Fighter
+ * II's title no START before about 900, Ghouls'n Ghosts in its RAM test at
+ * 600): both are given a second time, later. The length of a press does not
+ * matter. "--input play2" of tools/neoframes.c. */
 #define BENCH4_PLAY_AT 1900
 
 static uint32_t bench_input(uint32_t f)
