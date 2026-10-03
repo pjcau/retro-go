@@ -446,6 +446,8 @@ int tran_filter_pct = 66;       // filter percent
 
 #define TSC 12        /* number of fixed point digits in filter percent */
 
+extern void rg_gui_draw_loading(int percent);
+
 void R_InitTranMap(int progress)
 {
   int lump;
@@ -479,6 +481,8 @@ void R_InitTranMap(int progress)
       byte *tp = my_tranmap;
       for (int i = 0; i < 256; ++i)
         {
+          if ((i & 15) == 0)  // the loading percentage: this table is a quarter of the start-up
+            rg_gui_draw_loading(7 + i * 23 / 256);
           int r1 = pal[i].r * w2;
           int g1 = pal[i].g * w2;
           int b1 = pal[i].b * w2;

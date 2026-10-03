@@ -377,12 +377,18 @@ static void soundTask(void *arg)
 
 void I_InitSound(void)
 {
-    for (int i = 1; i < NUMSFX; i++)
+    // The loading percentage: reading the sound effects is most of S_Init
+    // (2.8 s of the 4.7 s start-up with freedoom1.wad), the music player the rest.
+    for (int i = 1, shown = -1; i < NUMSFX; i++)
     {
+        int percent = 32 + i * 50 / NUMSFX;
+        if (percent != shown)
+            rg_gui_draw_loading(shown = percent);
         if (S_sfx[i].lumpnum != -1)
             sfx[i] = W_CacheLumpNum(S_sfx[i].lumpnum);
     }
 
+    rg_gui_draw_loading(83);
     music_player->init(snd_samplerate);
     music_player->setvolume(snd_MusicVolume);
 
