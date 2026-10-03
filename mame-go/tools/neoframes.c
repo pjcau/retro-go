@@ -39,6 +39,7 @@ static int quiet;                       /* the frame run before a state load is 
 static const char *dump_dir; static unsigned dump_at = ~0u;
 static uint16_t joy;                    /* libretro joypad bits of the current frame */
 
+static const char *sample_rate = "32000";     /* --rate N: the rate the chips render at */
 static bool env(unsigned cmd, void *data)
 {
 	switch (cmd)
@@ -103,7 +104,6 @@ static void video(const void *d, unsigned w, unsigned h, size_t pitch)
 		dump_ppm(d, w, h, pitch);
 }
 static void sample(int16_t l, int16_t r) {}
-static const char *sample_rate = "32000";     /* --rate N: the rate the chips render at */
 static double audio_sq;                       /* sum of squares since the last LEVEL line */
 static unsigned long audio_n, audio_peak;
 static uint32_t audio_hash = 2166136261u;
