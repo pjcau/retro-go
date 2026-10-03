@@ -400,10 +400,14 @@ int neospr_start(uint32_t *pen_usage, unsigned total_tiles)
 		size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
 		extern int mamego_prog_ram;
 		bytes = largest > 2048 * 1024 ? largest - 1536 * 1024 : 512 * 1024;
-		/* neo_program: the program's first MB took 1 MB of this block. The 1.5 MB
-		   reserve leaves ~850 KB unused in play (HEAP ext 852 KB): spend most of it */
-		if (mamego_prog_ram && largest > 1536 * 1024)
-			bytes = largest - 832 * 1024;
+		/* neo_program: the program's first MB is in PSRAM now. Everything the game
+		   allocates after this (bitmaps, display surfaces, band pool: about 2.5 MB,
+		   from this block and the smaller ones) must still fit: job 137 kept an
+		   864 KB cache and the display surfaces failed to allocate. Of the MB the
+		   program took, 850 KB were free in play before; the cache gives the rest
+		   and a margin (~450 KB instead of 1152) */
+		if (mamego_prog_ram)
+			bytes = largest > 1792 * 1024 ? largest - 1280 * 1024 : 448 * 1024;
 	}
 #else
 	bytes = getenv("NEOSPR_CACHE_KB") ? (size_t)atoi(getenv("NEOSPR_CACHE_KB")) * 1024 : 2048 * 1024;
