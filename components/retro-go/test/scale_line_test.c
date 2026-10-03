@@ -44,7 +44,8 @@ static void reference(int fmt, const void *src, const uint16_t *pal, uint16_t *o
 
 int main(void)
 {
-    static const int sizes[][2] = { {304, 434}, {320, 320}, {288, 320}, {256, 480}, {160, 480}, {512, 480}, {384, 480}, {640, 320}, {224, 434} };
+    static const int sizes[][2] = { {304, 434}, {320, 320}, {288, 320}, {256, 480}, {160, 480}, {512, 480}, {384, 480}, {640, 320}, {224, 434}, {384, 434}, {304, 480}, {320, 480} };
+    int cases12 = 0, blends = 0;
     static uint8_t src8[4096]; static uint16_t src16[4096], pal[256], ref[4096], got[4096];
     int fail = 0, cases = 0;
     for (int t = 0; t < 400; t++)
@@ -66,6 +67,26 @@ int main(void)
                 else if (fmt == 1) rg_scale_line_565le(src16, rep, src_count, got, width, f);
                 else rg_scale_line_565be(src16, rep, src_count, got, width, f);
                 cases++;
+                if (fmt == 0)
+                {
+                    /* the 1x-2x scaler, where it applies: same line, nothing past its end */
+                    int simple = 1;
+                    for (int i = 0; i < src_count; i++) if (rep[i] != 1 && rep[i] != 2) simple = 0;
+                    if (simple)
+                    {
+                        static uint16_t got12[4096];
+                        memset(got12, 0xAA, sizeof got12);
+                        rg_scale_line_pal12(src8, pal, rep, src_count, got12, f);
+                        cases12++;
+                        if (memcmp(ref, got12, width * 2) || got12[width] != 0xAAAA)
+                        {
+                            int x = 0; while (x < width && ref[x] == got12[x]) x++;
+                            printf("FAIL pal12 %d -> %d filter %d: first difference at x=%d (ref %04x got %04x), overrun %s\n",
+                                src_w, width, f, x, ref[x], got12[x], got12[width] != 0xAAAA ? "yes" : "no");
+                            if (++fail > 10) return 1;
+                        }
+                    }
+                }
                 if (memcmp(ref, got, width * 2) || got[width] != 0xAAAA)
                 {
                     int x = 0; while (x < width && ref[x] == got[x]) x++;
@@ -75,6 +96,31 @@ int main(void)
                 }
             }
     }
-    printf("scale_line_test: %d cases, %s\n", cases, fail ? "FAILURES" : "PASS");
+    /* rg_blend_line against rg_blend_pixels, aligned and not, odd and even lengths; and
+       rg_blend_pixels against the average computed channel by channel */
+    for (int t = 0; t < 2000; t++)
+    {
+        static uint16_t a[1100], b[1100], d[1100];
+        int n = 1 + rnd() % 1000, oa = rnd() & 1, ob = rnd() & 1, od = rnd() & 1;
+        for (int i = 0; i < 1100; i++) { a[i] = rnd(); b[i] = rnd() % 4 ? a[i] : rnd(); d[i] = 0xAAAA; }
+        if (t % 3 == 0) oa = ob = od = 0;
+        rg_blend_line(d + od, a + oa, b + ob, n);
+        blends++;
+        for (int x = 0; x < n; x++)
+        {
+            unsigned p = a[oa + x], q = b[ob + x], want = rg_blend_pixels(p, q);
+            unsigned ps = ((p << 8) | (p >> 8)) & 0xFFFF, qs = ((q << 8) | (q >> 8)) & 0xFFFF;
+            unsigned r = (((ps >> 11) & 31) + ((qs >> 11) & 31) + 1) >> 1, g = (((ps >> 5) & 63) + ((qs >> 5) & 63) + 1) >> 1, bl = ((ps & 31) + (qs & 31) + 1) >> 1;
+            unsigned avg = (r << 11) | (g << 5) | bl, avg_be = ((avg << 8) | (avg >> 8)) & 0xFFFF;
+            if (d[od + x] != want || (p != q && want != avg_be) || (p == q && want != p))
+            {
+                printf("FAIL blend n=%d x=%d: a %04x b %04x line %04x pixel %04x per-channel average %04x\n", n, x, p, q, d[od + x], want, avg_be);
+                if (++fail > 10) return 1;
+                break;
+            }
+        }
+        if (d[od + n] != 0xAAAA) { printf("FAIL blend line overrun n=%d\n", n); fail++; }
+    }
+    printf("scale_line_test: %d cases, %d on the 1x-2x scaler, %d blended lines, %s\n", cases, cases12, blends, fail ? "FAILURES" : "PASS");
     return fail != 0;
 }

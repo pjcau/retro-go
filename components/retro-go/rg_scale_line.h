@@ -21,18 +21,45 @@ static inline unsigned rg_blend_pixels(unsigned a, unsigned b)
 
     // Not the original author, but a good explanation is found at:
     // https://medium.com/@luc.trudeau/fast-averaging-of-high-color-16-bit-pixels-cb4ac7fd1488
-    a = (a << 8) | (a >> 8);
-    b = (b << 8) | (b >> 8);
+    // The pixels are big-endian 565: swap, average, swap back. The swaps are
+    // masked to 16 bits: without the mask the high byte of a and b stayed in
+    // bits 16-23 and came back OR-ed into the result's high byte (the low
+    // green bits and the blue one step too bright on blended pixels).
+    a = ((a << 8) | (a >> 8)) & 0xFFFFU;
+    b = ((b << 8) | (b >> 8)) & 0xFFFFU;
     unsigned s = a ^ b;
     unsigned v = ((s & 0xF7DEU) >> 1) + (a & b) + (s & 0x0821U);
-    return (v << 8) | (v >> 8);
+    return ((v << 8) | (v >> 8)) & 0xFFFFU;
 }
 
-/* rep[i]: how many output pixels source pixel i (0..src_count-1) is drawn as;
-   the sum of rep[] is width. PIXEL(i) is the output colour of source pixel i.
-   src_count is map[width-1] + 1, not the source width: the map rounds, and the
-   last output pixels of some sizes (160 -> 480, for one) come from the pixel
-   just past the source line, as the map loop always read it. */
+// dst[x] = rg_blend_pixels(a[x], b[x]) for n pixels: the vertical filter's
+// line. Two pixels per 32-bit word when the three lines are word aligned (the
+// average of two 16-bit lanes never carries into the next lane).
+static inline void rg_blend_line(uint16_t *dst, const uint16_t *a, const uint16_t *b, int n)
+{
+    int x = 0;
+    if (!(((uintptr_t)dst | (uintptr_t)a | (uintptr_t)b) & 3))
+    {
+        const uint32_t *a32 = (const uint32_t *)a, *b32 = (const uint32_t *)b;
+        uint32_t *d32 = (uint32_t *)dst;
+        for (; x + 2 <= n; x += 2)
+        {
+            uint32_t p = *a32++, q = *b32++;
+            if (p != q)
+            {
+                p = ((p & 0x00FF00FFU) << 8) | ((p >> 8) & 0x00FF00FFU);
+                q = ((q & 0x00FF00FFU) << 8) | ((q >> 8) & 0x00FF00FFU);
+                uint32_t s = p ^ q;
+                uint32_t v = ((s & 0xF7DEF7DEU) >> 1) + (p & q) + (s & 0x08210821U);
+                p = ((v & 0x00FF00FFU) << 8) | ((v >> 8) & 0x00FF00FFU);
+            }
+            *d32++ = p;
+        }
+    }
+    for (; x < n; x++)
+        dst[x] = rg_blend_pixels(a[x], b[x]);
+}
+
 #define RG_SCALE_LINE_BODY(PIXEL)                                              \
     {                                                                          \
         int i = 0, left = width;                                               \
@@ -59,6 +86,57 @@ static inline void rg_scale_line_pal(const uint8_t *src, const uint16_t *pal, co
     #define PIXEL_PAL(i) (pal[src[i]])
     RG_SCALE_LINE_BODY(PIXEL_PAL)
     #undef PIXEL_PAL
+}
+
+// The palette scaler for the common upscale between 1x and 2x (the Neo Geo's
+// 304 -> 434, the CPS1's 384 -> 480): every source pixel is drawn once or
+// twice (rep[i] is 1 or 2 for all i < src_count; the caller checks it once per
+// viewport). No test per pixel: each pixel is stored twice and the pointer
+// moves by its count, the next pixel overwriting the spare copy. The last
+// source pixel is written exactly, so nothing is written past the line.
+// Same output as rg_scale_line_pal (test/scale_line_test.c).
+static inline void rg_scale_line_pal12(const uint8_t *src, const uint16_t *pal, const uint8_t *rep,
+                                       int src_count, uint16_t *dst, bool filter_x)
+{
+    const int last = src_count - 1;
+    int i = 0;
+    if (last < 0)
+        return;
+    if (!filter_x)
+    {
+        for (; i + 4 <= last; i += 4)
+        {
+            unsigned c0 = pal[src[i]], c1 = pal[src[i + 1]], c2 = pal[src[i + 2]], c3 = pal[src[i + 3]];
+            dst[0] = c0; dst[1] = c0; dst += rep[i];
+            dst[0] = c1; dst[1] = c1; dst += rep[i + 1];
+            dst[0] = c2; dst[1] = c2; dst += rep[i + 2];
+            dst[0] = c3; dst[1] = c3; dst += rep[i + 3];
+        }
+        for (; i < last; i++)
+        {
+            unsigned c = pal[src[i]];
+            dst[0] = c; dst[1] = c; dst += rep[i];
+        }
+    }
+    else
+    {
+        unsigned c = pal[src[0]];
+        for (; i < last; i++)
+        {
+            unsigned next = pal[src[i + 1]];
+            dst[0] = c;
+            if (rep[i] == 2)                 // the second copy leans on the next pixel
+                dst[1] = rg_blend_pixels(c, next);
+            dst += rep[i];
+            c = next;
+        }
+    }
+    {
+        unsigned c = pal[src[last]];         // no next pixel: plain copies
+        dst[0] = c;
+        if (rep[last] == 2)
+            dst[1] = c;
+    }
 }
 
 static inline void rg_scale_line_565le(const uint16_t *src, const uint8_t *rep,

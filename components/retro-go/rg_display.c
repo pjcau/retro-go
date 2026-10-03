@@ -23,6 +23,7 @@ static uint32_t screen_line_checksum[RG_SCREEN_HEIGHT + 1];
 // source_x_count = 0 when the source is too wide for the table (map loop then)
 static uint8_t source_x_repeat[RG_SCREEN_WIDTH * 2 + 2];
 static int source_x_count;
+static bool source_x_simple;    // every source pixel is drawn once or twice: rg_scale_line_pal12
 
 #define LINE_IS_REPEATED(Y) (map_viewport_to_source_y[(Y)] == map_viewport_to_source_y[(Y) - 1])
 // This is to avoid flooring a number that is approximated to .9999999 and be explicit about it
@@ -289,7 +290,9 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
                 else if (fused_scale)
                 {
                     // D2: pattern-driven scaling with the horizontal filter fused in
-                    if (format & RG_PIXEL_PALETTE)
+                    if ((format & RG_PIXEL_PALETTE) && source_x_simple)
+                        rg_scale_line_pal12(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
+                    else if (format & RG_PIXEL_PALETTE)
                         rg_scale_line_pal(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, draw_width, filter_x);
                     else if (format == RG_PIXEL_565_LE)
                         rg_scale_line_565le(src, source_x_repeat, source_x_count, line_buffer_ptr, draw_width, filter_x);
@@ -333,10 +336,7 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
                     uint16_t *lineA = line_buffer + (i - 1) * draw_width;
                     uint16_t *lineB = line_buffer + (i + 0) * draw_width;
                     uint16_t *lineC = line_buffer + (i + 1) * draw_width;
-                    for (size_t x = 0; x < draw_width; ++x)
-                    {
-                        lineB[x] = blend_pixels(lineA[x], lineC[x]);
-                    }
+                    rg_blend_line(lineB, lineA, lineC, draw_width);
                 }
             }
         }
@@ -609,6 +609,10 @@ static void update_viewport_scaling(void)
         for (int x = 0; x < display.viewport.width; x++)
             source_x_repeat[map_viewport_to_source_x[x]]++;
     }
+    source_x_simple = source_x_count > 0;
+    for (int i = 0; i < source_x_count; i++)
+        if (source_x_repeat[i] != 1 && source_x_repeat[i] != 2)
+            source_x_simple = false;
     for (int y = 0; y < screen_height; ++y)
         map_viewport_to_source_y[y] = FLOAT_TO_INT(y * display.viewport.step_y);
     compute_blocks();
