@@ -320,7 +320,9 @@ static void cps1snd_task_main(void *arg)
 		xSemaphoreGive(cps1snd_done);
 	}
 }
-static void cps1snd_wait(void) { if (cps1snd_busy) xSemaphoreTake(cps1snd_done, portMAX_DELAY); }
+/* the flag decides, not the token: a job that ended with nobody waiting leaves
+   its token behind, and that one must not end a later wait (as drivers/neogeo.c) */
+static void cps1snd_wait(void) { while (cps1snd_busy) xSemaphoreTake(cps1snd_done, portMAX_DELAY); }
 static int cps1snd_start_task(void)
 {
 	cps1snd_done = xSemaphoreCreateBinary();
