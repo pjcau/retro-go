@@ -38,6 +38,12 @@ endif()
 if(DEFINED ENV{AUDIO_MIX_HZ} AND NOT "$ENV{AUDIO_MIX_HZ}" STREQUAL "")
     idf_build_set_property(COMPILE_DEFINITIONS "-DAUDIO_MIX_HZ=$ENV{AUDIO_MIX_HZ}" APPEND)
 endif()
+# `SD_HOLD_CS=1`: the SD card's chip select held low for good (rg_storage.c
+# RG_STORAGE_SDSPI_HOLD_CS, the work-around of esp-idf issue 10493 for slow
+# SDSPI accesses when the card is alone on its SPI bus). A measurement.
+if(DEFINED ENV{SD_HOLD_CS} AND NOT "$ENV{SD_HOLD_CS}" STREQUAL "" AND NOT "$ENV{SD_HOLD_CS}" STREQUAL "0")
+    idf_build_set_property(COMPILE_DEFINITIONS "-DRG_STORAGE_SDSPI_HOLD_CS=1" APPEND)
+endif()
 # `NEOSND_PRIO=7`: priority of the Neo Geo sound board's task on core 1 (default 5;
 # the display task is 6, drivers/neogeo.c)
 if(DEFINED ENV{NEOSND_PRIO} AND NOT "$ENV{NEOSND_PRIO}" STREQUAL "")
