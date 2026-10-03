@@ -19,6 +19,38 @@ static unsigned char *palette_dirty;
 static int palette_dirty_any;
 static unsigned char *used_base;
 static int used_base_dirty = 1;
+/* O2 of the Arcade 60 fps plan. On Metal Slug two frames in three change
+ * nothing, and the third changes ~25 colours in 3 of the 256 palettes:
+ * - palette_recalc_8() skips 8 colours at a time where its loops have nothing
+ *   to do (PAL_SKIP8: the same test the loop body makes, on 8 bytes at once,
+ *   at the moment the loop reaches them, so the result is the same);
+ * - the driver may keep palette_used_colors up to date itself, palette by
+ *   palette, from the base (palette_used_base) instead of rebuilding all of
+ *   it: used_epoch tells it when somebody else rebuilt the array.
+ * PALFAST=0 (PC harness) turns both off, for the proof. */
+static unsigned used_epoch;
+int mamego_palette_fast(void)
+{
+#ifdef ESP_PLATFORM
+	return 1;
+#else
+	static int on = -1;
+	if (on < 0)
+		on = !(getenv("PALFAST") && !strcmp(getenv("PALFAST"), "0"));
+	return on;
+#endif
+}
+static inline uint64_t pal_w8(const unsigned char *p) { uint64_t v; memcpy(&v, p, 8); return v; }
+#define PAL_SKIP8(v, nothing) \
+	if (pal_fast && !((v) & 7) && (v) + 8 <= Machine->drv->total_colors && (nothing)) { (v) += 7; continue; }
+/* the used colours without the driver's own marks, or NULL when they have to
+   be rebuilt (palette_init_used_colors() does it); *epoch changes whenever
+   palette_used_colors was rebuilt from it */
+const unsigned char *palette_used_base(unsigned *epoch)
+{
+	*epoch = used_epoch;
+	return used_base_dirty ? NULL : used_base;
+}
 #define USED_BASE_DIRTY() (used_base_dirty = 1)
 #else
 #define USED_BASE_DIRTY() ((void)0)
@@ -619,6 +651,7 @@ void palette_init_used_colors(void)
 	if (palette_used_colors == 0) return;
 
 #ifdef MAMEGO
+	used_epoch++;
 	if (!used_base_dirty && used_base)
 	{
 		memcpy(palette_used_colors, used_base, Machine->drv->total_colors);
@@ -898,6 +931,11 @@ static const unsigned char *palette_recalc_8(void)
 	int ran_out = 0;
 	int reuse_pens = 0;
 	int need,avail;
+#ifdef MAMEGO
+	int pal_fast = mamego_palette_fast();
+#else
+	int pal_fast = 0;
+#endif
 
 
 #if defined(MAMEGO) && !defined(ESP_PLATFORM)
@@ -917,6 +955,7 @@ static const unsigned char *palette_recalc_8(void)
 	/* requested since last update */
 	for (color = 0;color < Machine->drv->total_colors;color++)
 	{
+		PAL_SKIP8(color, pal_w8(palette_dirty + color) == 0)
 		if (palette_dirty[color])
 		{
 			int r,g,b,pen;
@@ -1019,6 +1058,7 @@ static const unsigned char *palette_recalc_8(void)
 	need = 0;
 	for (i = 0;i < Machine->drv->total_colors;i++)
 	{
+		PAL_SKIP8(i, pal_w8(palette_used_colors + i) == pal_w8(old_used_colors + i))
 		if ((palette_used_colors[i] & PALETTE_COLOR_VISIBLE) && palette_used_colors[i] != old_used_colors[i])
 			need++;
 	}
@@ -1044,6 +1084,7 @@ logerror("Need %d new pens; %d available. I'll reuse some pens.\n",need,avail);
 	first_free_pen = RESERVED_PENS;
 	for (color = 0;color < Machine->drv->total_colors;color++)
 	{
+		PAL_SKIP8(color, pal_w8(palette_used_colors + color) == pal_w8(old_used_colors + color))
 		/* the comparison between palette_used_colors and old_used_colors also includes */
 		/* PALETTE_COLOR_NEEDS_REMAP which might have been set previously */
 		if ((palette_used_colors[color] & PALETTE_COLOR_VISIBLE) &&
@@ -1201,6 +1242,7 @@ logerror("Error: no way to shrink the palette to 256 colors, left out %d colors.
 	/* which might cause flicker. */
 	for (color = 0;color < Machine->drv->total_colors;color++)
 	{
+		PAL_SKIP8(color, pal_w8(palette_used_colors + color) == pal_w8(old_used_colors + color))
 		if (!(palette_used_colors[color] & PALETTE_COLOR_VISIBLE))
 		{
 			if (old_used_colors[color] & PALETTE_COLOR_VISIBLE)

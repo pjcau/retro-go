@@ -287,40 +287,125 @@ MAMEGO_HOT static int neoband_walk(const struct rectangle *clip, const unsigned 
 	return !nb_overflow;
 }
 
+/* O2: palette_used_colors kept across frames. The array is the base (what
+   palette.c counts as visible or cached) with this driver's marks on top: the
+   pens the fix layer and the sprites use, palette by palette (the two colmask
+   tables below), and colour 4095. From one frame to the next a few palettes
+   change, if any: only those 16-colour blocks are rebuilt, from the base and
+   the masks of everything that lands on them, instead of the 4096 colours.
+   Valid as long as nobody else rebuilt the array (palette.c's epoch) and the
+   base stands; otherwise, and with PALFAST=0, the whole array as before. */
+extern const unsigned char *palette_used_base(unsigned *epoch);
+extern int mamego_palette_fast(void);
+static int nbp_fix[16], nbp_spr[256];
+static unsigned nbp_epoch;
+static int nbp_valid;
+#ifndef ESP_PLATFORM
+static unsigned long nbp_kept, nbp_blocks, nbp_full;
+static void nbp_report(void)
+{
+	printf("PALCHECK ok: %lu frames kept (%lu palettes rebuilt), %lu frames built in full\n", nbp_kept, nbp_blocks, nbp_full);
+}
+#endif
+
+static void nbp_block(const unsigned char *base, int block, int fix_base, int spr_base,
+		const int *fixmask, const int *sprmask)
+{
+	int first = block * 16, f = (first - fix_base) / 16, s = (first - spr_base) / 16, i, mask = 0;
+	if (first >= fix_base && f < 16) mask |= fixmask[f];
+	if (first >= spr_base && s < 256) mask |= sprmask[s];
+	for (i = 0; i < 16; i++)
+		palette_used_colors[first + i] = (i && (mask & (1 << i))) || first + i == 4095
+			? PALETTE_COLOR_VISIBLE : base[first + i];
+}
+
 /* neogeo_palette() for the band path: fix-layer pens, the walk, palette_recalc().
    Returns 1 when the bands can draw this frame from the list. */
 static int neoband_palette(const struct rectangle *clip, const unsigned char *vidram,
 		unsigned int neogeo_frame_counter, int fix_bank)
 {
-	int colmask[256];
+	int colmask[256], fixmask[16];
 	unsigned int *pen_usage;
-	int pal_base, color, code, offs, i, ok;
-
-	palette_init_used_colors();
+	int fix_base, spr_base, color, code, offs, i, ok;
+	const unsigned char *base;
+	unsigned epoch;
 
 	pen_usage = Machine->gfx[fix_bank]->pen_usage;
-	pal_base = Machine->drv->gfxdecodeinfo[fix_bank].color_codes_start;
-	for (color = 0; color < 16; color++) colmask[color] = 0;
+	fix_base = Machine->drv->gfxdecodeinfo[fix_bank].color_codes_start;
+	for (color = 0; color < 16; color++) fixmask[color] = 0;
 	for (offs = 0xe000; offs < 0xea00; offs += 2)
 	{
 		code = READ_WORD(&vidram[offs]);
 		color = code >> 12;
-		colmask[color] |= pen_usage[code & 0xfff];
+		fixmask[color] |= pen_usage[code & 0xfff];
 	}
-	for (color = 0; color < 16; color++)
-		for (i = 1; i < 16; i++)
-			if (colmask[color] & (1 << i))
-				palette_used_colors[pal_base + 16 * color + i] = PALETTE_COLOR_VISIBLE;
 
-	pal_base = Machine->drv->gfxdecodeinfo[2].color_codes_start;
+	spr_base = Machine->drv->gfxdecodeinfo[2].color_codes_start;
 	for (color = 0; color < 256; color++) colmask[color] = 0;
 	ok = neoband_walk(clip, vidram, neogeo_frame_counter, colmask);
-	for (color = 0; color < 256; color++)
-		for (i = 1; i < 16; i++)
-			if (colmask[color] & (1 << i))
-				palette_used_colors[pal_base + 16 * color + i] = PALETTE_COLOR_VISIBLE;
 
-	palette_used_colors[4095] = PALETTE_COLOR_VISIBLE;
+	base = palette_used_base(&epoch);
+	if (nbp_valid && base && epoch == nbp_epoch && mamego_palette_fast())
+	{
+		/* the palettes whose pens changed, and nothing else */
+		for (color = 0; color < 16; color++)
+			if ((fixmask[color] ^ nbp_fix[color]) & 0xfffe)
+				nbp_block(base, fix_base / 16 + color, fix_base, spr_base, fixmask, colmask);
+		for (color = 0; color < 256; color++)
+			if ((colmask[color] ^ nbp_spr[color]) & 0xfffe)
+				nbp_block(base, spr_base / 16 + color, fix_base, spr_base, fixmask, colmask);
+#ifndef ESP_PLATFORM
+		if (getenv("PALCHECK"))
+		{
+			static int reported;
+			if (!reported) { reported = 1; atexit(nbp_report); }
+			nbp_kept++;
+			for (color = 0; color < 16; color++) nbp_blocks += ((fixmask[color] ^ nbp_fix[color]) & 0xfffe) != 0;
+			for (color = 0; color < 256; color++) nbp_blocks += ((colmask[color] ^ nbp_spr[color]) & 0xfffe) != 0;
+			/* the proof on the PC: the whole array as the full path builds it */
+			static unsigned char want[4096];
+			int n = Machine->drv->total_colors;
+			memcpy(want, base, n);
+			for (color = 0; color < 16; color++)
+				for (i = 1; i < 16; i++)
+					if (fixmask[color] & (1 << i)) want[fix_base + 16 * color + i] = PALETTE_COLOR_VISIBLE;
+			for (color = 0; color < 256; color++)
+				for (i = 1; i < 16; i++)
+					if (colmask[color] & (1 << i)) want[spr_base + 16 * color + i] = PALETTE_COLOR_VISIBLE;
+			want[4095] = PALETTE_COLOR_VISIBLE;
+			if (memcmp(want, palette_used_colors, n))
+			{
+				for (i = 0; i < n && want[i] == palette_used_colors[i]; i++) {}
+				printf("PALCHECK FAILED: colour %d is %d, the full path gives %d\n", i, palette_used_colors[i], want[i]);
+				exit(3);
+			}
+		}
+#endif
+	}
+	else
+	{
+#ifndef ESP_PLATFORM
+		nbp_full++;
+#endif
+		palette_init_used_colors();
+		for (color = 0; color < 16; color++)
+			for (i = 1; i < 16; i++)
+				if (fixmask[color] & (1 << i))
+					palette_used_colors[fix_base + 16 * color + i] = PALETTE_COLOR_VISIBLE;
+		for (color = 0; color < 256; color++)
+			for (i = 1; i < 16; i++)
+				if (colmask[color] & (1 << i))
+					palette_used_colors[spr_base + 16 * color + i] = PALETTE_COLOR_VISIBLE;
+		palette_used_colors[4095] = PALETTE_COLOR_VISIBLE;
+		/* from here the array can be kept: the base stands, the palettes are
+		   16-colour blocks inside the 4096 colours */
+		palette_used_base(&nbp_epoch);
+		nbp_valid = Machine->drv->total_colors == 4096 && !(fix_base & 15) && !(spr_base & 15)
+			&& fix_base + 16 * 16 <= 4096 && spr_base + 256 * 16 <= 4096;
+	}
+	memcpy(nbp_fix, fixmask, sizeof nbp_fix);
+	memcpy(nbp_spr, colmask, sizeof nbp_spr);
+
 	palette_recalc();
 	return ok;
 }
