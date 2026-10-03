@@ -110,7 +110,7 @@ static size_t batch(const int16_t *d, size_t n)
 		audio_hash = (audio_hash ^ (uint16_t)d[i]) * 16777619u;
 		audio_nonzero += d[i] != 0;
 	}
-	audio_samples += n;
+	audio_samples += n * 2;                  /* values, both channels, like the non-zero count */
 	return n;
 }
 static void poll(void) {}

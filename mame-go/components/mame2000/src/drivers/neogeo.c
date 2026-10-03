@@ -1033,6 +1033,9 @@ static void neosnd_job(void)
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
+#ifndef NEOSND_PRIO
+#define NEOSND_PRIO 5                         /* below the display task (6): a bench build can swap them */
+#endif
 static TaskHandle_t neosnd_task;
 static SemaphoreHandle_t neosnd_done, neosnd_mixed;
 static volatile int neosnd_busy;
@@ -1073,7 +1076,7 @@ static int neosnd_start_task(void)
 		return 1;
 	neosnd_done = xSemaphoreCreateBinary();
 	neosnd_mixed = xSemaphoreCreateBinary();
-	return neosnd_done && neosnd_mixed && xTaskCreatePinnedToCore(neosnd_task_main, "neo_sound", 4096, NULL, 5, &neosnd_task, 1) == pdPASS;
+	return neosnd_done && neosnd_mixed && xTaskCreatePinnedToCore(neosnd_task_main, "neo_sound", 4096, NULL, NEOSND_PRIO, &neosnd_task, 1) == pdPASS;
 }
 static void neosnd_start(void) { neosnd_mixing = neosnd_mix1; neosnd_busy = 1; __sync_synchronize(); xTaskNotifyGive(neosnd_task); }
 #else
