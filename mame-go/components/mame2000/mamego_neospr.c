@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #ifdef ESP_PLATFORM
 #include <esp_heap_caps.h>
 #endif
@@ -66,6 +67,43 @@ extern long long mamego_prof_now(void);
 #define PAGE_SEEKED()  do {} while (0)
 #define PAGE_DONE(i)   do { mamego_page_n[i]++; } while (0)
 #endif
+
+/* One page from the card into the PSRAM cache. Measured on the board (jobs
+   163/165): 17 ms for an 8 KB sprite page and 12 ms for a 4 KB sample page, of
+   which the seek is 1.5-2 ms: about 1 ms a sector. The cache is in PSRAM, which
+   the SD driver cannot use for DMA, so it reads into its own one-sector buffer
+   and copies, one command per sector. Reading into a DMA-capable buffer of
+   several sectors lets the file system ask for them in one multi-block
+   command. The buffer is taken from the internal RAM for the time of the read
+   (4 KB, or less when there is not that much in one piece; none at all falls
+   back to the old path). */
+static size_t page_read(FILE *f, long offset, unsigned char *dst, size_t len)
+{
+#ifdef ESP_PLATFORM
+	size_t chunk = 4096, done = 0;
+	unsigned char *tmp = NULL;
+	int fd = fileno(f);
+	while (chunk >= 1024 && !(tmp = heap_caps_malloc(chunk, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL)))
+		chunk >>= 1;
+	if (tmp && fd >= 0 && lseek(fd, offset, SEEK_SET) == (off_t)offset)
+	{
+		while (done < len)
+		{
+			size_t want = len - done < chunk ? len - done : chunk;
+			int got = read(fd, tmp, want);
+			if (got <= 0)
+				break;
+			memcpy(dst + done, tmp, got);
+			done += got;
+		}
+		free(tmp);
+		return done;
+	}
+	free(tmp);
+#endif
+	fseek(f, offset, SEEK_SET);
+	return fread(dst, 1, len, f);
+}
 
 static struct neospr_region regions[NEOSPR_MAX_REGIONS];
 static int neosnd_alloc(void);
@@ -516,9 +554,7 @@ uint32_t *neospr_tile(int tileno)
 		dst = cache + (size_t)slot * NEOSPR_PAGE;
 		{
 			PAGE_T0();
-			fseek(reg->f, reg->data_offset + first_tile * NEOSPR_TILE, SEEK_SET);
-			PAGE_SEEKED();
-			if (fread(dst, NEOSPR_TILE, count, reg->f) != count)
+			if (page_read(reg->f, reg->data_offset + first_tile * NEOSPR_TILE, dst, (size_t)count * NEOSPR_TILE) != (size_t)count * NEOSPR_TILE)
 				memset(dst, 0, NEOSPR_PAGE);
 			PAGE_DONE(0);
 		}
@@ -787,9 +823,7 @@ uint8_t neosnd_read(const uint8_t *base, uint32_t offset)
 			snd_page_slot[snd_slot_page[slot]] = -1;
 		{
 			PAGE_T0();
-			fseek(reg->f, reg->data_offset + (offset & ~(NEOSND_PAGE - 1)), SEEK_SET);
-			PAGE_SEEKED();
-			if (fread(snd_cache + (size_t)slot * NEOSND_PAGE, 1, NEOSND_PAGE, reg->f) == 0)
+			if (page_read(reg->f, reg->data_offset + (offset & ~(NEOSND_PAGE - 1)), snd_cache + (size_t)slot * NEOSND_PAGE, NEOSND_PAGE) == 0)
 				memset(snd_cache + (size_t)slot * NEOSND_PAGE, 0, NEOSND_PAGE);
 			PAGE_DONE(1);
 		}
