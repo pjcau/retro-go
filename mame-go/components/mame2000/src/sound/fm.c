@@ -2671,11 +2671,17 @@ void YM2610_rearm_timers(int n)
 
 void YM2610UpdateOne(int num, int16_t **buffer, int length)
 {
-	PROF_PUSH(PROF_YM);
 #ifdef MAMEGO
 	if (neosnd_update_hook)
+	{
+		/* no profiler here: with the mix on core 1 this runs there */
 		neosnd_update_hook(buffer, length);
-	else if (ym_offload)
+		return;
+	}
+#endif
+	PROF_PUSH(PROF_YM);
+#ifdef MAMEGO
+	if (ym_offload)
 		ym2610_offload_update(num, buffer, length);
 	else
 #endif

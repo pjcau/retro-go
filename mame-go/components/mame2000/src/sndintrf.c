@@ -22,6 +22,11 @@ volatile int mamego_snd_pos = -1;
 /* frame end, core 0: pre waits for the board's job, post starts the next */
 void (*mamego_sndboard_pre)(void);
 void (*mamego_sndboard_post)(void);
+/* the board's frame-end hook: non-zero when the board mixes the frame itself,
+   with sound_update_mix() on core 1 (drivers/neogeo.c) */
+int (*mamego_sound_offload)(void);
+/* core 0, before the frame's samples go out: the mix is finished */
+void (*mamego_sound_sync)(void);
 /* soundlatch_w() goes to the board instead (a command timed in the frame) */
 void (*mamego_soundlatch_hook)(int data);
 #endif
@@ -925,17 +930,10 @@ void sound_stop(void)
 
 
 
-void sound_update(void)
+/* one frame of samples: the chips' streams, then the mixer into samples_buffer */
+void sound_update_mix(void)
 {
 	int totalsound = 0;
-	PROF_PUSH(PROF_MIXER);
-
-#ifdef MAMEGO
-	if (mamego_sndboard_pre)
-		mamego_sndboard_pre();
-#endif
-
-	profiler_mark(PROFILER_SOUND);
 
 	while (Machine->drv->sound[totalsound].sound_type != 0 && totalsound < MAX_SOUND)
 	{
@@ -947,6 +945,23 @@ void sound_update(void)
 
 	streams_sh_update();
 	mixer_sh_update();
+}
+
+void sound_update(void)
+{
+	PROF_PUSH(PROF_MIXER);
+
+#ifdef MAMEGO
+	if (mamego_sndboard_pre)
+		mamego_sndboard_pre();
+#endif
+
+	profiler_mark(PROFILER_SOUND);
+
+#ifdef MAMEGO
+	if (!mamego_sound_offload || !mamego_sound_offload())
+#endif
+	sound_update_mix();
 
 	timer_reset(sound_update_timer,TIME_NEVER);
 #ifdef MAMEGO

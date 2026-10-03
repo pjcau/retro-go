@@ -18,6 +18,9 @@
  *
  * Output: one "FRAME <n> <w>x<h> hash <hex>" line per hashed frame, and at the
  * end "FRAMES <n> all <hex>" with the hash of every hashed frame's hash.
+ * The sound: "AUDIO <n> hash <hex>" on the same frames, the running hash of
+ * every sample delivered so far, and at the end "AUDIO all <hex> samples <n>
+ * nonzero <n>" (a run that is silent proves nothing about the mixer).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,7 +100,19 @@ static void video(const void *d, unsigned w, unsigned h, size_t pitch)
 		dump_ppm(d, w, h, pitch);
 }
 static void sample(int16_t l, int16_t r) {}
-static size_t batch(const int16_t *d, size_t n) { return n; }
+static uint32_t audio_hash = 2166136261u;
+static unsigned long audio_samples, audio_nonzero;
+static size_t batch(const int16_t *d, size_t n)
+{
+	if (quiet) return n;
+	for (size_t i = 0; i < n * 2; i++)       /* interleaved left, right */
+	{
+		audio_hash = (audio_hash ^ (uint16_t)d[i]) * 16777619u;
+		audio_nonzero += d[i] != 0;
+	}
+	audio_samples += n;
+	return n;
+}
 static void poll(void) {}
 static int16_t state(unsigned port, unsigned dev, unsigned idx, unsigned id)
 {
@@ -200,8 +215,11 @@ int main(int argc, char **argv)
 	{
 		joy = script(frame_no);
 		retro_run();
+		if (frame_no % hash_every == 0)
+			printf("AUDIO %u hash %08x\n", frame_no, audio_hash);
 		if (save && frame_no == save_at && !state_io(save, 1)) return 1;
 	}
 	printf("FRAMES %u all %08x\n", frames, all_hash);
+	printf("AUDIO all %08x samples %lu nonzero %lu\n", audio_hash, audio_samples, audio_nonzero);
 	return 0;
 }

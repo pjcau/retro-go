@@ -80,6 +80,13 @@ void osd_update_silent_stream(void)
 	/* samples_buffer is always stereo-sized now -- zero it and
 	 * dispatch directly, no separate mono-path conversion buffer
 	 * needed. */
+#ifdef MAMEGO
+	{
+		extern void (*mamego_sound_sync)(void);
+		if (mamego_sound_sync)
+			mamego_sound_sync(); /* core 1 is not writing samples_buffer */
+	}
+#endif
 	memset(samples_buffer, 0, samples_per_frame * 2 * sizeof(short));
 	if (audio_batch_cb) audio_batch_cb(samples_buffer, samples_per_frame);
 }

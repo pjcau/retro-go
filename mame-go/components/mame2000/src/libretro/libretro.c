@@ -904,7 +904,14 @@ void retro_run(void)
     * update) writes interleaved L/R directly into it -- mono games
     * duplicate at the clip step.  No conversion needed here. */
    if (samples_per_frame && !pause_action)
+   {
+#ifdef MAMEGO
+      extern void (*mamego_sound_sync)(void);
+      if (mamego_sound_sync)
+         mamego_sound_sync(); /* the frame's mix on core 1 is finished */
+#endif
       audio_batch_cb(samples_buffer, samples_per_frame);
+   }
 
    /* If frameskip/timing settings have changed,
     * update frontend audio latency

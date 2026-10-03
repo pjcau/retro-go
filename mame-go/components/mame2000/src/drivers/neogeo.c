@@ -894,6 +894,13 @@ static int32_t neosnd_timer_at[2];
 static int32_t neosnd_now, neosnd_seg_start, neosnd_seg_len;
 static int neosnd_job_q, neosnd_job_len, neosnd_rendered, neosnd_out, neosnd_ready;
 static int16_t neosnd_buf[2][2][2048];        /* [buffer][left/right][sample] */
+/* the frame's mix (streams, SSG, mixer: sound_update_mix) on core 1 too, as the
+   first part of the job; core 0 only hands over the frame's commands */
+static int neosnd_mix1;
+static volatile int neosnd_mixing;
+extern void sound_update_mix(void);
+extern int (*mamego_sound_offload)(void);
+extern void (*mamego_sound_sync)(void);
 
 static int32_t neosnd_time(void)              /* Z80 cycles since the frame's start */
 {
@@ -1027,7 +1034,7 @@ static void neosnd_job(void)
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 static TaskHandle_t neosnd_task;
-static SemaphoreHandle_t neosnd_done;
+static SemaphoreHandle_t neosnd_done, neosnd_mixed;
 static volatile int neosnd_busy;
 static void neosnd_task_main(void *arg)
 {
@@ -1039,6 +1046,14 @@ static void neosnd_task_main(void *arg)
 		extern int64_t mamego_prof_now(void);
 		int64_t t0 = mamego_prof_now();
 #endif
+		if (neosnd_mix1)
+		{
+			/* last frame's samples and the SSG through the mixer, then out */
+			sound_update_mix();
+			__sync_synchronize();
+			neosnd_mixing = 0;
+			xSemaphoreGive(neosnd_mixed);
+		}
 		neosnd_job();
 #ifdef NEOPROF
 		mamego_core1_us[2] += mamego_prof_now() - t0;
@@ -1048,17 +1063,29 @@ static void neosnd_task_main(void *arg)
 		xSemaphoreGive(neosnd_done);
 	}
 }
-static void neosnd_wait(void) { if (neosnd_busy) xSemaphoreTake(neosnd_done, portMAX_DELAY); }
+/* the flag decides, not the token: a job that ended with nobody waiting leaves
+   its token behind, and that one must not end a later wait */
+static void neosnd_wait(void) { while (neosnd_busy) xSemaphoreTake(neosnd_done, portMAX_DELAY); }
+static void neosnd_mix_wait(void) { while (neosnd_mixing) xSemaphoreTake(neosnd_mixed, portMAX_DELAY); }
 static int neosnd_start_task(void)
 {
+	if (neosnd_task)
+		return 1;
 	neosnd_done = xSemaphoreCreateBinary();
-	return neosnd_done && xTaskCreatePinnedToCore(neosnd_task_main, "neo_sound", 4096, NULL, 5, &neosnd_task, 1) == pdPASS;
+	neosnd_mixed = xSemaphoreCreateBinary();
+	return neosnd_done && neosnd_mixed && xTaskCreatePinnedToCore(neosnd_task_main, "neo_sound", 4096, NULL, 5, &neosnd_task, 1) == pdPASS;
 }
-static void neosnd_start(void) { neosnd_busy = 1; __sync_synchronize(); xTaskNotifyGive(neosnd_task); }
+static void neosnd_start(void) { neosnd_mixing = neosnd_mix1; neosnd_busy = 1; __sync_synchronize(); xTaskNotifyGive(neosnd_task); }
 #else
 static void neosnd_wait(void) {}
+static void neosnd_mix_wait(void) {}
 static int neosnd_start_task(void) { return 1; }
-static void neosnd_start(void) { neosnd_job(); } /* PC: at once, same order, deterministic */
+static void neosnd_start(void)                    /* PC: at once, same order, deterministic */
+{
+	if (neosnd_mix1)
+		sound_update_mix();
+	neosnd_job();
+}
 #endif
 
 /* 68000, core 0: a command for the sound board at this point of the frame */
@@ -1079,30 +1106,59 @@ static void neosnd_command(int value)
 	}
 }
 
-/* core 0, the YM2610 stream's update at the frame end (fm.c): last frame's
-   samples out, the 68000 sees the reply, this frame's job starts */
-static void neosnd_update(int16_t **buffer, int length)
+/* the YM2610 stream's update (fm.c): the last job's samples out, the next
+   job's buffer and length */
+static void neosnd_take(int16_t **buffer, int length)
 {
-	int i, prev;
-	neosnd_wait();
-	prev = neosnd_out;
+	int i, prev = neosnd_out;
 	for (i = 0; i < length; i++)
 	{
 		int j = i < neosnd_job_len ? i : neosnd_job_len - 1;
 		buffer[0][i] = neosnd_ready && j >= 0 ? neosnd_buf[prev][0][j] : 0;
 		buffer[1][i] = neosnd_ready && j >= 0 ? neosnd_buf[prev][1][j] : 0;
 	}
+	neosnd_job_len = length > 2048 ? 2048 : length;
+	neosnd_out ^= 1;
+	neosnd_ready = 1;
+}
+
+/* core 0, frame end, the last job finished: the 68000 sees the reply, this
+   frame's commands go to the next job */
+static void neosnd_frame(void)
+{
 	result_code = neosnd_reply;
 	if (!neosnd_unread && !neosnd_evn[neosnd_evfill])
 		pending_command = 0;
 	neosnd_job_q = neosnd_evfill;
 	neosnd_evfill ^= 1;
 	neosnd_evn[neosnd_evfill] = 0;
-	neosnd_job_len = length > 2048 ? 2048 : length;
-	neosnd_out ^= 1;
-	neosnd_ready = 1;
 	neosnd_frame_t0 = timer_get_time();
+}
+
+/* the stream's update at the frame end. Mix on core 0: it is the frame's
+   hand-over as well. Mix on core 1: called there, inside the job */
+static void neosnd_update(int16_t **buffer, int length)
+{
+	if (neosnd_mix1)
+	{
+		neosnd_take(buffer, length);
+		return;
+	}
+	neosnd_wait();
+	neosnd_take(buffer, length);
+	neosnd_frame();
 	neosnd_start();
+}
+
+/* core 0, sound_update() with the mix on core 1: the hand-over alone */
+static int neosnd_frame_end(void)
+{
+	if (!neosnd_mix1)
+		return 0;
+	neosnd_wait();
+	neosnd_frame();
+	neosnd_start();
+	return 1;
 }
 
 /* first frame end: take the board over from MAME */
@@ -1121,6 +1177,17 @@ void neosnd_enable(void)
 #endif
 	if (neosnd_core1 || z80_get_context(NULL) > sizeof(ctx) || !neosnd_start_task())
 		return;
+	neosnd_mix1 = 1;
+#ifndef ESP_PLATFORM
+	if (getenv("NEOMIX1") && !strcmp(getenv("NEOMIX1"), "0"))
+		neosnd_mix1 = 0;
+#else
+	{
+		/* bench switch: this file on the card keeps the mix on core 0 */
+		FILE *f = fopen("/sd/retro-go/mame/neo_nomix1", "r");
+		if (f) { fclose(f); neosnd_mix1 = 0; printf("neogeo: sound mix stays on core 0 (neo_nomix1)\n"); }
+	}
+#endif
 	neosnd_mem = memory_region(REGION_CPU2);
 	neosnd_cpf = NEOSND_CLOCK / Machine->drv->frames_per_second;
 	neosnd_frame_len = 1.0f / Machine->drv->frames_per_second;
@@ -1152,12 +1219,16 @@ void neosnd_enable(void)
 	neosnd_core1 = 1;
 	YM2610_timers_to_host();         /* MAME's YM timers -> neosnd_timer() */
 	neosnd_update_hook = neosnd_update;
-	printf("neogeo: sound board (Z80 + YM2610) on the second core\n");
+	mamego_sound_offload = neosnd_frame_end;
+	mamego_sound_sync = neosnd_mix_wait;
+	printf("neogeo: sound board (Z80 + YM2610%s) on the second core\n", neosnd_mix1 ? " + mix" : "");
 }
 
 void neosnd_disable(void)
 {
 	neosnd_wait();
+	mamego_sound_offload = 0;
+	mamego_sound_sync = 0;
 	neosnd_update_hook = 0;
 	neosnd_timer_hook = 0;
 	neosnd_render_hook = 0;
