@@ -44,8 +44,9 @@ static void reference(int fmt, const void *src, const uint16_t *pal, uint16_t *o
 
 int main(void)
 {
-    static const int sizes[][2] = { {304, 434}, {320, 320}, {288, 320}, {256, 480}, {160, 480}, {512, 480}, {384, 480}, {640, 320}, {224, 434}, {384, 434}, {304, 480}, {320, 480} };
-    int cases12 = 0, blends = 0;
+    static const int sizes[][2] = { {304, 434}, {320, 320}, {288, 320}, {256, 480}, {160, 480}, {512, 480}, {384, 480}, {640, 320}, {224, 434}, {384, 434}, {304, 480}, {320, 480},
+        {256, 341}, {160, 355}, {256, 427}, {256, 366}, {240, 480}, {160, 478}, {128, 480}, {120, 480} };
+    int cases12 = 0, blends = 0, casesup = 0;
     static uint8_t src8[4096]; static uint16_t src16[4096], pal[256], ref[4096], got[4096];
     int fail = 0, cases = 0;
     for (int t = 0; t < 400; t++)
@@ -87,6 +88,28 @@ int main(void)
                         }
                     }
                 }
+                {
+                    /* the 1..R upscalers, where they apply (every source pixel drawn 1 to R times) */
+                    int lo = 99, hi = 0;
+                    for (int i = 0; i < src_count; i++) { if (rep[i] < lo) lo = rep[i]; if (rep[i] > hi) hi = rep[i]; }
+                    for (int r = 2; r <= 4; r += 2)
+                    {
+                        static uint16_t gotup[4096];
+                        if (lo < 1 || hi > r) continue;
+                        memset(gotup, 0xAA, sizeof gotup);
+                        if (fmt == 0) (r == 2 ? rg_scale_line_pal_up2 : rg_scale_line_pal_up4)(src8, pal, rep, src_count, gotup, f);
+                        else if (fmt == 1) (r == 2 ? rg_scale_line_565le_up2 : rg_scale_line_565le_up4)(src16, rep, src_count, gotup, f);
+                        else (r == 2 ? rg_scale_line_565be_up2 : rg_scale_line_565be_up4)(src16, rep, src_count, gotup, f);
+                        casesup++;
+                        if (memcmp(ref, gotup, width * 2) || gotup[width] != 0xAAAA)
+                        {
+                            int x = 0; while (x < width && ref[x] == gotup[x]) x++;
+                            printf("FAIL up%d %d -> %d fmt %d filter %d: first difference at x=%d (ref %04x got %04x), overrun %s\n",
+                                r, src_w, width, fmt, f, x, ref[x], gotup[x], gotup[width] != 0xAAAA ? "yes" : "no");
+                            if (++fail > 10) return 1;
+                        }
+                    }
+                }
                 if (memcmp(ref, got, width * 2) || got[width] != 0xAAAA)
                 {
                     int x = 0; while (x < width && ref[x] == got[x]) x++;
@@ -121,6 +144,7 @@ int main(void)
         }
         if (d[od + n] != 0xAAAA) { printf("FAIL blend line overrun n=%d\n", n); fail++; }
     }
-    printf("scale_line_test: %d cases, %d on the 1x-2x scaler, %d blended lines, %s\n", cases, cases12, blends, fail ? "FAILURES" : "PASS");
+    if (!casesup) { printf("no case reached the 1..R upscalers: nothing proven\n"); fail++; }
+    printf("scale_line_test: %d cases, %d on the 1x-2x palette scaler, %d on the 1..R upscalers, %d blended lines, %s\n", cases, cases12, casesup, blends, fail ? "FAILURES" : "PASS");
     return fail != 0;
 }

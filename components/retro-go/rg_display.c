@@ -24,6 +24,7 @@ static uint32_t screen_line_checksum[RG_SCREEN_HEIGHT + 1];
 static uint8_t source_x_repeat[RG_SCREEN_WIDTH * 2 + 2];
 static int source_x_count;
 static bool source_x_simple;    // every source pixel is drawn once or twice: rg_scale_line_pal12
+static int source_x_up;         // every source pixel drawn 1..2 times (2) or 1..4 (4): rg_scale_line_*_up2/up4; else 0
 
 #define LINE_IS_REPEATED(Y) (map_viewport_to_source_y[(Y)] == map_viewport_to_source_y[(Y) - 1])
 // This is to avoid flooring a number that is approximated to .9999999 and be explicit about it
@@ -292,6 +293,19 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
                     // D2: pattern-driven scaling with the horizontal filter fused in
                     if ((format & RG_PIXEL_PALETTE) && source_x_simple)
                         rg_scale_line_pal12(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
+                    // every upscale up to 4x, any source format: no test per pixel either
+                    else if (source_x_up == 2 && (format & RG_PIXEL_PALETTE))
+                        rg_scale_line_pal_up2(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
+                    else if (source_x_up == 4 && (format & RG_PIXEL_PALETTE))
+                        rg_scale_line_pal_up4(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
+                    else if (source_x_up == 2 && format == RG_PIXEL_565_LE)
+                        rg_scale_line_565le_up2(src, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
+                    else if (source_x_up == 4 && format == RG_PIXEL_565_LE)
+                        rg_scale_line_565le_up4(src, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
+                    else if (source_x_up == 2)
+                        rg_scale_line_565be_up2(src, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
+                    else if (source_x_up == 4)
+                        rg_scale_line_565be_up4(src, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
                     else if (format & RG_PIXEL_PALETTE)
                         rg_scale_line_pal(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, draw_width, filter_x);
                     else if (format == RG_PIXEL_565_LE)
@@ -610,9 +624,16 @@ static void update_viewport_scaling(void)
             source_x_repeat[map_viewport_to_source_x[x]]++;
     }
     source_x_simple = source_x_count > 0;
+    source_x_up = source_x_count > 4 ? 2 : 0;
     for (int i = 0; i < source_x_count; i++)
+    {
         if (source_x_repeat[i] != 1 && source_x_repeat[i] != 2)
             source_x_simple = false;
+        if (source_x_repeat[i] < 1 || source_x_repeat[i] > 4)
+            source_x_up = 0;
+        else if (source_x_repeat[i] > 2 && source_x_up)
+            source_x_up = 4;
+    }
     for (int y = 0; y < screen_height; ++y)
         map_viewport_to_source_y[y] = FLOAT_TO_INT(y * display.viewport.step_y);
     compute_blocks();

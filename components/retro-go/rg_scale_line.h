@@ -139,6 +139,53 @@ static inline void rg_scale_line_pal12(const uint8_t *src, const uint16_t *pal, 
     }
 }
 
+// The same idea for every upscale and every source format: when each source
+// pixel is drawn 1 to R times (R = 2 or 4; the caller checks the repeat table
+// once per viewport), a pixel is stored R times and the pointer moves by its
+// count, the next pixel overwriting the spare copies. The last R source pixels
+// are written exactly, so nothing is written past the line. With the filter,
+// the last copy of a pixel drawn more than once leans on the next pixel, as in
+// rg_scale_line_*. Same output (test/scale_line_test.c).
+//   NES 256 -> 341, Game Boy 160 -> 355, Master System 256 -> 427, SNES 256 ->
+//   366, GBA 240 -> 480 ...: R = 2 up to 2x, R = 4 up to 4x.
+#define RG_SCALE_UP_BODY(PIXEL, R)                                             \
+    {                                                                          \
+        int i = 0, fast = src_count - (R);                                     \
+        for (; i < fast; i++)                                                  \
+        {                                                                      \
+            unsigned c = PIXEL(i), n = rep[i];                                 \
+            dst[0] = c; dst[1] = c;                                            \
+            if ((R) > 2) { dst[2] = c; dst[3] = c; }                           \
+            if (filter_x && n > 1)                                             \
+                dst[n - 1] = rg_blend_pixels(c, PIXEL(i + 1));                 \
+            dst += n;                                                          \
+        }                                                                      \
+        for (; i < src_count; i++)                                             \
+        {                                                                      \
+            unsigned c = PIXEL(i), n = rep[i], k;                              \
+            for (k = 0; k < n; k++)                                            \
+                dst[k] = c;                                                    \
+            if (filter_x && n > 1 && i + 1 < src_count)                        \
+                dst[n - 1] = rg_blend_pixels(c, PIXEL(i + 1));                 \
+            dst += n;                                                          \
+        }                                                                      \
+    }
+
+#define RG_SCALE_UP_FUNCS(NAME, SRCTYPE, DECL, PIXEL)                                                                 \
+    static inline void rg_scale_line_##NAME##_up2(const SRCTYPE *src, DECL const uint8_t *rep, int src_count,          \
+                                                 uint16_t *dst, bool filter_x) RG_SCALE_UP_BODY(PIXEL, 2)              \
+    static inline void rg_scale_line_##NAME##_up4(const SRCTYPE *src, DECL const uint8_t *rep, int src_count,          \
+                                                 uint16_t *dst, bool filter_x) RG_SCALE_UP_BODY(PIXEL, 4)
+
+#define RG_UP_PAL(i) (pal[src[i]])
+#define RG_UP_LE(i)  ((uint16_t)((src[i] << 8) | (src[i] >> 8)))
+#define RG_UP_BE(i)  (src[i])
+#define RG_UP_NODECL
+#define RG_UP_COMMA ,
+RG_SCALE_UP_FUNCS(pal, uint8_t, const uint16_t *pal RG_UP_COMMA, RG_UP_PAL)
+RG_SCALE_UP_FUNCS(565le, uint16_t, RG_UP_NODECL, RG_UP_LE)
+RG_SCALE_UP_FUNCS(565be, uint16_t, RG_UP_NODECL, RG_UP_BE)
+
 static inline void rg_scale_line_565le(const uint16_t *src, const uint8_t *rep,
                                        int src_count, uint16_t *dst, int width, bool filter_x)
 {
