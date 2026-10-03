@@ -33,9 +33,10 @@ endif()
 if(DEFINED ENV{BAND_INTERNAL} AND NOT "$ENV{BAND_INTERNAL}" STREQUAL "")
     idf_build_set_property(COMPILE_DEFINITIONS "-DBAND_INTERNAL=$ENV{BAND_INTERNAL}" APPEND)
 endif()
-# `AUDIO_HZ=22050`: the output sample rate (default 32000, main/main.c)
-if(DEFINED ENV{AUDIO_HZ} AND NOT "$ENV{AUDIO_HZ}" STREQUAL "")
-    idf_build_set_property(COMPILE_DEFINITIONS "-DAUDIO_SAMPLE_RATE=$ENV{AUDIO_HZ}" APPEND)
+# `AUDIO_MIX_HZ=16000`: the chips render at 16 kHz, doubled to the 32 kHz the speaker
+# always gets (default 32000, main/main.c)
+if(DEFINED ENV{AUDIO_MIX_HZ} AND NOT "$ENV{AUDIO_MIX_HZ}" STREQUAL "")
+    idf_build_set_property(COMPILE_DEFINITIONS "-DAUDIO_MIX_HZ=$ENV{AUDIO_MIX_HZ}" APPEND)
 endif()
 # `NEOSND_PRIO=7`: priority of the Neo Geo sound board's task on core 1 (default 5;
 # the display task is 6, drivers/neogeo.c)

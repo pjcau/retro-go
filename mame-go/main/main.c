@@ -18,9 +18,17 @@ void hs_close(void); /* hiscore.c */
 /* Same rate as the other apps: the PDM driver derives its DAC-mode clocks
  * from sample_rate / 100, and 22050 made mame-go far louder than the volume
  * setting allowed. */
-#ifndef AUDIO_SAMPLE_RATE
-#define AUDIO_SAMPLE_RATE 32000         /* `AUDIO_HZ=22050` builds another rate (a measurement: the
-                                           sound board's cost follows the rate, the chips render at it) */
+#define AUDIO_SAMPLE_RATE 32000
+/* `AUDIO_MIX_HZ=16000`: the emulated chips render at half the rate and the
+ * samples are doubled on the way out, so the speaker still gets 32000 Hz (the
+ * rule above; DOOM, Duke Nukem 3D and the Neo Geo Pocket do the same). The
+ * sound board's cost follows the rate the chips render at. Only 32000 (as is)
+ * and 16000 (doubled) are supported. */
+#ifndef AUDIO_MIX_HZ
+#define AUDIO_MIX_HZ 32000
+#endif
+#if AUDIO_MIX_HZ != 32000 && AUDIO_MIX_HZ != 16000
+#error "AUDIO_MIX_HZ must be 32000 or 16000"
 #endif
 #define AUDIO_STR_(x) #x
 #define AUDIO_STR(x) AUDIO_STR_(x)
@@ -53,7 +61,7 @@ static bool environment_cb(unsigned cmd, void *data)
     {
         struct retro_variable *var = data;
         if (strcmp(var->key, "mame2000-sample_rate") == 0)
-            var->value = AUDIO_STR(AUDIO_SAMPLE_RATE);
+            var->value = AUDIO_STR(AUDIO_MIX_HZ);
         else if (strcmp(var->key, "mame2000-frameskip") == 0)
             var->value = "auto"; /* driven by audio_buffer_status, see mame_task() */
         else if (strcmp(var->key, "mame2000-frameskip_interval") == 0)
@@ -586,8 +594,35 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
 
 static size_t audio_batch_cb(const int16_t *data, size_t frames)
 {
+#if AUDIO_MIX_HZ == 16000
+    /* 16 kHz from the core, 32 kHz to the speaker: every sample, then the
+       midpoint to the next one (the last sample of the previous call is kept
+       so the line is unbroken across calls) */
+    static rg_audio_frame_t *out;        /* 2.2 KB, in PSRAM: the internal RAM has none to spare */
+    static int16_t prev_l, prev_r;
+    const rg_audio_frame_t *in = (const rg_audio_frame_t *)data;
+    if (!out && !(out = heap_caps_malloc(2 * 280 * sizeof(*out), MALLOC_CAP_SPIRAM)))
+        return frames;                   /* no buffer: silence rather than a crash */
+    while (frames)
+    {
+        size_t n = frames > 280 ? 280 : frames;
+        for (size_t i = 0; i < n; i++)
+        {
+            out[2 * i].left = (int16_t)(((int)prev_l + in[i].left) >> 1);
+            out[2 * i].right = (int16_t)(((int)prev_r + in[i].right) >> 1);
+            out[2 * i + 1] = in[i];
+            prev_l = in[i].left;
+            prev_r = in[i].right;
+        }
+        rg_audio_submit(out, n * 2);
+        in += n;
+        frames -= n;
+    }
+    return (size_t)(in - (const rg_audio_frame_t *)data);
+#else
     rg_audio_submit((const rg_audio_frame_t *)data, frames);
     return frames;
+#endif
 }
 
 static void audio_cb(int16_t left, int16_t right)
