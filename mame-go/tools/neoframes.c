@@ -22,7 +22,8 @@
  * every sample delivered so far, and at the end "AUDIO all <hex> samples <n>
  * nonzero <n>" (a run that is silent proves nothing about the mixer), and every
  * 300 frames "LEVEL <n> rms <x> peak <p> samples <n>". "--rate 16000" makes
- * the chips render at that rate (the board's AUDIO_MIX_HZ).
+ * the chips render at that rate (the board's AUDIO_MIX_HZ); "--wav FILE"
+ * writes every sample of the run (16-bit stereo at that rate).
  */
 #include <stdio.h>
 #include <math.h>
@@ -108,9 +109,26 @@ static double audio_sq;                       /* sum of squares since the last L
 static unsigned long audio_n, audio_peak;
 static uint32_t audio_hash = 2166136261u;
 static unsigned long audio_samples, audio_nonzero;
+static FILE *wav_fp;                          /* --wav FILE: every sample of the run, 16-bit stereo */
+static unsigned long wav_frames;
+static void wav_header(unsigned rate, unsigned long frames)
+{
+	unsigned char h[44] = "RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x02\0";
+	unsigned long bytes = frames * 4, v;
+	int i;
+	v = 36 + bytes;   for (i = 0; i < 4; i++) h[4 + i] = (v >> (8 * i)) & 255;
+	v = rate;         for (i = 0; i < 4; i++) h[24 + i] = (v >> (8 * i)) & 255;
+	v = rate * 4;     for (i = 0; i < 4; i++) h[28 + i] = (v >> (8 * i)) & 255;
+	h[32] = 4; h[33] = 0; h[34] = 16; h[35] = 0;
+	memcpy(h + 36, "data", 4);
+	v = bytes;        for (i = 0; i < 4; i++) h[40 + i] = (v >> (8 * i)) & 255;
+	fseek(wav_fp, 0, SEEK_SET);
+	fwrite(h, 1, 44, wav_fp);
+}
 static size_t batch(const int16_t *d, size_t n)
 {
 	if (quiet) return n;
+	if (wav_fp) { fwrite(d, 4, n, wav_fp); wav_frames += n; }
 	for (size_t i = 0; i < n * 2; i++)       /* interleaved left, right */
 	{
 		int v = d[i] < 0 ? -d[i] : d[i];
@@ -201,6 +219,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--save") && (at = strrchr(argv[i + 1], '@'))) { *at = 0; save = argv[i + 1]; save_at = atoi(at + 1); }
 		else if (!strcmp(argv[i], "--dump") && (at = strrchr(argv[i + 1], '@'))) { *at = 0; dump_dir = argv[i + 1]; dump_at = atoi(at + 1); }
 		else if (!strcmp(argv[i], "--rate")) sample_rate = argv[i + 1];
+		else if (!strcmp(argv[i], "--wav")) { wav_fp = fopen(argv[i + 1], "wb"); if (!wav_fp) { perror(argv[i + 1]); return 2; } wav_header(0, 0); }
 		else if (!strcmp(argv[i], "--input")) input_mode = !strcmp(argv[i + 1], "attract") ? 1 : !strcmp(argv[i + 1], "none") ? 2 : !strcmp(argv[i + 1], "play") ? 3 : 0;
 		else { fprintf(stderr, "neoframes: bad option %s\n", argv[i]); return 2; }
 	}
@@ -243,6 +262,7 @@ int main(int argc, char **argv)
 		if (save && frame_no == save_at && !state_io(save, 1)) return 1;
 	}
 	printf("FRAMES %u all %08x\n", frames, all_hash);
+	if (wav_fp) { wav_header(atoi(sample_rate), wav_frames); fclose(wav_fp); }
 	printf("AUDIO all %08x samples %lu nonzero %lu\n", audio_hash, audio_samples, audio_nonzero);
 	{
 		/* card reads of the two pagers over the run (the board pays 12-17 ms for each):
