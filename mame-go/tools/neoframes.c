@@ -244,5 +244,12 @@ int main(int argc, char **argv)
 	}
 	printf("FRAMES %u all %08x\n", frames, all_hash);
 	printf("AUDIO all %08x samples %lu nonzero %lu\n", audio_hash, audio_samples, audio_nonzero);
+	{
+		/* card reads of the two pagers over the run (the board pays 12-17 ms for each):
+		   NEOSPR_CACHE_KB / NEOSND_CACHE_KB set the cache sizes (board: 1152 and 512) */
+		extern volatile unsigned mamego_page_n[2];
+		printf("PAGES sprites %u samples %u (cache %s KB / %s KB) over %u frames\n", mamego_page_n[0], mamego_page_n[1],
+			getenv("NEOSPR_CACHE_KB") ? getenv("NEOSPR_CACHE_KB") : "2048", getenv("NEOSND_CACHE_KB") ? getenv("NEOSND_CACHE_KB") : "512", frames);
+	}
 	return 0;
 }

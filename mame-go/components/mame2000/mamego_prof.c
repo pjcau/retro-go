@@ -112,11 +112,13 @@ void mamego_prof_frame(void)
 		printf("NEOPROF core0 waits ms/frame: ym2610 %.2f present %.2f\n", mamego_wait_us[0] / 1000.0 / frames, mamego_wait_us[1] / 1000.0 / frames);
 		{
 			/* the card reads of the pagers (mamego_neospr.c): how many a frame and how long */
-			extern volatile unsigned mamego_page_n[2], mamego_page_us[2];
-			printf("NEOPROF card reads/frame: sprites %.2f (%.2f ms) samples %.2f (%.2f ms)\n",
+			extern volatile unsigned mamego_page_n[2], mamego_page_us[2], mamego_seek_us[2];
+			printf("NEOPROF card reads/frame: sprites %.2f (%.2f ms) samples %.2f (%.2f ms) | ms per read: sprites %.1f (seek %.1f) samples %.1f (seek %.1f)\n",
 				(double)mamego_page_n[0] / frames, mamego_page_us[0] / 1000.0 / frames,
-				(double)mamego_page_n[1] / frames, mamego_page_us[1] / 1000.0 / frames);
-			mamego_page_n[0] = mamego_page_n[1] = mamego_page_us[0] = mamego_page_us[1] = 0;
+				(double)mamego_page_n[1] / frames, mamego_page_us[1] / 1000.0 / frames,
+				mamego_page_n[0] ? mamego_page_us[0] / 1000.0 / mamego_page_n[0] : 0.0, mamego_page_n[0] ? mamego_seek_us[0] / 1000.0 / mamego_page_n[0] : 0.0,
+				mamego_page_n[1] ? mamego_page_us[1] / 1000.0 / mamego_page_n[1] : 0.0, mamego_page_n[1] ? mamego_seek_us[1] / 1000.0 / mamego_page_n[1] : 0.0);
+			mamego_page_n[0] = mamego_page_n[1] = mamego_page_us[0] = mamego_page_us[1] = mamego_seek_us[0] = mamego_seek_us[1] = 0;
 		}
 		mamego_wait_us[0] = mamego_wait_us[1] = 0;
 		mamego_render_count[0] = mamego_render_count[1] = mamego_render_count[2] = 0;

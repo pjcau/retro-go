@@ -54,13 +54,16 @@ struct neospr_region
 /* NEOPROF: the card reads of the two pagers, counted and timed (mamego_prof.c
    prints them per frame): [0] sprite tile pages (core 0, while drawing),
    [1] sound sample pages (the sound board's job on core 1) */
-volatile unsigned mamego_page_n[2], mamego_page_us[2];
+volatile unsigned mamego_page_n[2], mamego_page_us[2], mamego_seek_us[2];
 #ifdef NEOPROF
 extern long long mamego_prof_now(void);
-#define PAGE_T0()      long long page_t0 = mamego_prof_now()
-#define PAGE_DONE(i)   do { mamego_page_n[i]++; mamego_page_us[i] += (unsigned)(mamego_prof_now() - page_t0); } while (0)
+#define PAGE_T0()      long long page_t0 = mamego_prof_now(), page_t1 = 0
+#define PAGE_SEEKED()  (page_t1 = mamego_prof_now())
+#define PAGE_DONE(i)   do { long long t = mamego_prof_now(); mamego_page_n[i]++; mamego_page_us[i] += (unsigned)(t - page_t0); \
+                            if (page_t1) mamego_seek_us[i] += (unsigned)(page_t1 - page_t0); } while (0)
 #else
 #define PAGE_T0()      do {} while (0)
+#define PAGE_SEEKED()  do {} while (0)
 #define PAGE_DONE(i)   do { mamego_page_n[i]++; } while (0)
 #endif
 
@@ -514,6 +517,7 @@ uint32_t *neospr_tile(int tileno)
 		{
 			PAGE_T0();
 			fseek(reg->f, reg->data_offset + first_tile * NEOSPR_TILE, SEEK_SET);
+			PAGE_SEEKED();
 			if (fread(dst, NEOSPR_TILE, count, reg->f) != count)
 				memset(dst, 0, NEOSPR_PAGE);
 			PAGE_DONE(0);
@@ -784,6 +788,7 @@ uint8_t neosnd_read(const uint8_t *base, uint32_t offset)
 		{
 			PAGE_T0();
 			fseek(reg->f, reg->data_offset + (offset & ~(NEOSND_PAGE - 1)), SEEK_SET);
+			PAGE_SEEKED();
 			if (fread(snd_cache + (size_t)slot * NEOSND_PAGE, 1, NEOSND_PAGE, reg->f) == 0)
 				memset(snd_cache + (size_t)slot * NEOSND_PAGE, 0, NEOSND_PAGE);
 			PAGE_DONE(1);
