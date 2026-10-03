@@ -391,6 +391,31 @@ void parse_cmdline (int argc, char **argv, int game_index)
 	/* Underclock settings */
 	underclock_sound = get_int ("config", "uclocks",   NULL, 0);
 	underclock_cpu   = get_int ("config", "uclock",    NULL, 0);
+#ifdef MAMEGO
+	{
+		/* bench switch: the main CPU's clock cut by N percent (the 68000 then
+		   runs N % fewer cycles a frame; a game that uses its whole frame slows
+		   down, as it does on the real board when overloaded). The number is the
+		   content of /sd/retro-go/mame/neo_uclock; NEOUCLOCK on the PC. */
+		int n = 0;
+#ifdef ESP_PLATFORM
+		FILE *f = fopen("/sd/retro-go/mame/neo_uclock", "r");
+		if (f)
+		{
+			if (fscanf(f, "%d", &n) != 1)
+				n = 0;
+			fclose(f);
+		}
+#else
+		if (getenv("NEOUCLOCK"))
+			n = atoi(getenv("NEOUCLOCK"));
+#endif
+		if (n > 0 && n <= 50)
+			underclock_cpu = n;
+		if (underclock_cpu)
+			printf("mamego: main CPU underclocked by %d %%\n", underclock_cpu);
+	}
+#endif
 
 	/* Fast sound setting */
 	fast_sound       = get_bool("config", "fastsound", NULL, 0);
