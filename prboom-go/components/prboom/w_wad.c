@@ -404,8 +404,9 @@ int W_Read(void *dest, size_t size, size_t offset, wadfile_info_t *wad)
   }
   else if (wad->handle)
   {
+    extern size_t rg_storage_fread_raw(void *buffer, size_t length, FILE *fp); // multi-sector SD reads
     fseek(wad->handle, offset, SEEK_SET);
-    fread(dest, size, 1, wad->handle);
+    rg_storage_fread_raw(dest, size, wad->handle);
     return size;
   }
   return -1;

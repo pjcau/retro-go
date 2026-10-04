@@ -556,7 +556,9 @@ void app_main(void)
     {
         /* the loading percentage under the hourglass: the ROM is read 1 MB at a time */
         extern void (*gamepak_load_progress)(int percent);
+        extern size_t (*gamepak_fread)(void *buffer, size_t length, FILE *fp);
         gamepak_load_progress = rg_gui_draw_loading;
+        gamepak_fread = rg_storage_fread_raw; /* also for the pages read on demand in play */
     }
     if (load_gamepak(NULL, app->romPath, FEAT_DISABLE, FEAT_DISABLE, SERIAL_MODE_DISABLED) != 0)
     {

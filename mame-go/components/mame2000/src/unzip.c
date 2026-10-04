@@ -9,6 +9,16 @@
 #include <assert.h>
 #include "zlib/zlib.h"
 
+/* mame-go: the data of a zip entry is read through retro-go's fast SD read
+   (multi-sector reads into internal memory; a plain fread into PSRAM is one
+   512-byte sector per command, 575 KB/s on the board) */
+#ifdef ESP_PLATFORM
+extern size_t rg_storage_fread_raw(void *buffer, size_t length, FILE *fp);
+#define ZIP_FREAD(buf, n, fp) rg_storage_fread_raw((buf), (n), (fp))
+#else
+#define ZIP_FREAD(buf, n, fp) fread((buf), 1, (n), (fp))
+#endif
+
 #define ERROR_CORRUPT "The zipfile seems to be corrupt, please check it"
 #define ERROR_FILESYSTEM "Your filesystem seems to be corrupt, please check it"
 #define ERROR_UNSUPPORTED "The format of this zipfile is not supported, please recompress it"
@@ -528,7 +538,7 @@ static int inflate_file(FILE* in_file, unsigned in_size, unsigned char* out_data
 			return -1;
 		}
 		d_stream.next_in  = in_buffer;
-		d_stream.avail_in = fread (in_buffer, 1, MIN(in_size, INFLATE_INPUT_BUFFER_MAX), in_file);
+		d_stream.avail_in = ZIP_FREAD (in_buffer, MIN(in_size, INFLATE_INPUT_BUFFER_MAX), in_file);
 		in_size -= d_stream.avail_in;
 		if (in_size == 0)
 			d_stream.avail_in++; /* add dummy byte at end of compressed data */
@@ -575,7 +585,7 @@ int readcompresszip(ZIP* zip, struct zipent* ent, char* data) {
 	if (err!=0)
 		return err;
 
-	if (fread(data, ent->compressed_size, 1, zip->fp)!=1) {
+	if (ZIP_FREAD(data, ent->compressed_size, zip->fp)!=ent->compressed_size) {
 		errormsg ("Reading compressed data", ERROR_CORRUPT, zip->zip);
 		return -1;
 	}
@@ -938,7 +948,7 @@ int zipstream_read(struct zipstream *s, void *buf, unsigned len)
 		len = s->out_left;
 	if (s->stored)
 	{
-		len = fread(buf, 1, len, s->zip->fp);
+		len = ZIP_FREAD(buf, len, s->zip->fp);
 		s->out_left -= len;
 		return len;
 	}
@@ -951,7 +961,7 @@ int zipstream_read(struct zipstream *s, void *buf, unsigned len)
 		{
 			unsigned n = s->in_left < INFLATE_INPUT_BUFFER_MAX ? s->in_left : INFLATE_INPUT_BUFFER_MAX;
 			s->z.next_in = s->in;
-			s->z.avail_in = fread(s->in, 1, n, s->zip->fp);
+			s->z.avail_in = ZIP_FREAD(s->in, n, s->zip->fp);
 			s->in_left -= n;
 			if (!s->in_left)
 				s->z.avail_in++; /* raw deflate wants a dummy byte at the end */

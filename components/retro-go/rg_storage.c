@@ -480,6 +480,47 @@ static void show_progress(size_t done, size_t total)
         rg_gui_draw_loading(progress_shown = percent);
 }
 
+// A read from the SD card into PSRAM is slow through stdio: ESP-IDF's SD driver
+// needs DMA-capable (internal) memory and, given a PSRAM address, reads ONE
+// 512-byte sector per command into a temporary buffer; stdio adds its own small
+// buffer on top. Measured on the board: 575 KB/s, the launch time of every big
+// game. Here the file is read with read() into an internal DMA buffer several
+// KB at a time (multi-sector commands) and copied out. Returns the bytes read.
+size_t rg_storage_fread_raw(void *buffer, size_t length, FILE *fp)
+{
+#ifdef ESP_PLATFORM
+    int fd = fileno(fp);
+    long pos = ftell(fp);
+    if (length >= 2048 && fd >= 0 && pos >= 0 && lseek(fd, pos, SEEK_SET) == pos)
+    {
+        size_t bounce_size = 16 * 1024, done = 0;
+        uint8_t *bounce = NULL;
+        while (!bounce && bounce_size >= 2048)
+            if (!(bounce = heap_caps_malloc(bounce_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL)))
+                bounce_size /= 2;
+        if (bounce)
+        {
+            while (done < length)
+            {
+                size_t chunk = RG_MIN(length - done, bounce_size);
+                int got = read(fd, bounce, chunk);
+                if (got <= 0)
+                    break;
+                memcpy((uint8_t *)buffer + done, bounce, got);
+                done += got;
+                if ((size_t)got != chunk)
+                    break;
+            }
+            free(bounce);
+            fseek(fp, pos + (long)done, SEEK_SET); // stdio's view of the position
+            return done;
+        }
+        fseek(fp, pos, SEEK_SET);
+    }
+#endif
+    return fread(buffer, 1, length, fp);
+}
+
 // fread() of a large block, 64KB at a time, with the loading percentage. Returns the bytes read.
 size_t rg_storage_fread(void *buffer, size_t length, FILE *fp)
 {
@@ -495,7 +536,7 @@ size_t rg_storage_fread(void *buffer, size_t length, FILE *fp)
     while (done < length)
     {
         size_t chunk = RG_MIN(length - done, 0x10000);
-        size_t got = fread((uint8_t *)buffer + done, 1, chunk, fp);
+        size_t got = rg_storage_fread_raw((uint8_t *)buffer + done, chunk, fp);
         done += got;
         show_progress(done, total);
         if (got != chunk)
@@ -698,7 +739,7 @@ bool rg_storage_unzip_file(const char *zip_path, const char *filter, void **data
     {
         size_t input_size = RG_MIN(read_buffer_size, stream_remaining);
         size_t output_size = output_buffer_size - output_buffer_pos;
-        if (fseek(fp, stream_offset, SEEK_SET) != 0 || fread(read_buffer, input_size, 1, fp) != 1)
+        if (fseek(fp, stream_offset, SEEK_SET) != 0 || rg_storage_fread_raw(read_buffer, input_size, fp) != input_size)
         {
             RG_LOGE("Read error (%d): '%s'", errno, zip_path);
             goto _fail;
