@@ -862,9 +862,10 @@ static int mamego_present_frame(struct osd_bitmap *bitmap)
 	else
 		return 0;
 	/* The Neo Geo, and since 2026-10-04 the CPS1 games with an 8-bit bitmap
-	   (Final Fight: 8.4 ms of core 0, 21 -> 37 frames drawn a second in play;
-	   it had lost in September, before the display's indexed path was
-	   rewritten). A game with no room for the second bitmap stays on the
+	   (Final Fight: 8.4 ms of core 0 with every frame drawn; in play with the
+	   frameskip 48.6 -> 55.3 game frames a second and 16.2 -> 18.4 drawn, the
+	   drawn frames being bounded by the display. It had lost in September,
+	   before the display's indexed path was rewritten). A game with no room for the second bitmap stays on the
 	   normal path by itself (Street Fighter II). The 16-bit CPS1 games
 	   (Knights of the Round) only with the file cps1_indexed on the card,
 	   not measured yet; the file cps1_noindexed turns it off for all. */
