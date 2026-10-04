@@ -593,6 +593,20 @@ void app_main(void)
 
         tick(drawFrame);
         Audio_wait();
+        {
+            // Once a second on the console: what the engine sees of the pedals
+            // and the gear lever (checking the controls from the log)
+            extern uint32_t OInitEngine_car_increment;
+            extern int16_t OInputs_acc_adjust, OInputs_brake_adjust;
+            extern uint8_t OInputs_gear;
+            static int dbg;
+            if (++dbg >= 30)
+            {
+                dbg = 0;
+                printf("CBDBG speed %u gear %s gas %d brake %d\n", (unsigned)(OInitEngine_car_increment >> 16),
+                       OInputs_gear ? "high" : "low", OInputs_acc_adjust, OInputs_brake_adjust);
+            }
+        }
         
         // Calculate CPU busy time BEFORE blocking submits
         uint32_t elapsed = rg_system_timer() - startTime;
