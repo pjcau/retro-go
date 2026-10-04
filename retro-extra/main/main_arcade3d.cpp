@@ -16,6 +16,11 @@ void *a3d_alloc(size_t bytes)
     return rg_alloc(bytes, MEM_SLOW);
 }
 
+int64_t a3d_micros(void)
+{
+    return rg_system_timer();
+}
+
 uint32_t a3d_buttons(void)
 {
     return buttons;

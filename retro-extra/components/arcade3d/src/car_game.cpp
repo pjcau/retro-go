@@ -112,10 +112,18 @@ void loop() {
   }
 
   // Renderizar frame en el sprite (buffer)
+  // esp32-emu-turbo: where a frame goes, printed every 120 frames (console only)
+  static unsigned long profUs[5], profFrames;
+  int64_t t0 = a3d_micros();
   drawSky(position, playerZdist, timeOfDay, skyOffset);
+  int64_t t1 = a3d_micros();
   drawRoad(position, playerX, playerZdist, cameraDepth, timeOfDay);
+  int64_t t2 = a3d_micros();
   drawPlayerCar();
+  int64_t t3 = a3d_micros();
   drawHUD(speed, maxSpeed, currentLapTime, bestLapTime);
+  int64_t t4 = a3d_micros();
+  profUs[0] += t1 - t0; profUs[1] += t2 - t1; profUs[2] += t3 - t2; profUs[3] += t4 - t3;
 
   // Mostrar mensaje de crash
   if (crashed) {
@@ -128,7 +136,17 @@ void loop() {
   }
 
   // Enviar el frame completo a la pantalla (double buffering)
-  spr.pushSprite(0, 0);
+  {
+    int64_t t5 = a3d_micros();
+    spr.pushSprite(0, 0);
+    profUs[4] += a3d_micros() - t5;
+    if (++profFrames == 120) {
+      printf("A3DPROF ms/frame: sky %.2f road %.2f car %.2f hud %.2f present %.2f\n",
+             profUs[0] / 120000.0, profUs[1] / 120000.0, profUs[2] / 120000.0, profUs[3] / 120000.0, profUs[4] / 120000.0);
+      profFrames = 0;
+      profUs[0] = profUs[1] = profUs[2] = profUs[3] = profUs[4] = 0;
+    }
+  }
 
   // Cambiar hora del día según distancia recorrida
   distSinceTimeChange += (int)(speed * dt);

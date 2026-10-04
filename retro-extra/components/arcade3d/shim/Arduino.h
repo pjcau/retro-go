@@ -77,6 +77,7 @@ extern "C" {
 void a3d_present(const uint16_t *pixels, int width, int height); // one finished frame
 uint32_t a3d_buttons(void);                                      // bit 0 left, bit 1 right, bit 2 brake, bit 3 gas
 void *a3d_alloc(size_t bytes);                                   // sprite memory (PSRAM)
+int64_t a3d_micros(void);                                        // microseconds, for timing
 }
 #define A3D_BTN_LEFT  1
 #define A3D_BTN_RIGHT 2
