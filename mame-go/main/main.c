@@ -1095,11 +1095,15 @@ static void mame_task(void *arg)
     const int64_t frame_us = 1000000 / av.timing.fps;
     int64_t loop_start = rg_system_timer(), late = 0;
 #ifndef MAMEBENCH
-    /* the file skip_adaptive on the card brings back the frame-by-frame decision */
-    bool even_skip = true;
+    /* The even cadence (cadence_draw) is off by default: on the board
+       (2026-10-04) it drew the same number of frames a second as the
+       frame-by-frame decision on five games, Street Fighter II ran 4 fps
+       slower in one comparison, and nobody has judged the rhythm by eye yet.
+       The file skip_even on the card turns it on. */
+    bool even_skip = false;
     {
-        FILE *f = fopen("/sd/retro-go/mame/skip_adaptive", "r");
-        if (f) { fclose(f); even_skip = false; RG_LOGI("frameskip: frame by frame (skip_adaptive)"); }
+        FILE *f = fopen("/sd/retro-go/mame/skip_even", "r");
+        if (f) { fclose(f); even_skip = true; RG_LOGI("frameskip: even cadence (skip_even)"); }
     }
 #endif
 
