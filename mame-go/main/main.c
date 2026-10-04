@@ -713,18 +713,87 @@ static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, un
 
 /* ------------------------------------------------------------------ retro-go handlers */
 
+/* A screenshot must not read a frame the emulator is drawing over. The console
+ * `shot` runs in another task and takes several frames to write the file: on
+ * the indexed path (the display shows MAME's own bitmap, redrawn two frames
+ * later) rows came out half cleared. So the frame is copied first, by the
+ * emulator's task at its frame boundary (shot_copy_service), and the file is
+ * written from the copy. No room for a copy (Street Fighter II): the frame is
+ * read in place, as before. */
+static TaskHandle_t mame_task_handle;
+static struct
+{
+    volatile bool wanted;
+    rg_surface_t copy;
+    uint16_t palette[256];
+    SemaphoreHandle_t done;
+} shot_copy;
+
+static void shot_copy_now(void)
+{
+    const rg_surface_t *s = last_shown ? last_shown : updates[current ^ 1];
+    size_t row_bytes = s ? (size_t)s->width * RG_PIXEL_GET_SIZE(s->format) : 0;
+    uint8_t *data = s ? malloc(row_bytes * s->height) : NULL;
+    shot_copy.copy.data = NULL;
+    if (!data)
+        return;
+    for (int y = 0; y < s->height; y++)
+        memcpy(data + y * row_bytes, (const uint8_t *)s->data + s->offset + y * s->stride, row_bytes);
+    shot_copy.copy = *s;
+    shot_copy.copy.data = data;
+    shot_copy.copy.stride = row_bytes;
+    shot_copy.copy.offset = 0;
+    if ((s->format & RG_PIXEL_PALETTE) && s->palette)
+    {
+        memcpy(shot_copy.palette, s->palette, sizeof(shot_copy.palette));
+        shot_copy.copy.palette = shot_copy.palette;
+    }
+}
+
+/* the emulator's loop calls this between two frames */
+static void shot_copy_service(void)
+{
+    if (shot_copy.wanted)
+    {
+        shot_copy_now();
+        shot_copy.wanted = false;
+        xSemaphoreGive(shot_copy.done);
+    }
+}
+
 static bool screenshot_handler(const char *filename, int width, int height)
 {
     /* the frame on the display, whichever path put it there (the 8-bit
        indexed path shows MAME's own bitmap and never writes updates[]) */
     const rg_surface_t *s = last_shown ? last_shown : updates[current ^ 1];
-    uint8_t *pens = NULL;   /* a converted copy to free, none today */
+    uint8_t *pens = NULL;   /* the copy of the frame, freed at the end */
     /* Band mode (Neo Geo): no whole frame exists and there is no screenshot.
        Running one more frame from here to capture its bands was tried on
        2026-10-04 and hung the emulator with corrupted tiles: not to be
        retried without a PC reproduction. */
     if (!s)
         return false;
+    if (xTaskGetCurrentTaskHandle() == mame_task_handle || !mame_task_handle)
+        shot_copy_now();            /* called at a frame boundary already (the menu) */
+    else
+    {
+        if (!shot_copy.done)
+            shot_copy.done = xSemaphoreCreateBinary();
+        xSemaphoreTake(shot_copy.done, 0);
+        shot_copy.copy.data = NULL;
+        shot_copy.wanted = true;
+        if (xSemaphoreTake(shot_copy.done, pdMS_TO_TICKS(1000)) != pdTRUE)
+        {
+            /* the emulator is not running frames (a dialog): nothing is being drawn */
+            shot_copy.wanted = false;
+            shot_copy_now();
+        }
+    }
+    if (shot_copy.copy.data)
+    {
+        pens = shot_copy.copy.data;
+        s = &shot_copy.copy;
+    }
     size_t n = strlen(filename);
     if (n > 4 && !strcmp(filename + n - 4, ".raw"))
     {
@@ -898,6 +967,7 @@ static void event_handler(int event, void *arg)
  * so the core runs on its own task, like duke3d-go. */
 static void mame_task(void *arg)
 {
+    mame_task_handle = xTaskGetCurrentTaskHandle();
     retro_set_environment(environment_cb);
     retro_set_video_refresh(video_cb);
     retro_set_audio_sample(audio_cb);
@@ -1008,6 +1078,7 @@ static void mame_task(void *arg)
 
         int64_t start = rg_system_timer();
         retro_run(); /* audio_batch_cb blocks on the I2S DMA, which paces the loop */
+        shot_copy_service();
         rg_system_tick(rg_system_timer() - start);
 #ifdef MAMEBENCH
         if (++bench_frame % 300 == 0)
