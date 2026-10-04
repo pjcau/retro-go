@@ -39,6 +39,7 @@ static rg_app_t *app;
 static rg_surface_t *updates[2];
 static int current;
 static uint32_t joystick;
+static bool loading_game;                /* between the launch and the first frame: the load may draw its progress */
 static const rg_surface_t *last_shown;   /* the last frame handed to the display, for the screenshot */
 static retro_audio_buffer_status_callback_t audio_buffer_status;
 
@@ -855,12 +856,33 @@ unsigned char *mamego_flash_store(const unsigned char *data, size_t len, size_t 
         return NULL;
     if (memcmp(map + off, data, len) != 0)
     {
+        /* The cache holds one game: after another game was played, megabytes
+           are rewritten here at about 215 KB/s (14.6 s for Metal Slug 2), with
+           the loading percentage standing still. So it is written 64 KB at a
+           time, only the blocks that differ, and the screen says what the
+           wait is. */
         RG_LOGI("mamerom: writing %u bytes at 0x%x", (unsigned)len, (unsigned)off);
-        if (esp_partition_erase_range(part, off, size) != ESP_OK || esp_partition_write(part, off, data, len) != ESP_OK ||
-            memcmp(map + off, data, len) != 0)
+        for (size_t done = 0; done < len; done += 0x10000)
         {
-            RG_LOGE("mamerom: write failed, region stays in PSRAM");
-            return NULL;
+            size_t n = RG_MIN(len - done, 0x10000), nsize = (n + 0xFFF) & ~(size_t)0xFFF;
+            if (memcmp(map + off + done, data + done, n) == 0)
+                continue;
+            if (loading_game)
+            {
+                char text[24];
+                if (len > 0x10000)
+                    snprintf(text, sizeof(text), " game cache %2d%% ", (int)(done * 100 / len));
+                else
+                    snprintf(text, sizeof(text), " game cache ");
+                rg_gui_draw_text(RG_GUI_CENTER, rg_display_get_height() / 2 + 60, 0, text, C_WHITE, C_BLACK, 0);
+            }
+            if (esp_partition_erase_range(part, off + done, nsize) != ESP_OK ||
+                esp_partition_write(part, off + done, data + done, n) != ESP_OK ||
+                memcmp(map + off + done, data + done, n) != 0)
+            {
+                RG_LOGE("mamerom: write failed, region stays in PSRAM");
+                return NULL;
+            }
         }
     }
     *offset = off + size;
@@ -1033,12 +1055,14 @@ static void mame_task(void *arg)
     {
         extern void (*mamego_load_show)(int);
         mamego_load_show = load_show;
+        loading_game = true;
     }
     if (!retro_load_game(&game))
         RG_PANIC("This game is not supported, or its ROM set is incomplete");
     {
         extern void (*mamego_load_show)(int);
         mamego_load_show = NULL; /* a reader that works during the game must not draw over it */
+        loading_game = false;
     }
 
     struct retro_system_av_info av;
