@@ -67,35 +67,31 @@ static void drawTexturedTri(
     if (x0 > x1) continue;
     float dx = 1.0f / (xR - xL);
 
-    for (int x = x0; x <= x1; x++) {
-      float t = (x - xL) * dx;
-      float u = uL + t * (uR - uL);
-      float v = vL + t * (vR - vL);
-
-      // Sample texture (clamp)
-      int tx = (int)(u * (CAR2_TEX_W - 1));
-      int ty = (int)((1.0f - v) * (CAR2_TEX_H - 1));  // flip V (OBJ is bottom-up)
-      tx = max(0, min(tx, CAR2_TEX_W - 1));
-      ty = max(0, min(ty, CAR2_TEX_H - 1));
-
-#ifdef ARDUINO
-      uint16_t texel = pgm_read_word(&car2_texture[ty * CAR2_TEX_W + tx]);
-#else
-      uint16_t texel = car2_texture[ty * CAR2_TEX_W + tx];
-#endif
-
-      // Apply simple lighting (multiply channels)
-      if (light < 0.99f) {
-        uint8_t r = ((texel >> 11) & 0x1F);
-        uint8_t g = ((texel >>  5) & 0x3F);
-        uint8_t b = ( texel        & 0x1F);
-        r = (uint8_t)(r * light);
-        g = (uint8_t)(g * light);
-        b = (uint8_t)(b * light);
-        texel = (r << 11) | (g << 5) | b;
+    // esp32-emu-turbo: the span in 16.16 fixed point, written straight into the
+    // row (upstream did the interpolation, the lighting and a bounds-checked
+    // drawPixel in floats for every pixel: 8.5 ms a frame for the car)
+    {
+      float t0 = (x0 - xL) * dx;
+      int32_t tu = (int32_t)((uL + t0 * (uR - uL)) * (CAR2_TEX_W - 1) * 65536.0f);
+      int32_t tv = (int32_t)((1.0f - (vL + t0 * (vR - vL))) * (CAR2_TEX_H - 1) * 65536.0f); // flip V (OBJ is bottom-up)
+      int32_t du = (int32_t)((uR - uL) * dx * (CAR2_TEX_W - 1) * 65536.0f);
+      int32_t dv = (int32_t)(-(vR - vL) * dx * (CAR2_TEX_H - 1) * 65536.0f);
+      int lightQ = (int)(light * 256.0f);
+      bool lit = light < 0.99f;
+      uint16_t *row = spr.rowPtr(y);
+      for (int x = x0; x <= x1; x++, tu += du, tv += dv) {
+        int tx = tu >> 16, ty = tv >> 16;
+        tx = max(0, min(tx, CAR2_TEX_W - 1));
+        ty = max(0, min(ty, CAR2_TEX_H - 1));
+        uint16_t texel = car2_texture[ty * CAR2_TEX_W + tx];
+        if (lit) {
+          int r = (((texel >> 11) & 0x1F) * lightQ) >> 8;
+          int g = (((texel >>  5) & 0x3F) * lightQ) >> 8;
+          int b = (( texel        & 0x1F) * lightQ) >> 8;
+          texel = (r << 11) | (g << 5) | b;
+        }
+        row[x] = texel;
       }
-
-      spr.drawPixel(x, y, texel);
     }
   }
 }

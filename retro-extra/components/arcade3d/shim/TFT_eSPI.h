@@ -73,8 +73,12 @@ public:
     void setColorDepth(int8_t b) {}
     void setAttribute(uint8_t id, uint8_t a) {}
 
+    // esp32-emu-turbo: one row of the sprite (the frame sprite is kept in strips
+    // of internal RAM, so there is no single buffer to point into)
+    uint16_t *rowPtr(int y) { return rows[y]; }
+
 private:
-    uint16_t *buf;
+    uint16_t **rows;
     int16_t _w, _h;
     int16_t cursor_x, cursor_y;
     uint16_t text_color, text_bgcolor;

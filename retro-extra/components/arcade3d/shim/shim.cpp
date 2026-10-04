@@ -33,32 +33,49 @@ int digitalRead(uint8_t pin)
 }
 
 TFT_eSprite::TFT_eSprite(TFT_eSPI *tft)
-    : buf(nullptr), _w(0), _h(0), cursor_x(0), cursor_y(0), text_color(0xFFFF), text_bgcolor(0),
+    : rows(nullptr), _w(0), _h(0), cursor_x(0), cursor_y(0), text_color(0xFFFF), text_bgcolor(0),
       text_opaque(false), text_size(1) {}
 TFT_eSprite::~TFT_eSprite() {}
 
+// The frame sprite (the full screen) is drawn into strips of internal RAM:
+// every fill of the road and the buildings goes through it several times a
+// frame, and PSRAM is several times slower to write. Other sprites (the
+// background strip, written once) stay in PSRAM.
+#define A3D_STRIP_ROWS 30
+
 void *TFT_eSprite::createSprite(int16_t w, int16_t h)
 {
-    buf = (uint16_t *)a3d_alloc((size_t)w * h * 2);
-    if (!buf)
+    rows = (uint16_t **)a3d_alloc((size_t)h * sizeof(uint16_t *));
+    if (!rows)
         return nullptr;
+    bool frame = (w == SCR_W && h == SCR_H);
+    int fast = 0;
+    for (int y = 0; y < h; y += A3D_STRIP_ROWS)
+    {
+        int n = h - y < A3D_STRIP_ROWS ? h - y : A3D_STRIP_ROWS;
+        uint16_t *strip = (uint16_t *)(frame ? a3d_alloc_fast((size_t)w * n * 2) : a3d_alloc((size_t)w * n * 2));
+        if (!strip)
+            return nullptr;
+        memset(strip, 0, (size_t)w * n * 2);
+        for (int r = 0; r < n; r++)
+            rows[y + r] = strip + r * w;
+    }
     _w = w;
     _h = h;
-    memset(buf, 0, (size_t)w * h * 2);
-    return buf;
+    return rows;
 }
 
-void TFT_eSprite::deleteSprite() { buf = nullptr; _w = _h = 0; } // the memory stays with the app
+void TFT_eSprite::deleteSprite() { rows = nullptr; _w = _h = 0; } // the memory stays with the app
 
 void TFT_eSprite::pushSprite(int32_t x, int32_t y)
 {
-    if (buf)
-        a3d_present(buf, _w, _h);
+    if (rows)
+        a3d_present(rows, _w, _h);
 }
 
 void TFT_eSprite::pushToSprite(TFT_eSprite *d, int32_t x, int32_t y)
 {
-    if (!buf || !d || !d->buf)
+    if (!rows || !d || !d->rows)
         return;
     int sx = 0, sy = 0, w = _w, h = _h;
     if (x < 0) { sx = -x; w += x; x = 0; }
@@ -68,18 +85,24 @@ void TFT_eSprite::pushToSprite(TFT_eSprite *d, int32_t x, int32_t y)
     if (w <= 0 || h <= 0)
         return;
     for (int r = 0; r < h; r++)
-        memcpy(d->buf + (y + r) * d->_w + x, buf + (sy + r) * _w + sx, (size_t)w * 2);
+        memcpy(d->rows[y + r] + x, rows[sy + r] + sx, (size_t)w * 2);
 }
 
 void TFT_eSprite::drawFastHLine(int32_t x, int32_t y, int32_t w, uint16_t color)
 {
-    if (!buf || y < 0 || y >= _h)
+    if (!rows || y < 0 || y >= _h)
         return;
     if (x < 0) { w += x; x = 0; }
     if (x + w > _w) w = _w - x;
-    uint16_t *p = buf + y * _w + x;
-    for (; w > 0; w--)
-        *p++ = color;
+    if (w <= 0)
+        return;
+    uint16_t *p = rows[y] + x;
+    if ((uintptr_t)p & 2) { *p++ = color; w--; }       // two pixels per store from here
+    uint32_t c2 = color | ((uint32_t)color << 16);
+    uint32_t *q = (uint32_t *)p;
+    for (; w >= 8; w -= 8, q += 4) { q[0] = c2; q[1] = c2; q[2] = c2; q[3] = c2; }
+    for (; w >= 2; w -= 2) *q++ = c2;
+    if (w) *(uint16_t *)q = color;
 }
 
 void TFT_eSprite::fillRect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t color)
@@ -94,8 +117,8 @@ void TFT_eSprite::fillSprite(uint16_t color) { fillRect(0, 0, _w, _h, color); }
 
 void TFT_eSprite::drawPixel(int32_t x, int32_t y, uint16_t color)
 {
-    if (buf && x >= 0 && x < _w && y >= 0 && y < _h)
-        buf[y * _w + x] = color;
+    if (rows && x >= 0 && x < _w && y >= 0 && y < _h)
+        rows[y][x] = color;
 }
 
 void TFT_eSprite::drawRect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t color)

@@ -74,9 +74,10 @@ extern ESPMock ESP;
 
 // The retro-go side (retro-extra/main/main_arcade3d.cpp)
 extern "C" {
-void a3d_present(const uint16_t *pixels, int width, int height); // one finished frame
+void a3d_present(uint16_t *const *rows, int width, int height);  // one finished frame, row by row
 uint32_t a3d_buttons(void);                                      // bit 0 left, bit 1 right, bit 2 brake, bit 3 gas
 void *a3d_alloc(size_t bytes);                                   // sprite memory (PSRAM)
+void *a3d_alloc_fast(size_t bytes);                              // internal RAM if there is room, else PSRAM
 int64_t a3d_micros(void);                                        // microseconds, for timing
 }
 #define A3D_BTN_LEFT  1

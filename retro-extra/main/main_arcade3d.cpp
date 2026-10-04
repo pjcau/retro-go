@@ -4,6 +4,7 @@ extern "C" {
 #include "shared.h"
 }
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 
 static rg_app_t *app;
 static rg_surface_t *frames[2];
@@ -14,6 +15,22 @@ static int64_t frame_start;
 void *a3d_alloc(size_t bytes)
 {
     return rg_alloc(bytes, MEM_SLOW);
+}
+
+// Internal RAM while it leaves room for the rest of the app (the menu, a
+// screenshot, the SD driver), else PSRAM.
+void *a3d_alloc_fast(size_t bytes)
+{
+    static int fast, slow;
+    void *ptr = NULL;
+    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) > bytes + 24 * 1024)
+        ptr = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (ptr)
+        fast++;
+    else if ((ptr = rg_alloc(bytes, MEM_SLOW)))
+        slow++;
+    RG_LOGI("arcade3d: frame strips: %d in internal RAM, %d in PSRAM", fast, slow);
+    return ptr;
 }
 
 int64_t a3d_micros(void)
@@ -28,10 +45,11 @@ uint32_t a3d_buttons(void)
 
 // One finished frame: copied to the surface the display is not showing, so
 // the game can draw the next one straight away.
-void a3d_present(const uint16_t *pixels, int width, int height)
+void a3d_present(uint16_t *const *rows, int width, int height)
 {
     rg_surface_t *frame = frames[frame_index];
-    memcpy(frame->data, pixels, (size_t)width * height * 2);
+    for (int y = 0; y < height; y++)
+        memcpy((uint8_t *)frame->data + y * frame->stride, rows[y], (size_t)width * 2);
     rg_system_tick(rg_system_timer() - frame_start);
     rg_display_submit(frame, 0);
     frame_index ^= 1;
