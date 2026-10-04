@@ -3,8 +3,8 @@
 // retro-extra/main/main_arcade3d.cpp.
 extern "C" {
 #include <rg_system.h>
-extern const rg_font_t font_basic8x8;
 }
+#include "glcdfont.h"
 #undef min
 #undef max
 #include "TFT_eSPI.h"
@@ -216,36 +216,20 @@ void TFT_eSprite::setTextColor(uint16_t fg, uint16_t bg) { text_color = fg; text
 void TFT_eSprite::setTextSize(uint8_t size) { text_size = size ? size : 1; }
 void TFT_eSprite::setCursor(int16_t x, int16_t y) { cursor_x = x; cursor_y = y; }
 
-// Text: retro-go's 8x8 font, each glyph squeezed into TFT_eSPI's 6x8 cell
-// (its default font), so that the game's layout holds.
+// Text: TFT_eSPI's default font (the 5x7 GLCD font in a 6x8 cell), scaled by
+// the text size, so the game's HUD comes out as on the original display.
 void TFT_eSprite::print(const char *str)
 {
+    int s = text_size;
     for (; *str; str++)
     {
-        const uint8_t *ptr = font_basic8x8.data;
-        const rg_font_glyph_t *g = (const rg_font_glyph_t *)ptr;
-        while (g->code && g->code != (uint8_t)*str)
-        {
-            if (g->width)
-                ptr += ((g->width * g->height) - 1) / 8 + 1;
-            ptr += sizeof(rg_font_glyph_t);
-            g = (const rg_font_glyph_t *)ptr;
-        }
-        int s = text_size;
+        const unsigned char *glyph = &a3d_glcdfont[(unsigned char)*str * 5];
         if (text_opaque)
             fillRect(cursor_x, cursor_y, 6 * s, 8 * s, text_bgcolor);
-        if (g->code)
-        {
-            int xo = g->xOffset < 0x80 ? g->xOffset : -(0xFF - g->xOffset);
-            for (int y = 0; y < g->height; y++)
-                for (int x = 0; x < g->width; x++)
-                {
-                    int bit = x + y * g->width;
-                    if (g->data[bit / 8] & (0x80 >> (bit % 8)))
-                        fillRect(cursor_x + (xo + x) * 6 * s / 8, cursor_y + (g->yOffset + y) * s,
-                                 (6 * s + 7) / 8, s, text_color);
-                }
-        }
+        for (int col = 0; col < 5; col++)
+            for (int row = 0; row < 8; row++)
+                if (glyph[col] & (1 << row))
+                    fillRect(cursor_x + col * s, cursor_y + row * s, s, s, text_color);
         cursor_x += 6 * s;
     }
 }
