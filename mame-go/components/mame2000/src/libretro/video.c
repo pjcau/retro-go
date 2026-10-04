@@ -861,27 +861,31 @@ static int mamego_present_frame(struct osd_bitmap *bitmap)
 		bits = 8;
 	else
 		return 0;
-	/* Neo Geo only. CPS1 was tried (2026-09-28): the conversion left core 0
-	   but its PSRAM traffic slowed the 68000/Z80/video by as much (Final
-	   Fight 41 -> 38 fps). */
+	/* The Neo Geo, and since 2026-10-04 the CPS1 games with an 8-bit bitmap
+	   (Final Fight: 8.4 ms of core 0, 21 -> 37 frames drawn a second in play;
+	   it had lost in September, before the display's indexed path was
+	   rewritten). A game with no room for the second bitmap stays on the
+	   normal path by itself (Street Fighter II). The 16-bit CPS1 games
+	   (Knights of the Round) only with the file cps1_indexed on the card,
+	   not measured yet; the file cps1_noindexed turns it off for all. */
 	{
-		/* bench switch (2026-10-04): the CPS1 again, now that the display side
-		   converts indexed frames without a test per pixel and core 1 is half
-		   idle on these games. The file cps1_indexed on the card turns it on. */
 		extern int cps1_vh_start(void);
-		static int cps1_indexed = -1;
+		static int cps1_indexed = -1;   /* 0 off, 1 the 8-bit games, 2 all */
 		if (cps1_indexed < 0)
 		{
-			cps1_indexed = 0;
+			cps1_indexed = 1;
 #ifdef ESP_PLATFORM
 			{
-				FILE *f = fopen("/sd/retro-go/mame/cps1_indexed", "r");
-				if (f) { fclose(f); cps1_indexed = 1; printf("cps1: frames converted by the host (cps1_indexed)\n"); }
+				FILE *f = fopen("/sd/retro-go/mame/cps1_noindexed", "r");
+				if (f) { fclose(f); cps1_indexed = 0; printf("cps1: frames converted on this core (cps1_noindexed)\n"); }
+				else if ((f = fopen("/sd/retro-go/mame/cps1_indexed", "r")))
+				{ fclose(f); cps1_indexed = 2; printf("cps1: 16-bit frames converted by the host too (cps1_indexed)\n"); }
 			}
 #endif
 		}
 		if (!mamego_present_indexed || bitmap != Machine->scrbitmap
-			|| (Machine->drv->vh_start != neogeo_mvs_vh_start && !(cps1_indexed && Machine->drv->vh_start == cps1_vh_start)))
+			|| (Machine->drv->vh_start != neogeo_mvs_vh_start
+				&& !(Machine->drv->vh_start == cps1_vh_start && (cps1_indexed == 2 || (cps1_indexed == 1 && bits == 8)))))
 			return 0;
 	}
 	if (mamego_bitmaps[0] && bitmap != mamego_bitmaps[0] && bitmap != mamego_bitmaps[1])

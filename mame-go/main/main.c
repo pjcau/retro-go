@@ -39,6 +39,7 @@ static rg_app_t *app;
 static rg_surface_t *updates[2];
 static int current;
 static uint32_t joystick;
+static const rg_surface_t *last_shown;   /* the last frame handed to the display, for the screenshot */
 static retro_audio_buffer_status_callback_t audio_buffer_status;
 
 /* ------------------------------------------------------------------ libretro callbacks */
@@ -240,6 +241,7 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
         direct->stride = pitch;
         direct->data = (void *)data;
         rg_display_submit(direct, 0);
+        last_shown = direct;
         rg_display_sync(true);
         return;
     }
@@ -249,6 +251,7 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
     for (unsigned y = 0; y < height; y++)
         memcpy((uint8_t *)surface->data + y * surface->stride, (const uint8_t *)data + y * pitch, width * 2);
     rg_display_submit(surface, 0);
+    last_shown = surface;
     current ^= 1;
 }
 
@@ -314,6 +317,7 @@ static void present_task_main(void *arg)
             }
         }
         rg_display_submit(surface, 0);
+        last_shown = surface;
 #ifdef NEOPROF
         mamego_core1_us[1] += esp_timer_get_time() - t1;
 #endif
@@ -482,6 +486,7 @@ void mamego_band_present(int idx, const void *rows, int first, int count, int wi
     bands[idx].arg = (void *)(intptr_t)idx;
     bands_presented = true;
     rg_display_submit_band(&bands[idx]);
+    last_shown = NULL; /* bands: no whole frame to point at, the screenshot keeps its old source */
 }
 #endif
 
@@ -547,6 +552,7 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
         d->stride = pitch;
         d->offset = 0;
         rg_display_submit(d, 0);
+        last_shown = d;
         dcur ^= 1;
         return 1;
     }
@@ -709,7 +715,9 @@ static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, un
 
 static bool screenshot_handler(const char *filename, int width, int height)
 {
-    const rg_surface_t *s = updates[current ^ 1];
+    /* the frame on the display, whichever path put it there (the 8-bit
+       indexed path shows MAME's own bitmap and never writes updates[]) */
+    const rg_surface_t *s = last_shown ? last_shown : updates[current ^ 1];
     if (!s)
         return false;
     size_t n = strlen(filename);
@@ -723,7 +731,19 @@ static bool screenshot_handler(const char *filename, int width, int height)
         uint16_t wh[2] = {(uint16_t)s->width, (uint16_t)s->height};
         fwrite(wh, 2, 2, fp);
         for (int y = 0; y < s->height; y++)
-            fwrite((const uint8_t *)s->data + s->offset + y * s->stride, 2, s->width, fp);
+        {
+            const uint8_t *row = (const uint8_t *)s->data + s->offset + y * s->stride;
+            if (!(s->format & RG_PIXEL_PALETTE))
+                fwrite(row, 2, s->width, fp);
+            else
+                for (int x = 0; x < s->width; x++)
+                {
+                    uint16_t c = s->palette[row[x]];
+                    if ((s->format & ~RG_PIXEL_PALETTE) == RG_PIXEL_565_BE)
+                        c = (uint16_t)((c << 8) | (c >> 8));
+                    fwrite(&c, 2, 1, fp);
+                }
+        }
         fclose(fp);
         return true;
     }
@@ -860,7 +880,7 @@ static void event_handler(int event, void *arg)
     if (event == RG_EVENT_SHUTDOWN)
         hs_close();
     if (event == RG_EVENT_REDRAW && updates[current ^ 1])
-        rg_display_submit(updates[current ^ 1], 0);
+        rg_display_submit(last_shown ? last_shown : updates[current ^ 1], 0);
 }
 
 /* MAME needs far more than the 8 KB main task stack (ROM loading, drivers),
