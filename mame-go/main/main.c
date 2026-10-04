@@ -391,6 +391,11 @@ static rg_surface_t band_frame;        /* format, palette, size of the frame the
 static uint8_t *band_buf[BAND_SLOTS];
 static rg_band_t bands[BAND_SLOTS];
 static QueueHandle_t band_free_int, band_free_ps;   /* free slot indices */
+/* A screenshot in band mode: no whole frame exists anywhere (the bands go to
+ * the display as they are drawn), so the handler runs one more frame with
+ * this buffer set, and each band is copied into it on its way out. */
+static uint8_t *band_shot;             /* width x height pens, NULL when no capture is wanted */
+static int band_shot_rows;
 static bool bands_presented;           /* this frame went out as bands: present_indexed() has nothing to do */
 
 static void band_done(void *arg)
@@ -478,6 +483,12 @@ void mamego_band_present(int idx, const void *rows, int first, int count, int wi
         }
     }
 #endif
+    if (band_shot)
+    {
+        for (int y = 0; y < count && first + y < height; y++)
+            memcpy(band_shot + (first + y) * width, (const uint8_t *)rows + y * pitch, width);
+        band_shot_rows += count;
+    }
     bands[idx].frame = &band_frame;
     bands[idx].rows = rows;
     bands[idx].first = first;
@@ -718,6 +729,45 @@ static bool screenshot_handler(const char *filename, int width, int height)
     /* the frame on the display, whichever path put it there (the 8-bit
        indexed path shows MAME's own bitmap and never writes updates[]) */
     const rg_surface_t *s = last_shown ? last_shown : updates[current ^ 1];
+#if NEOBAND >= 2
+    rg_surface_t band_copy;
+    uint8_t *pens = NULL;
+    if (!last_shown && band_frame.width > 0 && band_frame.height > 0)
+    {
+        /* band mode (Neo Geo): capture the next drawn frame, a few tries in
+           case the frameskip drops one */
+        static bool busy;
+        size_t bytes = (size_t)band_frame.width * band_frame.height;
+        if (busy || !(pens = malloc(bytes)))
+            return false;
+        busy = true;
+        memset(pens, 0, bytes);
+        for (int tries = 0; tries < 6; tries++)
+        {
+            band_shot_rows = 0;
+            band_shot = pens;
+            if (audio_buffer_status)
+                audio_buffer_status(true, 50, false); /* draw this one */
+            retro_run();
+            band_shot = NULL;
+            if (band_shot_rows >= band_frame.height)
+                break;
+        }
+        busy = false;
+        if (band_shot_rows < band_frame.height)
+        {
+            free(pens);
+            return false;
+        }
+        band_copy = band_frame;
+        band_copy.data = pens;
+        band_copy.stride = band_frame.width;
+        band_copy.offset = 0;
+        s = &band_copy;
+    }
+#else
+    uint8_t *pens = NULL;
+#endif
     if (!s)
         return false;
     size_t n = strlen(filename);
@@ -727,7 +777,10 @@ static bool screenshot_handler(const char *filename, int width, int height)
            header, no PNG encoder (it needs memory the big games do not leave) */
         FILE *fp = fopen(filename, "wb");
         if (!fp)
+        {
+            free(pens);
             return false;
+        }
         uint16_t wh[2] = {(uint16_t)s->width, (uint16_t)s->height};
         fwrite(wh, 2, 2, fp);
         for (int y = 0; y < s->height; y++)
@@ -745,9 +798,12 @@ static bool screenshot_handler(const char *filename, int width, int height)
                 }
         }
         fclose(fp);
+        free(pens);
         return true;
     }
-    return rg_surface_save_image_file(s, filename, width, height);
+    bool saved = rg_surface_save_image_file(s, filename, width, height);
+    free(pens);
+    return saved;
 }
 
 /* Big read-only ROM regions (gfx, sound samples) live in the "mamerom" flash
@@ -879,7 +935,7 @@ static void event_handler(int event, void *arg)
      * on retro-go: the app is simply rebooted into the launcher. */
     if (event == RG_EVENT_SHUTDOWN)
         hs_close();
-    if (event == RG_EVENT_REDRAW && updates[current ^ 1])
+    if (event == RG_EVENT_REDRAW && (last_shown || updates[current ^ 1]))
         rg_display_submit(last_shown ? last_shown : updates[current ^ 1], 0);
 }
 
