@@ -963,6 +963,55 @@ static void event_handler(int event, void *arg)
         rg_display_submit(last_shown ? last_shown : updates[current ^ 1], 0);
 }
 
+#ifndef MAMEBENCH
+/* Even frameskip. Deciding frame by frame ("skip the next one when a frame
+ * late") keeps the game at speed but draws in an uneven rhythm: draw, skip,
+ * skip, draw, skip, skip, skip... The same number of drawn frames in a steady
+ * rhythm looks smoother. So: one frame in `period` is drawn, and the period
+ * follows the load. It grows as soon as a drawing slot has to be given up
+ * because the emulation is two frames late; it shrinks, on trial, after a
+ * calm stretch, and a trial that fails doubles the wait before the next one. */
+static bool cadence_draw(int64_t late, int64_t frame_us)
+{
+    static int period = 1, phase, window, given_up, calm, wait = 300, since_shrink = 100000;
+    bool slot = phase == 0;
+    bool behind = late > 2 * frame_us;
+    if (slot && behind)
+        given_up++;
+    phase = (phase + 1) % period;
+    if (since_shrink < 100000)
+        since_shrink++;
+    if (++window >= 30)
+    {
+        window = 0;
+        if (given_up >= 2)
+        {
+            if (since_shrink < 120)             /* the trial failed: wait longer next time */
+                wait = RG_MIN(wait * 2, 3600);
+            if (period < 6)
+                period++;
+            phase = 0;
+            calm = 0;
+        }
+        else if (given_up == 0)
+        {
+            calm += 30;
+            if (since_shrink == 600)            /* the smaller period held for 10 s */
+                wait = 300;
+            if (period > 1 && calm >= wait)
+            {
+                period--;
+                phase = 0;
+                calm = 0;
+                since_shrink = 0;
+            }
+        }
+        given_up = 0;
+    }
+    return slot && !behind;
+}
+#endif
+
 /* MAME needs far more than the 8 KB main task stack (ROM loading, drivers),
  * so the core runs on its own task, like duke3d-go. */
 static void mame_task(void *arg)
@@ -1045,6 +1094,14 @@ static void mame_task(void *arg)
      * skips drawing (not emulating) the next frame. */
     const int64_t frame_us = 1000000 / av.timing.fps;
     int64_t loop_start = rg_system_timer(), late = 0;
+#ifndef MAMEBENCH
+    /* the file skip_adaptive on the card brings back the frame-by-frame decision */
+    bool even_skip = true;
+    {
+        FILE *f = fopen("/sd/retro-go/mame/skip_adaptive", "r");
+        if (f) { fclose(f); even_skip = false; RG_LOGI("frameskip: frame by frame (skip_adaptive)"); }
+    }
+#endif
 
     while (true)
     {
@@ -1067,7 +1124,7 @@ static void mame_task(void *arg)
         bench_hash_next = bench_frame % 300 == 299;
 #else
         if (audio_buffer_status)
-            audio_buffer_status(true, 50, late > frame_us);
+            audio_buffer_status(true, 50, even_skip ? !cadence_draw(late, frame_us) : late > frame_us);
 
         joystick = rg_input_read_gamepad();
 #endif
