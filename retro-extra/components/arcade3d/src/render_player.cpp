@@ -38,7 +38,12 @@ static void drawTexturedTri(
 
   for (int y = yA; y <= yC; y++) {
     // Calculate left/right edges and interpolated UVs
+    // esp32-emu-turbo: the three edge parameters are clamped to 0..1. The rows
+    // are integers and the vertices are not, so on the row of a vertex the
+    // parameter left that range and the edge was extrapolated past the
+    // triangle: 1-px spans sticking out of the car at roof and bumper height.
     float t_AC = (cy - ay > 0.001f) ? (float)(y - ay) / (cy - ay) : 0.0f;
+    t_AC = t_AC < 0.0f ? 0.0f : (t_AC > 1.0f ? 1.0f : t_AC);
     float xAC = ax + t_AC * (cx - ax);
     float uAC = au + t_AC * (cu - au);
     float vAC = av + t_AC * (cv - av);
@@ -46,6 +51,7 @@ static void drawTexturedTri(
     float xL, xR, uL, uR, vL, vR;
     if (y < yB) {
       float t_AB = (yB != (int)ay) ? (float)(y - ay) / (by - ay) : 0.0f;
+      t_AB = t_AB < 0.0f ? 0.0f : (t_AB > 1.0f ? 1.0f : t_AB);
       float xAB = ax + t_AB * (bx - ax);
       float uAB = au + t_AB * (bu - au);
       float vAB = av + t_AB * (bv - av);
@@ -53,6 +59,7 @@ static void drawTexturedTri(
       else            { xL=xAB; xR=xAC; uL=uAB; uR=uAC; vL=vAB; vR=vAC; }
     } else {
       float t_BC = (yC != yB) ? (float)(y - by) / (cy - by) : 0.0f;
+      t_BC = t_BC < 0.0f ? 0.0f : (t_BC > 1.0f ? 1.0f : t_BC);
       float xBC = bx + t_BC * (cx - bx);
       float uBC = bu + t_BC * (cu - bu);
       float vBC = bv + t_BC * (cv - bv);
