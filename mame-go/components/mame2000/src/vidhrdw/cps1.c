@@ -569,6 +569,28 @@ static int cps1_gfx_start_stream(int size)
 	size_t offset = mamego_flash_offset;
 	int ret = -1;
 
+	uint32_t spread[256];
+	/* where the launch time goes: reading (inflating the zip), decoding, storing */
+#ifdef ESP_PLATFORM
+	extern int64_t esp_timer_get_time(void);
+	int64_t t_mark = esp_timer_get_time(), t_read = 0, t_decode = 0, t_store = 0;
+#define T_LAP(acc) do { int64_t t_now = esp_timer_get_time(); acc += t_now - t_mark; t_mark = t_now; } while (0)
+#else
+	long t_read = 0, t_decode = 0, t_store = 0;
+#define T_LAP(acc) do { } while (0)
+#endif
+#define T_READ() T_LAP(t_read)
+#define T_DECODE() T_LAP(t_decode)
+#define T_STORE() T_LAP(t_store)
+
+	for (k = 0; k < 256; k++)
+	{
+		int j;
+		spread[k] = 0;
+		for (j = 0; j < 8; j++)
+			if (k & (0x80 >> j))
+				spread[k] |= 1u << (28 - j * 4);
+	}
 	memset(q, 0, sizeof(q));
 	cps1_gfx = 0;
 	cps1_gfx_hi = 0;
@@ -605,31 +627,25 @@ static int cps1_gfx_start_stream(int size)
 		for (qn = 0; qn < 4; qn++)
 			if (cps1_rd_read(&q[qn], in + qn * 2 * CPS1_BLOCK, 2 * CPS1_BLOCK) != 0)
 				goto done;
+		T_READ();
 		for (k = 0; k < CPS1_BLOCK; k++)
 		{
+			/* each ROM byte is one bit plane of 8 pixels: spread[] puts its bits
+			   in the low bit of the 8 nibbles (leftmost pixel in the top nibble),
+			   so a word of tiles is four table reads instead of 64 bit tests */
 			int nchar = (base + k) / 8, j;
-			uint32_t d0 = 0, d1 = 0, pens = 0;
-			for (j = 0; j < 8; j++)
-			{
-				int mask = 0x80 >> j, n0 = 0, n1 = 0;
-				if (q1[2*k] & mask)     n0 |= 1;   /* the first word: quarters 1 and 3 */
-				if (q1[2*k+1] & mask)   n0 |= 2;
-				if (q3[2*k] & mask)     n0 |= 4;
-				if (q3[2*k+1] & mask)   n0 |= 8;
-				if (q0[2*k] & mask)     n1 |= 1;   /* the second: quarters 0 and 2 */
-				if (q0[2*k+1] & mask)   n1 |= 2;
-				if (q2[2*k] & mask)     n1 |= 4;
-				if (q2[2*k+1] & mask)   n1 |= 8;
-				d0 |= n0 << (28 - j * 4);
-				d1 |= n1 << (28 - j * 4);
-				pens |= (1 << n0) | (1 << n1);
-			}
+			uint32_t d0 = spread[q1[2*k]] | spread[q1[2*k+1]] << 1 | spread[q3[2*k]] << 2 | spread[q3[2*k+1]] << 3;
+			uint32_t d1 = spread[q0[2*k]] | spread[q0[2*k+1]] << 1 | spread[q2[2*k]] << 2 | spread[q2[2*k+1]] << 3;
+			uint32_t pens = 0, a = d0, b = d1;
+			for (j = 0; j < 8; j++, a >>= 4, b >>= 4)
+				pens |= (1u << (a & 15)) | (1u << (b & 15));
 			out[2*k] = d0;
 			out[2*k+1] = d1;
 			cps1_char_pen_usage[nchar] |= pens;
 			cps1_tile16_pen_usage[nchar/2] |= pens;
 			cps1_tile32_pen_usage[nchar/8] |= pens;
 		}
+		T_DECODE();
 		/* 64 KB of tiles: to flash while it has room, then to PSRAM */
 		if (!cps1_gfx_hi)
 		{
@@ -639,6 +655,7 @@ static int cps1_gfx_start_stream(int size)
 				if (!cps1_gfx)
 					cps1_gfx = p;
 				written += 2 * CPS1_BLOCK;
+				T_STORE();
 				continue;
 			}
 			cps1_gfx_split = written;
@@ -647,7 +664,9 @@ static int cps1_gfx_start_stream(int size)
 		}
 		memcpy(cps1_gfx_hi + (written - cps1_gfx_split), out, 2 * CPS1_BLOCK * 4);
 		written += 2 * CPS1_BLOCK;
+		T_STORE();
 	}
+	printf("cps1: tiles took %d ms to read, %d to decode, %d to store\n", (int)(t_read / 1000), (int)(t_decode / 1000), (int)(t_store / 1000));
 	mamego_flash_offset = offset;
 	if (cps1_gfx_split == 0)
 		;
