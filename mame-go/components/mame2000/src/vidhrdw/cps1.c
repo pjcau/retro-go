@@ -87,6 +87,9 @@
 #include "driver.h"
 #include "vidhrdw/generic.h"
 #include "drivers/cps1.h"
+#ifdef MAMEGO
+#include <sys/stat.h>   /* mkdir, for the decoded-tiles cache */
+#endif
 
 #define VERBOSE 0
 
@@ -570,13 +573,17 @@ static int cps1_gfx_start_stream(int size)
 	int ret = -1;
 
 	uint32_t spread[256];
+	struct cps1_cache_hdr { unsigned magic, version, size, key, complete, pen_bytes; } cache_hdr;
+	FILE *cache_in = NULL, *cache_out = NULL;
+	char cache_path[160];
+	size_t pen_bytes[3];
 	/* where the launch time goes: reading (inflating the zip), decoding, storing */
 #ifdef ESP_PLATFORM
 	extern int64_t esp_timer_get_time(void);
-	int64_t t_mark = esp_timer_get_time(), t_read = 0, t_decode = 0, t_store = 0;
+	int64_t t_mark = esp_timer_get_time(), t_read = 0, t_decode = 0, t_store = 0, t_cache = 0;
 #define T_LAP(acc) do { int64_t t_now = esp_timer_get_time(); acc += t_now - t_mark; t_mark = t_now; } while (0)
 #else
-	long t_read = 0, t_decode = 0, t_store = 0;
+	long t_read = 0, t_decode = 0, t_store = 0, t_cache = 0;
 #define T_LAP(acc) do { } while (0)
 #endif
 #define T_READ() T_LAP(t_read)
@@ -617,13 +624,94 @@ static int cps1_gfx_start_stream(int size)
 			printf("cps1: %u KB of tiles in PSRAM\n", (unsigned)(need / 1024));
 		}
 	}
-	for (qn = 0; qn < 4; qn++)
-		if (cps1_rd_open(&q[qn], qn * (size / 4), in, 2 * CPS1_BLOCK) != 0)
-			goto done;
+	/* The decoded tiles are kept on the card. Reading the graphics out of the
+	   zip was 6.3 of the 7.3 s this function took on Street Fighter II, at every
+	   launch; the decoded tiles and the three pen-usage tables read back from a
+	   plain file take the place of all that. The file is written while the
+	   first launch decodes, and trusted only with a matching key (the graphics
+	   ROMs' CRCs, sizes and offsets) and its "complete" mark, written last. */
+	{
+		struct cps1_cache_hdr want;
+		unsigned key = 2166136261u;
+		int i;
+		const char *dir = NULL;
+		for (i = 0; i < cps1gfx_entries; i++)
+		{
+			key = (key ^ (unsigned)cps1gfx_rom[i].crc) * 16777619u;
+			key = (key ^ (unsigned)cps1gfx_rom[i].length) * 16777619u;
+			key = (key ^ (unsigned)cps1gfx_rom[i].offset) * 16777619u;
+		}
+		pen_bytes[0] = cps1_max_char * sizeof(cps1_pen_t);
+		pen_bytes[1] = cps1_max_tile16 * sizeof(cps1_pen_t);
+		pen_bytes[2] = cps1_max_tile32 * sizeof(cps1_pen_t);
+		want.magic = 0x58473143; /* "C1GX" */
+		want.version = 1;
+		want.size = (unsigned)size;
+		want.key = key;
+		want.complete = 1;
+		want.pen_bytes = pen_bytes[0] + pen_bytes[1] + pen_bytes[2];
+#ifdef ESP_PLATFORM
+		{
+			FILE *f = fopen("/sd/retro-go/mame/cps1_nocache", "r");
+			if (f) { fclose(f); printf("cps1: decoded tiles not cached (cps1_nocache)\n"); }
+			else dir = "/sd/retro-go/mame/cps1gfx";
+		}
+#else
+		dir = getenv("CPS1GFXCACHE");
+#endif
+		if (dir)
+		{
+			struct cps1_cache_hdr have;
+			mkdir(dir, 0777);
+			snprintf(cache_path, sizeof(cache_path), "%s/%s.tiles", dir, Machine->gamedrv->name);
+			cache_in = fopen(cache_path, "rb");
+			if (cache_in && (fread(&have, sizeof(have), 1, cache_in) != 1 || memcmp(&have, &want, sizeof(have)) != 0
+				|| fseek(cache_in, 0, SEEK_END) != 0
+				|| (unsigned long)ftell(cache_in) != sizeof(have) + (unsigned long)size + want.pen_bytes
+				|| fseek(cache_in, sizeof(have), SEEK_SET) != 0))
+			{
+				fclose(cache_in);
+				cache_in = NULL;
+			}
+			if (!cache_in)
+			{
+				/* written incomplete first: the header is made valid at the very end */
+				want.complete = 0;
+				cache_out = fopen(cache_path, "wb");
+				if (cache_out && fwrite(&want, sizeof(want), 1, cache_out) != 1)
+				{
+					fclose(cache_out);
+					cache_out = NULL;
+					remove(cache_path);
+				}
+				want.complete = 1;
+			}
+			cache_hdr = want;
+			printf("cps1: decoded tiles %s %s\n", cache_in ? "read from" : cache_out ? "being written to" : "not cached, cannot write", cache_path);
+		}
+	}
+	if (!cache_in)
+		for (qn = 0; qn < 4; qn++)
+			if (cps1_rd_open(&q[qn], qn * (size / 4), in, 2 * CPS1_BLOCK) != 0)
+				goto done;
 
 	for (base = 0; base < (unsigned)size / 8; base += CPS1_BLOCK)
 	{
 		const unsigned char *q0 = in, *q1 = in + 2 * CPS1_BLOCK, *q2 = in + 4 * CPS1_BLOCK, *q3 = in + 6 * CPS1_BLOCK;
+		if (cache_in)
+		{
+			if (fread(out, 4, 2 * CPS1_BLOCK, cache_in) != 2 * CPS1_BLOCK)
+			{
+				printf("cps1: %s is unreadable, removed: launch the game again\n", cache_path);
+				fclose(cache_in);
+				cache_in = NULL;
+				remove(cache_path);
+				goto done;
+			}
+			T_READ();
+		}
+		else
+		{
 		for (qn = 0; qn < 4; qn++)
 			if (cps1_rd_read(&q[qn], in + qn * 2 * CPS1_BLOCK, 2 * CPS1_BLOCK) != 0)
 				goto done;
@@ -646,6 +734,15 @@ static int cps1_gfx_start_stream(int size)
 			cps1_tile32_pen_usage[nchar/8] |= pens;
 		}
 		T_DECODE();
+		if (cache_out && fwrite(out, 4, 2 * CPS1_BLOCK, cache_out) != 2 * CPS1_BLOCK)
+		{
+			printf("cps1: cannot write %s (card full?), not cached\n", cache_path);
+			fclose(cache_out);
+			cache_out = NULL;
+			remove(cache_path);
+		}
+		T_LAP(t_cache);
+		}
 		/* 64 KB of tiles: to flash while it has room, then to PSRAM */
 		if (!cps1_gfx_hi)
 		{
@@ -666,7 +763,39 @@ static int cps1_gfx_start_stream(int size)
 		written += 2 * CPS1_BLOCK;
 		T_STORE();
 	}
-	printf("cps1: tiles took %d ms to read, %d to decode, %d to store\n", (int)(t_read / 1000), (int)(t_decode / 1000), (int)(t_store / 1000));
+	if (cache_in)
+	{
+		/* the pen-usage tables the decode would have filled */
+		if (fread(cps1_char_pen_usage, 1, pen_bytes[0], cache_in) != pen_bytes[0]
+			|| fread(cps1_tile16_pen_usage, 1, pen_bytes[1], cache_in) != pen_bytes[1]
+			|| fread(cps1_tile32_pen_usage, 1, pen_bytes[2], cache_in) != pen_bytes[2])
+		{
+			printf("cps1: %s is unreadable, removed: launch the game again\n", cache_path);
+			fclose(cache_in);
+			cache_in = NULL;
+			remove(cache_path);
+			goto done;
+		}
+		T_READ();
+	}
+	if (cache_out)
+	{
+		int ok = fwrite(cps1_char_pen_usage, 1, pen_bytes[0], cache_out) == pen_bytes[0]
+			&& fwrite(cps1_tile16_pen_usage, 1, pen_bytes[1], cache_out) == pen_bytes[1]
+			&& fwrite(cps1_tile32_pen_usage, 1, pen_bytes[2], cache_out) == pen_bytes[2]
+			&& fseek(cache_out, 0, SEEK_SET) == 0
+			&& fwrite(&cache_hdr, sizeof(cache_hdr), 1, cache_out) == 1;
+		if (fclose(cache_out) != 0)
+			ok = 0;
+		cache_out = NULL;
+		if (!ok)
+		{
+			printf("cps1: cannot finish %s, not cached\n", cache_path);
+			remove(cache_path);
+		}
+		T_LAP(t_cache);
+	}
+	printf("cps1: tiles took %d ms to read, %d to decode, %d to store, %d to write the cache\n", (int)(t_read / 1000), (int)(t_decode / 1000), (int)(t_store / 1000), (int)(t_cache / 1000));
 	mamego_flash_offset = offset;
 	if (cps1_gfx_split == 0)
 		;
@@ -677,8 +806,16 @@ static int cps1_gfx_start_stream(int size)
 			total * 4 / 1024, cps1_gfx_split * 4 / 1024, (total - cps1_gfx_split) * 4 / 1024);
 	ret = 0;
 done:
+	if (cache_in)
+		fclose(cache_in);
+	if (cache_out)
+	{
+		fclose(cache_out);  /* left incomplete by a failure above */
+		remove(cache_path);
+	}
 	for (qn = 0; qn < 4; qn++)
-		mamego_romrd_close(q[qn].r);
+		if (q[qn].r)
+			mamego_romrd_close(q[qn].r);
 	free(in);
 	free(out);
 	if (ret)
