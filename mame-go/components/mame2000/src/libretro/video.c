@@ -864,8 +864,26 @@ static int mamego_present_frame(struct osd_bitmap *bitmap)
 	/* Neo Geo only. CPS1 was tried (2026-09-28): the conversion left core 0
 	   but its PSRAM traffic slowed the 68000/Z80/video by as much (Final
 	   Fight 41 -> 38 fps). */
-	if (!mamego_present_indexed || Machine->drv->vh_start != neogeo_mvs_vh_start || bitmap != Machine->scrbitmap)
-		return 0;
+	{
+		/* bench switch (2026-10-04): the CPS1 again, now that the display side
+		   converts indexed frames without a test per pixel and core 1 is half
+		   idle on these games. The file cps1_indexed on the card turns it on. */
+		extern int cps1_vh_start(void);
+		static int cps1_indexed = -1;
+		if (cps1_indexed < 0)
+		{
+			cps1_indexed = 0;
+#ifdef ESP_PLATFORM
+			{
+				FILE *f = fopen("/sd/retro-go/mame/cps1_indexed", "r");
+				if (f) { fclose(f); cps1_indexed = 1; printf("cps1: frames converted by the host (cps1_indexed)\n"); }
+			}
+#endif
+		}
+		if (!mamego_present_indexed || bitmap != Machine->scrbitmap
+			|| (Machine->drv->vh_start != neogeo_mvs_vh_start && !(cps1_indexed && Machine->drv->vh_start == cps1_vh_start)))
+			return 0;
+	}
 	if (mamego_bitmaps[0] && bitmap != mamego_bitmaps[0] && bitmap != mamego_bitmaps[1])
 		return 0;
 	if (!mamego_bitmaps[0])

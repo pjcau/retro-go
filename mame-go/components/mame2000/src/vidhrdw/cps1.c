@@ -400,6 +400,21 @@ int scroll1x, scroll1y, scroll2x, scroll2y, scroll3x, scroll3y;
 static unsigned char *cps1_scroll2_old;
 static struct osd_bitmap *cps1_scroll2_bitmap;
 
+#ifdef MAMEGO
+/* mame-go: the frame's clears were 17-18 % of core 0 in play (two fills of the
+   whole 448x320 bitmap in PSRAM). cps1_fast_clear: only the visible area is
+   cleared, and when scroll 2 is the bottom layer nothing is: it is copied
+   opaque, which gives the same pixels (its transparent pixels already hold
+   palette_transparent_pen). PC CPS1CLEAR=1 / the cps1_fullclear file on the
+   card restore the original clears. */
+static int cps1_fast_clear = 1;
+static int cps1_scroll2_bottom;
+#define CPS1_SCROLL2_TRANSPARENCY (cps1_scroll2_bottom ? TRANSPARENCY_NONE : TRANSPARENCY_PEN)
+#else
+#define CPS1_SCROLL2_TRANSPARENCY TRANSPARENCY_PEN
+#endif
+
+
 
 /* Output ports */
 #define CPS1_OBJ_BASE			0x00    /* Base address of objects */
@@ -1373,6 +1388,16 @@ int cps1_vh_start(void)
 				if (f) { fclose(f); m68ki_turn_enable = 0; m68ki_idle_span = 32; printf("cps1: idle turns not skipped (cps1_noturn)\n"); }
 			}
 #endif
+			cps1_fast_clear = 1;
+#ifndef ESP_PLATFORM
+			if (getenv("CPS1CLEAR") && !strcmp(getenv("CPS1CLEAR"), "1"))
+				cps1_fast_clear = 0;
+#else
+			{
+				FILE *f = fopen("/sd/retro-go/mame/cps1_fullclear", "r");
+				if (f) { fclose(f); cps1_fast_clear = 0; printf("cps1: whole-bitmap clears (cps1_fullclear)\n"); }
+			}
+#endif
 		}
 	}
 #endif
@@ -2108,7 +2133,7 @@ void cps1_render_scroll2_low(struct osd_bitmap *bitmap)
 
 	  cps1_render_scroll2_bitmap(cps1_scroll2_bitmap);
 
-	  copyscrollbitmap(bitmap,cps1_scroll2_bitmap,1,&scrlx,1,&scrly,&Machine->visible_area,TRANSPARENCY_PEN,palette_transparent_pen);
+	  copyscrollbitmap(bitmap,cps1_scroll2_bitmap,1,&scrlx,1,&scrly,&Machine->visible_area,CPS1_SCROLL2_TRANSPARENCY,palette_transparent_pen);
 }
 
 
@@ -2140,7 +2165,7 @@ void cps1_render_scroll2_distort(struct osd_bitmap *bitmap)
 
 	scrly+=0x20;
 
-	copyscrollbitmap(bitmap,cps1_scroll2_bitmap,1024,scrollx,1,&scrly,&Machine->visible_area,TRANSPARENCY_PEN,palette_transparent_pen);
+	copyscrollbitmap(bitmap,cps1_scroll2_bitmap,1024,scrollx,1,&scrly,&Machine->visible_area,CPS1_SCROLL2_TRANSPARENCY,palette_transparent_pen);
 }
 
 
@@ -2390,16 +2415,26 @@ void cps1_vh_screenrefresh(struct osd_bitmap *bitmap,int full_refresh)
 //	fillbitmap(bitmap,palette_transparent_pen,&Machine->visible_area);
 // TODO: the draw functions don't clip correctly at the sides of the screen, so
 // for now let's clear the whole bitmap otherwise ctrl-f11 would show wrong counts
-	fillbitmap(bitmap,palette_transparent_pen,0);
-
-
 	/* Draw layers (0 = sprites, 1-3 = tilemaps) */
 	l0 = (layercontrol >> 0x06) & 03;
 	l1 = (layercontrol >> 0x08) & 03;
 	l2 = (layercontrol >> 0x0a) & 03;
 	l3 = (layercontrol >> 0x0c) & 03;
 
-	fillbitmap(priority_bitmap,0,NULL);
+#ifdef MAMEGO
+	if (cps1_fast_clear)
+	{
+		cps1_scroll2_bottom = (l0 == 2 && cps1_layer_enabled[2]);
+		if (!cps1_scroll2_bottom)
+			fillbitmap(bitmap,palette_transparent_pen,&Machine->visible_area);
+		fillbitmap(priority_bitmap,0,&Machine->visible_area);
+	}
+	else
+#endif
+	{
+		fillbitmap(bitmap,palette_transparent_pen,0);
+		fillbitmap(priority_bitmap,0,NULL);
+	}
 
 	cps1_render_layer(bitmap,l0,distort_scroll2);
 	if (l1 == 0) cps1_render_high_layer(bitmap,l0);	/* prepare mask for sprites */
