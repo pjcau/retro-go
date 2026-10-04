@@ -447,6 +447,12 @@ READ_HANDLER( sys16_textram_r ){
 void sys16_vh_stop( void ){
 	free(shade_table); shade_table = 0;
 	free(sys16_palettedirty); sys16_palettedirty = 0;
+	{
+		extern unsigned int m68ki_idle_enable, m68ki_turn_enable, m68ki_idle_span;
+		extern unsigned z80_idle_enable;
+		m68ki_idle_enable = 0; z80_idle_enable = 0;
+		m68ki_turn_enable = 0; m68ki_idle_span = 32;
+	}
 
 #ifdef SPACEHARRIER_OFFSETS
 	if(spaceharrier_patternoffsets) free(spaceharrier_patternoffsets);
@@ -458,6 +464,30 @@ int sys16_vh_start( void ){
 	if( !shade_table ) shade_table = calloc(MAXCOLOURS, sizeof(*shade_table));
 	if( !sys16_palettedirty ) sys16_palettedirty = calloc(MAXCOLOURS, sizeof(*sys16_palettedirty));
 	if( !shade_table || !sys16_palettedirty ) return 1;
+	{
+		/* mame-go: the exact skips of idle code that the CPS1 has (m68kcpu.c:
+		   the idle loop, and idle turns up to 96 bytes long). These games wait
+		   for the vertical blank in the same way. I/O (inputs, DIPs, the sound
+		   latch) is the 0xc40000 block: a loop that reads it is not idle.
+		   PC: M68KTURN=0 turns them off; board: the file sys16_noturn. */
+		extern unsigned int m68ki_idle_enable, m68ki_idle_io_lo, m68ki_idle_io_hi;
+		extern unsigned int m68ki_turn_enable, m68ki_idle_span;
+		int on = 1;
+#ifndef ESP_PLATFORM
+		if (getenv("M68KTURN") && !strcmp(getenv("M68KTURN"), "0"))
+			on = 0;
+#else
+		{
+			FILE *f = fopen("/sd/retro-go/mame/sys16_noturn", "r");
+			if (f) { fclose(f); on = 0; printf("sys16: idle code not skipped (sys16_noturn)\n"); }
+		}
+#endif
+		m68ki_idle_io_lo = 0xc40000;
+		m68ki_idle_io_hi = 0xc4ffff;
+		m68ki_idle_enable = on;
+		m68ki_turn_enable = on;
+		m68ki_idle_span = on ? 96 : 32;
+	}
 	if( !sys16_bg1_trans )
 		background = tilemap_create(
 			get_bg_tile_info,
