@@ -156,15 +156,26 @@ void TFT_eSprite::fillTriangle(int32_t x0, int32_t y0, int32_t x1, int32_t y1, i
         drawFastHLine(a, y0, b - a + 1, color);
         return;
     }
-    for (int y = y0 < 0 ? 0 : y0; y <= y2 && y < _h; y++)
+    // Edges stepped in 16.16 fixed point: three divisions a triangle instead of
+    // two 64-bit divisions a row (a library call on the LX7; the road and the
+    // buildings are thousands of rows a frame).
+    int64_t s02 = (((int64_t)(x2 - x0)) << 16) / (y2 - y0);
+    int64_t s01 = y1 > y0 ? (((int64_t)(x1 - x0)) << 16) / (y1 - y0) : 0;
+    int64_t s12 = y2 > y1 ? (((int64_t)(x2 - x1)) << 16) / (y2 - y1) : 0;
+    int ys = y0 < 0 ? 0 : y0, ye = y2 < _h ? y2 : _h - 1;
+    int64_t a = ((int64_t)x0 << 16) + s02 * (ys - y0) + 0x8000;
+    int64_t b = 0x8000 + ((ys < y1 || y1 == y2) && y1 > y0
+                          ? ((int64_t)x0 << 16) + s01 * (ys - y0)
+                          : ((int64_t)x1 << 16) + s12 * (ys - y1));
+    for (int y = ys; y <= ye; y++)
     {
-        // long edge 0-2, and the short edge this row is on
-        int a = x0 + (int)((int64_t)(x2 - x0) * (y - y0) / (y2 - y0));
-        int b = (y < y1 || y1 == y2)
-              ? (y1 == y0 ? x1 : x0 + (int)((int64_t)(x1 - x0) * (y - y0) / (y1 - y0)))
-              : x1 + (int)((int64_t)(x2 - x1) * (y - y1) / (y2 - y1));
-        if (a > b) std::swap(a, b);
-        drawFastHLine(a, y, b - a + 1, color);
+        if (y == y1 && y1 != y2)          // the short edge changes here
+            b = ((int64_t)x1 << 16) + 0x8000;
+        int xa = (int)(a >> 16), xb = (int)(b >> 16);
+        if (xa > xb) { int t = xa; xa = xb; xb = t; }
+        drawFastHLine(xa, y, xb - xa + 1, color);
+        a += s02;
+        b += (y < y1 || y1 == y2) && y1 > y0 ? s01 : s12;
     }
 }
 
