@@ -4,3 +4,6 @@
 [submodule "sm64-go"]
 	path = sm64-go
 	url = https://github.com/pjcau/sm64-esp32.git
+[submodule "mk64-go"]
+	path = mk64-go
+	url = https://github.com/pjcau/mk64-esp32.git
