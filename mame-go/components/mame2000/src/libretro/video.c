@@ -874,13 +874,17 @@ static int mamego_present_frame(struct osd_bitmap *bitmap)
 		static int cps1_indexed = -1;   /* 0 off, 1 the 8-bit games, 2 all */
 		if (cps1_indexed < 0)
 		{
-			cps1_indexed = 1;
+			/* 2026-10-05: the 16-bit games too, since the display reads 16-bit
+			   pens itself (Knights of the Round in play 43.3 -> 47.6 fps; through
+			   the old conversion on core 1 it was 41.5). cps1_noindexed16 keeps
+			   them on this core's path. */
+			cps1_indexed = 2;
 #ifdef ESP_PLATFORM
 			{
 				FILE *f = fopen("/sd/retro-go/mame/cps1_noindexed", "r");
 				if (f) { fclose(f); cps1_indexed = 0; printf("cps1: frames converted on this core (cps1_noindexed)\n"); }
-				else if ((f = fopen("/sd/retro-go/mame/cps1_indexed", "r")))
-				{ fclose(f); cps1_indexed = 2; printf("cps1: 16-bit frames converted by the host too (cps1_indexed)\n"); }
+				else if ((f = fopen("/sd/retro-go/mame/cps1_noindexed16", "r")))
+				{ fclose(f); cps1_indexed = 1; printf("cps1: 16-bit frames converted on this core (cps1_noindexed16)\n"); }
 			}
 #endif
 		}
