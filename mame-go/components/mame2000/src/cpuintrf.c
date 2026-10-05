@@ -2960,6 +2960,10 @@ size_t (*mamego_driver_state)(unsigned char *buf, size_t size, int mode);
 /* a driver that runs a CPU outside MAME (System 16: the sound Z80 on core 1)
    hands its context to MAME's before a save (1) and takes it back after a load (2) */
 void (*mamego_state_hook)(int mode);
+/* driver statics a board keeps outside the CPU regions, saved in addition to
+   them (Astrocade: the colour registers, without which a resumed Robby Roto
+   stayed black until the game rewrote them, 20 s); 0 size, 1 save, 2 load */
+size_t (*mamego_extra_state)(unsigned char *buf, size_t size, int mode);
 /* the running game's driver file, for the frontend's per-board defaults */
 const char *mamego_driver_source(void)
 {
@@ -3078,6 +3082,12 @@ static size_t mamego_state_walk(unsigned char *buf, size_t size, int mode) /* 0 
 	}
 #undef MG_IO
 
+	if (mamego_extra_state)
+	{
+		size_t len = mamego_extra_state(NULL, 0, 0);
+		if (mode && (pos + len > size || !mamego_extra_state(buf + pos, len, mode))) return 0;
+		pos += len;
+	}
 	if (mamego_driver_state)
 	{
 		size_t len = mamego_driver_state(NULL, 0, 0);

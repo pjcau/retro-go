@@ -265,9 +265,9 @@ WRITE_HANDLER( astrocde_colour_register_w )
 
 }
 
+static int color_reg_num = 7;
 WRITE_HANDLER( astrocde_colour_block_w )
 {
-	static int color_reg_num = 7;
 
 	astrocde_colour_register_w(color_reg_num,data);
 
@@ -652,8 +652,30 @@ READ_HANDLER( wow_io_r )
 
 /****************************************************************************/
 
+#ifdef MAMEGO
+/* mame-go save states: the video chip's registers live in these statics, not
+   in the CPU regions; without them a state loaded after launch drew every
+   line with colour 0 (black) until the game set its palette again */
+static size_t astrocde_mamego_state(unsigned char *buf, size_t size, int mode) /* 0 size, 1 save, 2 load */
+{
+	size_t pos = 0;
+#define AS_V(v) do { size_t _l = sizeof(v); if (mode && pos + _l > size) return 0; \
+		if (mode == 1) memcpy(buf + pos, &(v), _l); else if (mode == 2) memcpy(&(v), buf + pos, _l); pos += _l; } while (0)
+	AS_V(colors); AS_V(colorsplit); AS_V(sparkle);
+	AS_V(BackgroundData); AS_V(VerticalBlank);
+	AS_V(magic_expand_color); AS_V(magic_control); AS_V(magic_expand_count); AS_V(magic_shift_leftover);
+	AS_V(collision); AS_V(NextScanInt); AS_V(CurrentScan); AS_V(InterruptFlag);
+	AS_V(GorfDelay); AS_V(Countdown); AS_V(color_reg_num);
+#undef AS_V
+	return pos;
+}
+#endif
+
 void astrocde_vh_stop(void)
 {
+#ifdef MAMEGO
+	{ extern size_t (*mamego_extra_state)(unsigned char *, size_t, int); mamego_extra_state = 0; }
+#endif
 	free(rng);
 	rng = 0;
 	free(star);
@@ -670,6 +692,9 @@ int astrocde_vh_start(void)
 
 	memset(sparkle,0,sizeof(sparkle));
 	CurrentScan = 0;
+#ifdef MAMEGO
+	{ extern size_t (*mamego_extra_state)(unsigned char *, size_t, int); mamego_extra_state = astrocde_mamego_state; }
+#endif
 
 	return 0;
 }
