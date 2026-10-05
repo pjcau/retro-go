@@ -884,9 +884,25 @@ static int mamego_present_frame(struct osd_bitmap *bitmap)
 			}
 #endif
 		}
+		/* Sega System 16 (2026-10-05): 8-bit pens like Final Fight, and the
+		   whole screen redrawn every frame (opaque background tilemap);
+		   the file sys16_noindexed turns it off. */
+		extern int sys16_vh_start(void);
+		static int sys16_indexed = -1;
+		if (sys16_indexed < 0)
+		{
+			sys16_indexed = 1;
+#ifdef ESP_PLATFORM
+			{
+				FILE *f = fopen("/sd/retro-go/mame/sys16_noindexed", "r");
+				if (f) { fclose(f); sys16_indexed = 0; printf("sys16: frames converted on this core (sys16_noindexed)\n"); }
+			}
+#endif
+		}
 		if (!mamego_present_indexed || bitmap != Machine->scrbitmap
 			|| (Machine->drv->vh_start != neogeo_mvs_vh_start
-				&& !(Machine->drv->vh_start == cps1_vh_start && (cps1_indexed == 2 || (cps1_indexed == 1 && bits == 8)))))
+				&& !(Machine->drv->vh_start == cps1_vh_start && (cps1_indexed == 2 || (cps1_indexed == 1 && bits == 8)))
+				&& !(Machine->drv->vh_start == sys16_vh_start && sys16_indexed && bits == 8)))
 			return 0;
 	}
 	if (mamego_bitmaps[0] && bitmap != mamego_bitmaps[0] && bitmap != mamego_bitmaps[1])
@@ -921,6 +937,20 @@ static int mamego_present_frame(struct osd_bitmap *bitmap)
 			printf("mamego: %dx%d %d-bit frames converted by the host (second core)\n", gfx_display_columns, gfx_display_lines, bits);
 	}
 	return 1;
+}
+
+/* a driver that leaves the bitmap untouched for a frame (System 16 with its
+   display off) would show the frame before the last one, the hand-over
+   alternating two bitmaps: this copies the last one into the current one */
+void mamego_keep_last_frame(struct osd_bitmap *bitmap)
+{
+	struct osd_bitmap *last;
+	int y;
+	if (!mamego_bitmaps[0] || !mamego_bitmaps[1] || (bitmap != mamego_bitmaps[0] && bitmap != mamego_bitmaps[1]))
+		return;
+	last = bitmap == mamego_bitmaps[0] ? mamego_bitmaps[1] : mamego_bitmaps[0];
+	for (y = 0; y < bitmap->height; y++)
+		memcpy(bitmap->line[y], last->line[y], bitmap->width * (bitmap->depth / 8));
 }
 
 /* game shutdown: MAME frees whichever bitmap is current, this frees the other */

@@ -1772,6 +1772,13 @@ void sys16_vh_screenrefresh(struct osd_bitmap *bitmap,int full_refresh){
 		{
 			if( sys16_clear_screen)
 				fillbitmap(bitmap,palette_transparent_color,&Machine->visible_area);
+#ifdef MAMEGO
+			else
+			{
+				extern void mamego_keep_last_frame(struct osd_bitmap *bitmap);
+				mamego_keep_last_frame(bitmap);
+			}
+#endif
 			freeze_counter--;
 			return;
 		}
