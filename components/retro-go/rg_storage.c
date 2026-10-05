@@ -491,14 +491,19 @@ size_t rg_storage_fread_raw(void *buffer, size_t length, FILE *fp)
 #ifdef ESP_PLATFORM
     int fd = fileno(fp);
     long pos = ftell(fp);
-    if (length >= 2048 && fd >= 0 && pos >= 0 && lseek(fd, pos, SEEK_SET) == pos)
-    {
-        size_t bounce_size = 16 * 1024, done = 0;
-        uint8_t *bounce = NULL;
+    size_t bounce_size = 16 * 1024, done = 0;
+    uint8_t *bounce = NULL;
+    // The buffer first: once the descriptor has been moved behind stdio's back,
+    // falling back to fread() returns data from the wrong place (stdio still
+    // serves and refills its own buffer as if nothing had moved). Seen with
+    // sm64-go, which leaves 4 KB of internal RAM: the first level loaded garbage.
+    if (length >= 2048 && fd >= 0 && pos >= 0)
         while (!bounce && bounce_size >= 2048)
             if (!(bounce = heap_caps_malloc(bounce_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL)))
                 bounce_size /= 2;
-        if (bounce)
+    if (bounce)
+    {
+        if (lseek(fd, pos, SEEK_SET) == pos)
         {
             while (done < length)
             {
@@ -515,7 +520,7 @@ size_t rg_storage_fread_raw(void *buffer, size_t length, FILE *fp)
             fseek(fp, pos + (long)done, SEEK_SET); // stdio's view of the position
             return done;
         }
-        fseek(fp, pos, SEEK_SET);
+        free(bounce);
     }
 #endif
     return fread(buffer, 1, length, fp);
