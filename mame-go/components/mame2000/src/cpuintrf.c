@@ -2954,6 +2954,11 @@ size_t (*mamego_driver_state)(unsigned char *buf, size_t size, int mode);
 /* a driver that runs a CPU outside MAME (System 16: the sound Z80 on core 1)
    hands its context to MAME's before a save (1) and takes it back after a load (2) */
 void (*mamego_state_hook)(int mode);
+/* the running game's driver file, for the frontend's per-board defaults */
+const char *mamego_driver_source(void)
+{
+	return Machine && Machine->gamedrv && Machine->gamedrv->source_file ? Machine->gamedrv->source_file : "";
+}
 void mamego_cpu_context(int cpunum, void *ctx, int set)
 {
 	int len = GETCONTEXT(cpunum, NULL);

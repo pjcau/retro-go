@@ -1091,7 +1091,12 @@ static void mame_task(void *arg)
     /* Neo Geo (304x224, /roms/neogeo/): nearly full screen, the whole height
      * with the aspect kept (434x320 on this panel). The menu can still pick
      * another mode for the session. */
+    extern const char *mamego_driver_source(void);
     if (app->romPath && strstr(app->romPath, "/neogeo/"))
+        rg_display_set_scaling(RG_DISPLAY_SCALING_FIT);
+    /* Sega System 16 (320x224): the same, the whole height with the aspect
+     * kept (457x320), asked for by the user on 2026-10-05. */
+    else if (strstr(mamego_driver_source(), "system16"))
         rg_display_set_scaling(RG_DISPLAY_SCALING_FIT);
     /* Wide 16-bit boards (CPS1: 384x224) fit 1:1 but leave a third of the
      * panel empty: the whole width with the aspect kept (480x280). Only when
