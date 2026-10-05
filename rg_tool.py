@@ -14,7 +14,7 @@ import zlib
 DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "odroid-go")
 DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
 DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM3")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis duke3d-go retro-extra mame-go wolf3d-go quake-go opentyrian-go gbsp")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis sm64-go retro-extra mame-go wolf3d-go gbsp opentyrian-go cannonball")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 MAMEROM_SIZE = 4 * 1024 * 1024  # data partition "mamerom", see build_image()
@@ -24,14 +24,30 @@ PROJECT_APPS = {
   'retro-core':   [0, 16, 1310720],
   'prboom-go':    [0, 16, 851968],  # 832 KB: the binary outgrew 768 KB and mkfw.py had already grown the partition on the board
   'gwenesis':     [0, 16, 1048576],
-  'duke3d-go':    [0, 16, 1048576],
+  # Super Mario 64 (native port, assets on the SD card). 1.75 MB: exactly the room
+  # of Duke Nukem 3D (1 MB) and Quake (0.75 MB), taken out on 2026-10-05 at the
+  # user's choice to make a place for it on the 16 MB flash; the binary is 1.55 MB.
+  # It is not built by this tool (its assets come from the user's ROM, outside
+  # git): see PREBUILT_APPS and sm64-go/build_esp32.sh.
+  'sm64-go':      [0, 16, 1835008],
+  # Set aside, not deleted: duke3d-go and quake-go still build (`build duke3d-go`)
+  # and the launcher still has their tabs, which show only when the partition
+  # exists. To put them back, restore these two lines, add them to DEFAULT_APPS
+  # and take 1.75 MB from somewhere else (docs: next-steps/n64-native-ports).
+  #   'duke3d-go':    [0, 16, 1048576],
+  #   'quake-go':     [0, 16, 786432],
   'retro-extra':  [0, 16, 1310720],  # 1.25 MB since 2026-10-01 (MSX/Lynx/2600 gone, binary ~0.5 MB): 256 KB to mame-go
   'mame-go':      [0, 16, 2097152],  # 2 MB since 2026-10-01: the 68000 dynarec (M68KJIT, +39 KB) did not fit 1.75 MB
   'wolf3d-go':    [0, 16, 655360],
-  'quake-go':     [0, 16, 786432],
   'gbsp':         [0, 16, 851968],  # GBA (gpSP interpreter, from upstream); fMSX removed 2026-09-29 to make room
   'opentyrian-go': [0, 16, 655360],
   'cannonball':   [0, 16, 655360],  # OutRun (the Cannonball engine); the flash has 704 KB left after it
+}
+# Apps this tool does not build itself: it takes <app>/build/<app>.bin as it is.
+PREBUILT_APPS = {"sm64-go": "run sm64-go/build_esp32.sh <baserom.us.z64>: it leaves sm64-go/build/sm64-go.bin"}
+BUILDABLE_ONLY = {  # still buildable on their own, no partition in the image
+  'duke3d-go':    [0, 16, 1048576],
+  'quake-go':     [0, 16, 786432],
 }
 # PROJECT_APPS = {}
 # for t in glob.glob("*/CMakeLists.txt"):
@@ -123,6 +139,12 @@ def clean_app(app):
 
 
 def build_app(app, device_type, with_profiling=False, no_networking=False, is_release=False):
+    if app in PREBUILT_APPS and not os.getenv("RG_BUILD_PREBUILT"):  # set by the app's own build script
+        prebuilt = os.path.join(app, "build", app + ".bin")
+        if not os.path.exists(prebuilt):
+            exit("%s is missing: %s" % (prebuilt, PREBUILT_APPS[app]))
+        print("Using prebuilt app '%s' (%d bytes)\n" % (app, os.path.getsize(prebuilt)))
+        return
     # To do: clean up if any of the flags changed since last build
     print("Building app '%s'" % app)
     args = [IDF_PY, "app"]
@@ -177,7 +199,7 @@ parser.add_argument(
     "command", choices=["build-fw", "build-img", "release", "build", "clean", "flash", "monitor", "run", "profile", "install"],
 )
 parser.add_argument(
-    "apps", nargs="*", default="all", choices=["all"] + list(PROJECT_APPS.keys())
+    "apps", nargs="*", default="all", choices=["all"] + list(PROJECT_APPS.keys()) + list(BUILDABLE_ONLY.keys())
 )
 parser.add_argument(
     "--target", default=DEFAULT_TARGET, choices=set(TARGETS), help="Device to target"
@@ -215,7 +237,7 @@ os.putenv("IDF_TARGET", IDF_TARGET)
 
 command = args.command
 apps = DEFAULT_APPS.split() if "all" in args.apps else args.apps
-apps = [app for app in PROJECT_APPS.keys() if app in apps] # Ensure ordering and uniqueness
+apps = [app for app in list(PROJECT_APPS.keys()) + list(BUILDABLE_ONLY.keys()) if app in apps] # Ensure ordering and uniqueness
 
 try:
     if command in ["clean", "release"]:

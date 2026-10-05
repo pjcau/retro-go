@@ -710,6 +710,7 @@ void applications_init(void)
     application("OpenTyrian", "opentyrian", "tyr", "opentyrian-go", 0);
     application("OutRun (Cannonball)", "cannonball", "ball", "cannonball", 0); /* the OutRun ROMs sit in the folder, an empty <name>.ball starts it */
     application("Arcade 3D Racing", "arcade3d", "a3d", "retro-extra", 0); /* a native game: an empty <name>.a3d in the folder starts it */
+    application("Nintendo 64", "n64", "sm64", "sm64-go", 0); /* native ports, not an emulator: an empty <name>.sm64 in /roms/n64 starts Super Mario 64, whose assets are in /retro-go/sm64/sm64.seg */
     application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
     application("Neo Geo", "neogeo", "zip", "mame-go", 0); /* mame-go too; neogeo.zip (BIOS) lives in the folder */
     application("Capcom CPS-1", "cps1", "zip", "mame-go", 0); /* mame-go too: its own tab, apart from the 8-bit arcade games */

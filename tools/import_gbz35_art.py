@@ -34,6 +34,7 @@ SYSTEMS = {
     "ngp": "ngp",
     "cannonball": "mame",  # OutRun is a Sega arcade game: the cabinet art
     "arcade3d": "ports",   # a native game, like the ports
+    "n64": "n64",          # the native Nintendo 64 ports (Super Mario 64)
 }
 
 # Tabs whose theme logo would name the wrong thing (MAME, PORTS): the banner is
