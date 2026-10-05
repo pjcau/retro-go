@@ -516,6 +516,25 @@ static void s16snd_try_enable(void);
 int sys16_interrupt( void ){
 #ifdef MAMEGO
 	s16snd_try_enable();
+	{
+		/* a set whose driver has its own idle hack (Golden Axe: goldnaxa_skip_r
+		   spins the 68000 until the interrupt) leaves the exact idle skips of
+		   vidhrdw/system16.c nothing to find: 0 % skipped, ~4 % of core 0
+		   spent looking (2026-10-04 profile). They step aside after 10 s. */
+		extern unsigned mamego_spin_count;
+		extern unsigned int m68ki_idle_enable, m68ki_turn_enable, m68ki_idle_span;
+		static int decided;
+		if (!decided && cpu_getcurrentframe() >= 600)
+		{
+			decided = 1;
+			if (mamego_spin_count && (m68ki_idle_enable || m68ki_turn_enable))
+			{
+				m68ki_idle_enable = m68ki_turn_enable = 0;
+				m68ki_idle_span = 32;
+				printf("sys16: the driver's own idle hack runs (%u times): idle skips off\n", mamego_spin_count);
+			}
+		}
+	}
 #endif
 	if(sys16_custom_irq) sys16_custom_irq();
 	return 4; /* Interrupt vector 4, used by VBlank */

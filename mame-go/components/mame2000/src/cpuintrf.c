@@ -1522,9 +1522,15 @@ void cpu_spinuntil_trigger(int trigger)
 }
 
 /* burn CPU cycles until the next interrupt */
+#ifdef MAMEGO
+unsigned mamego_spin_count; /* the driver's own idle hacks taken (System 16: the idle skips then step aside) */
+#endif
 void cpu_spinuntil_int(void)
 {
 	int cpunum = (activecpu < 0) ? 0 : activecpu;
+#ifdef MAMEGO
+	mamego_spin_count++;
+#endif
 	cpu_spinuntil_trigger(TRIGGER_INT + cpunum);
 }
 
