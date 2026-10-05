@@ -1457,6 +1457,15 @@ void sprite_draw( struct sprite_list *sprite_list, int priority ){
 		blit.origin_x = 0;
 		blit.origin_y = 0;
 
+#ifdef MAMEGO
+		/* the screen bitmap can change under the driver: mame-go hands each frame
+		   to the display and MAME draws the next one in a second bitmap
+		   (libretro/video.c mamego_present_frame); the base taken at
+		   sprite_init() put every sprite in the first bitmap only, so every
+		   other System 16 frame had none (2026-10-05) */
+		screen_baseaddr = Machine->scrbitmap->line[0];
+		screen_line_offset = Machine->scrbitmap->line[1] - Machine->scrbitmap->line[0];
+#endif
 		blit.baseaddr = screen_baseaddr;
 		blit.line_offset = screen_line_offset;
 		blit.transparent_pen = sprite_list->transparent_pen;
