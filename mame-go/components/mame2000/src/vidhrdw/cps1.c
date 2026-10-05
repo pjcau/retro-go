@@ -409,6 +409,14 @@ static struct osd_bitmap *cps1_scroll2_bitmap;
    card restore the original clears. */
 static int cps1_fast_clear = 1;
 static int cps1_scroll2_bottom;
+/* 2026-10-05: scroll 3 is the bottom layer in almost every frame of play
+   (Final Fight 3599 of 3600, Street Fighter II 3594), so the visible area was
+   cleared every frame (fillbitmap 15.7 % of core 0). As bottom layer, scroll 3
+   is now drawn opaque with its transparent pen (15) mapped to
+   palette_transparent_pen, which is what the clear left under it; only what
+   no tile covers (the grid's open edges, the codes that are not drawn) is
+   cleared. 8-bit bitmaps, unflipped screen; else the full clear. */
+static int cps1_scroll3_bottom;
 #define CPS1_SCROLL2_TRANSPARENCY (cps1_scroll2_bottom ? TRANSPARENCY_NONE : TRANSPARENCY_PEN)
 #else
 #define CPS1_SCROLL2_TRANSPARENCY TRANSPARENCY_PEN
@@ -2256,6 +2264,24 @@ void cps1_render_scroll3(struct osd_bitmap *bitmap, int priority)
 	const int startcode=cps1_game_config->start_scroll3;
 	const int endcode=cps1_game_config->end_scroll3;
 
+#ifdef MAMEGO
+	const int bottom = !priority && cps1_fast_clear && cps1_scroll3_bottom;
+	if (bottom)
+	{
+		/* what the tile grid cannot cover: the strips beyond its last
+		   column and above its first row (cells 1..13 x 1..8 of 32 pixels) */
+		const struct rectangle *v = &Machine->visible_area;
+		struct rectangle r;
+		r = *v; r.min_x = 32*14 - nxoffset;
+		if (r.min_x <= r.max_x) fillbitmap(bitmap, palette_transparent_pen, &r);
+		r = *v; r.max_y = 32 - nyoffset - 1;
+		if (r.min_y <= r.max_y) fillbitmap(bitmap, palette_transparent_pen, &r);
+		r = *v; r.max_x = 32 - nxoffset - 1;
+		if (r.min_x <= r.max_x) fillbitmap(bitmap, palette_transparent_pen, &r);
+		r = *v; r.min_y = 32*9 - nyoffset;
+		if (r.min_y <= r.max_y) fillbitmap(bitmap, palette_transparent_pen, &r);
+	}
+#endif
 	for (sx=1; sx<0x32/4+2; sx++)
 	{
 		for (sy=1; sy<0x20/4+2; sy++)
@@ -2268,6 +2294,42 @@ void cps1_render_scroll3(struct osd_bitmap *bitmap, int priority)
 			offs=offsy+offsx;
 			offs &= 0x3fff;
 			code=READ_WORD(&cps1_scroll3[offs]);
+#ifdef MAMEGO
+			if (bottom && !(code >= startcode && code <= endcode))
+			{
+				/* a cell with no tile: what the clear left there */
+				struct rectangle r;
+				r.min_x = 32*sx - nxoffset; r.max_x = r.min_x + 31;
+				r.min_y = 32*sy - nyoffset; r.max_y = r.min_y + 31;
+				if (r.min_x < Machine->visible_area.min_x) r.min_x = Machine->visible_area.min_x;
+				if (r.max_x > Machine->visible_area.max_x) r.max_x = Machine->visible_area.max_x;
+				if (r.min_y < Machine->visible_area.min_y) r.min_y = Machine->visible_area.min_y;
+				if (r.max_y > Machine->visible_area.max_y) r.max_y = Machine->visible_area.max_y;
+				if (r.min_x <= r.max_x && r.min_y <= r.max_y)
+					fillbitmap(bitmap, palette_transparent_pen, &r);
+				continue;
+			}
+			if (bottom)
+			{
+				/* drawn opaque, pen 15 as the clear's pen */
+				int c;
+				unsigned short *ct;
+				code+=basecode;
+				if (cps1_game_config->kludge == 2 && code >= 0x01500)
+					code -= 0x1000;
+				colour=READ_WORD(&cps1_scroll3[offs+2]);
+				c = colour & 0x1f;
+				ct = &Machine->gfx[3]->colortable[Machine->gfx[3]->color_granularity * c];
+				{
+					unsigned short keep = ct[15];
+					ct[15] = palette_transparent_pen;
+					cps1_draw_gfx_opaque(bitmap, Machine->gfx[3], code, c, colour&0x20, colour&0x40,
+						32*sx-nxoffset, 32*sy-nyoffset, 0xffff, cps1_tile32_pen_usage, 32, cps1_max_tile32, 16*2*4, 0);
+					ct[15] = keep;
+				}
+				continue;
+			}
+#endif
 			if (code >= startcode && code <= endcode)
 			{
 				int transp;
@@ -2444,7 +2506,8 @@ void cps1_vh_screenrefresh(struct osd_bitmap *bitmap,int full_refresh)
 	if (cps1_fast_clear)
 	{
 		cps1_scroll2_bottom = (l0 == 2 && cps1_layer_enabled[2]);
-		if (!cps1_scroll2_bottom)
+		cps1_scroll3_bottom = (l0 == 3 && cps1_layer_enabled[3] && bitmap->depth == 8 && !cps1_flip_screen);
+		if (!cps1_scroll2_bottom && !cps1_scroll3_bottom)
 			fillbitmap(bitmap,palette_transparent_pen,&Machine->visible_area);
 		fillbitmap(priority_bitmap,0,&Machine->visible_area);
 	}
