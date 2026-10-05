@@ -445,6 +445,9 @@ READ_HANDLER( sys16_textram_r ){
 /***************************************************************************/
 
 void sys16_vh_stop( void ){
+#ifdef MAMEGO
+	{ extern void s16snd_disable(void); s16snd_disable(); }
+#endif
 	free(shade_table); shade_table = 0;
 	free(sys16_palettedirty); sys16_palettedirty = 0;
 	{

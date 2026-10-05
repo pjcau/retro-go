@@ -507,7 +507,16 @@ static void sys16_onetime_init_machine(void)
 
 /***************************************************************************/
 
+#ifdef MAMEGO
+static int s16snd_core1;
+static void s16snd_event(int kind, int value);
+static void s16snd_try_enable(void);
+#endif
+
 int sys16_interrupt( void ){
+#ifdef MAMEGO
+	s16snd_try_enable();
+#endif
 	if(sys16_custom_irq) sys16_custom_irq();
 	return 4; /* Interrupt vector 4, used by VBlank */
 }
@@ -516,6 +525,15 @@ int sys16_interrupt( void ){
 
 static void sound_cause_nmi(int chip)
 {
+#ifdef MAMEGO
+	if (s16snd_core1) /* the uPD7759 asks the Z80 on core 1 for a byte */
+	{
+		extern void z80snd_set_nmi_line(int state);
+		z80snd_set_nmi_line(ASSERT_LINE);
+		z80snd_set_nmi_line(CLEAR_LINE);
+		return;
+	}
+#endif
 	cpu_set_nmi_line(1, PULSE_LINE);
 }
 
@@ -663,12 +681,18 @@ static const struct UPD7759_interface upd7759_interface =
 static WRITE_HANDLER( sound_command_w ){
 	//logerror("SOUND COMMAND %04x <- %02x\n", offset, data&0xff );
 	soundlatch_w( 0,data&0xff );
+#ifdef MAMEGO
+	if (s16snd_core1) { s16snd_event(0, data & 0xff); s16snd_event(1, 0); return; }
+#endif
 	cpu_cause_interrupt( 1, 0 );
 }
 
 static WRITE_HANDLER( sound_command_nmi_w ){
 	//logerror("SOUND COMMAND %04x <- %02x\n", offset, data&0xff );
 	soundlatch_w( 0,data&0xff );
+#ifdef MAMEGO
+	if (s16snd_core1) { s16snd_event(0, data & 0xff); s16snd_event(2, 0); return; }
+#endif
 	cpu_set_nmi_line(1, PULSE_LINE);
 }
 
@@ -679,6 +703,10 @@ static const struct YM2151interface ym2151_interface =
 	{ YM3012_VOL(40,MIXER_PAN_LEFT,40,MIXER_PAN_RIGHT) },
 	{ 0 }
 };
+
+#ifdef MAMEGO
+#include "system16_snd1.c"
+#endif
 
 
 

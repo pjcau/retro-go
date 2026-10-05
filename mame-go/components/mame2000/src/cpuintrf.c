@@ -2951,6 +2951,23 @@ static unsigned Dummy_dasm(char *buffer, unsigned pc)
 /* set by a driver init whose board keeps state outside the CPU regions
    (Neo Geo: work/video/palette RAM, latches, YM2610); 0 size, 1 save, 2 load */
 size_t (*mamego_driver_state)(unsigned char *buf, size_t size, int mode);
+/* a driver that runs a CPU outside MAME (System 16: the sound Z80 on core 1)
+   hands its context to MAME's before a save (1) and takes it back after a load (2) */
+void (*mamego_state_hook)(int mode);
+void mamego_cpu_context(int cpunum, void *ctx, int set)
+{
+	int len = GETCONTEXT(cpunum, NULL);
+	if (set)
+	{
+		if (cpu[cpunum].save_context) memcpy(cpu[cpunum].context, ctx, len);
+		else SETCONTEXT(cpunum, ctx);
+	}
+	else
+	{
+		if (cpu[cpunum].save_context) memcpy(ctx, cpu[cpunum].context, len);
+		else GETCONTEXT(cpunum, ctx);
+	}
+}
 
 /* set by a driver: the RAM part of a CPU region (offset, length), non-zero when it knows */
 int (*mamego_region_ram)(int type, unsigned *offset, unsigned *length);
@@ -2967,6 +2984,8 @@ static size_t mamego_state_walk(unsigned char *buf, size_t size, int mode) /* 0 
 		else if (mode == 2) memcpy((ptr), buf + pos, _l); \
 		pos += _l; } while (0)
 
+	if (mode == 1 && mamego_state_hook)
+		mamego_state_hook(1);
 	{
 		/* The CPU contexts hold function pointers (IRQ callback, Z80 daisy
 		 * chain), valid only for the firmware that wrote them: the header
@@ -3055,6 +3074,8 @@ static size_t mamego_state_walk(unsigned char *buf, size_t size, int mode) /* 0 
 		pos += len;
 	}
 
+	if (mode == 2 && mamego_state_hook)
+		mamego_state_hook(2);
 	if (mode == 2)
 	{
 		/* redraw everything: the tilemap/dirty caches describe the old frame */

@@ -177,6 +177,57 @@ static int diff_lookup[(STEP_MAX+1)*16];
 
 static void UPD7759_update (int chip, int16_t *buffer, int left);
 
+static void UPD7759_dac(int num);
+#ifdef MAMEGO
+/* mame-go: a driver that runs the sound CPU outside MAME (System 16 on core 1,
+   drivers/system16_snd1.c) clocks the slave mode's sample timer itself */
+void (*upd7759_timer_hook)(int num, int on, int hz);
+void UPD7759_dac_tick(int num) { UPD7759_dac(num); }
+#endif
+static void upd7759_timer_stop(int num)
+{
+	struct UPD7759voice *voice = updadpcm + num;
+	if (!voice->timer)
+		return;
+#ifdef MAMEGO
+	if (upd7759_timer_hook)
+	{
+		upd7759_timer_hook(num, 0, 0);
+		voice->timer = 0;
+		return;
+	}
+#endif
+	timer_remove(voice->timer);
+	voice->timer = 0;
+}
+static void upd7759_timer_start(int num)
+{
+	struct UPD7759voice *voice = updadpcm + num;
+#ifdef MAMEGO
+	if (upd7759_timer_hook)
+	{
+		upd7759_timer_hook(num, 1, base_rate);
+		voice->timer = (void *)1; /* a mark: running, not a MAME timer */
+		return;
+	}
+#endif
+	voice->timer = timer_pulse( TIME_IN_HZ(base_rate), num, UPD7759_dac );
+}
+#ifdef MAMEGO
+/* the MAME timers running when the hook is set move to it */
+void UPD7759_timers_to_host(void)
+{
+	int i;
+	for (i = 0; upd7759_intf && i < upd7759_intf->num; i++)
+		if (updadpcm[i].timer)
+		{
+			timer_remove(updadpcm[i].timer);
+			updadpcm[i].timer = 0;
+			upd7759_timer_start(i);
+		}
+}
+#endif
+
 /*
  *   Compute the difference table
  */
@@ -518,11 +569,7 @@ void UPD7759_message_w (int num, int data)
 				//logerror("upd7759_message_w unhandled $%02x\n", data);
 				if ((data & 0xc0) == 0xc0)
 				{
-					if (voice->timer)
-					{
-						timer_remove(voice->timer);
-						voice->timer = 0;
-					}
+					upd7759_timer_stop(num);
 					voice->playing = 0;
 				}
         }
@@ -618,11 +665,7 @@ void UPD7759_start_w (int num, int data)
 			if( voice->count > 5 && voice->sample == 0xff && data == 0x00 )
 			{
                 /* remove an old timer */
-                if (voice->timer)
-                {
-                    timer_remove(voice->timer);
-                    voice->timer = 0;
-				}
+                upd7759_timer_stop(num);
                 /* stop playing this sample */
 				voice->playing = 0;
 				return;
@@ -648,15 +691,11 @@ void UPD7759_start_w (int num, int data)
 		{
 			LOG(2,("UPD7759_start_w: $%02x\n", data));
             /* remove an old timer */
-			if (voice->timer)
-			{
-                timer_remove(voice->timer);
-                voice->timer = 0;
-            }
+			upd7759_timer_stop(num);
 			/* bring the chip in sync with the CPU */
 			stream_update(channel[num], 0);
             /* start a new timer */
-			voice->timer = timer_pulse( TIME_IN_HZ(base_rate), num, UPD7759_dac );
+			upd7759_timer_start(num);
 			voice->signal = 0;
 			voice->step = 0;	/* reset the step width */
 			voice->count = 0;	/* reset count for the detection of an sample ending */
