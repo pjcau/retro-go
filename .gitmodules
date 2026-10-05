@@ -1,3 +1,6 @@
 [submodule "xtensa-68000-dynarec"]
 	path = xtensa-68000-dynarec
 	url = https://github.com/pjcau/xtensa-68000-dynarec.git
+[submodule "sm64-go"]
+	path = sm64-go
+	url = https://github.com/pjcau/sm64-esp32.git
