@@ -14,12 +14,16 @@ typedef enum
     RG_PIXEL_PAL565_BE = RG_PIXEL_565_BE | RG_PIXEL_PALETTE,
     RG_PIXEL_PAL565_LE = RG_PIXEL_565_LE | RG_PIXEL_PALETTE,
     RG_PIXEL_PAL888 = RG_PIXEL_888 | RG_PIXEL_PALETTE,
+    // 16-bit indices into a palette of palette_count entries (mame-go's
+    // 16-bit pen bitmaps: the display looks the colours up while it scales)
+    RG_PIXEL_INDEX16 = 0x40,
+    RG_PIXEL_PAL16_BE = RG_PIXEL_565_BE | RG_PIXEL_PALETTE | RG_PIXEL_INDEX16,
 
     // Masks
     RG_PIXEL_FORMAT = 0xFFFF,
 } rg_pixel_format_t;
 
-#define RG_PIXEL_GET_SIZE(format) ((format & RG_PIXEL_PALETTE) ? 1 : (((format) & RG_PIXEL_FORMAT) == RG_PIXEL_888 ? 3 : 2))
+#define RG_PIXEL_GET_SIZE(format) ((format & RG_PIXEL_PALETTE) ? (((format) & RG_PIXEL_INDEX16) ? 2 : 1) : (((format) & RG_PIXEL_FORMAT) == RG_PIXEL_888 ? 3 : 2))
 
 // color must accept 0-0xFFFF and -1 (transparent)
 typedef int rg_color_t;
@@ -45,6 +49,7 @@ typedef struct
     void *data;
     bool free_data;
     bool free_palette;
+    int palette_count; // RG_PIXEL_INDEX16 formats: entries in palette (0: 256)
 } rg_surface_t;
 
 // rg_image_t always contains a RG_PIXEL_565_LE surface

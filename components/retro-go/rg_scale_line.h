@@ -88,6 +88,60 @@ static inline void rg_scale_line_pal(const uint8_t *src, const uint16_t *pal, co
     #undef PIXEL_PAL
 }
 
+// 16-bit indices (RG_PIXEL_INDEX16): the generic scaler and the 1x-2x one,
+// the same code with a uint16_t source
+static inline void rg_scale_line_pal16(const uint16_t *src, const uint16_t *pal, const uint8_t *rep,
+                                       int src_count, uint16_t *dst, int width, bool filter_x)
+{
+    #define PIXEL_PAL16(i) (pal[src[i]])
+    RG_SCALE_LINE_BODY(PIXEL_PAL16)
+    #undef PIXEL_PAL16
+}
+
+static inline void rg_scale_line_pal16_12(const uint16_t *src, const uint16_t *pal, const uint8_t *rep,
+                                          int src_count, uint16_t *dst, bool filter_x)
+{
+    const int last = src_count - 1;
+    int i = 0;
+    if (last < 0)
+        return;
+    if (!filter_x)
+    {
+        for (; i + 4 <= last; i += 4)
+        {
+            unsigned c0 = pal[src[i]], c1 = pal[src[i + 1]], c2 = pal[src[i + 2]], c3 = pal[src[i + 3]];
+            dst[0] = c0; dst[1] = c0; dst += rep[i];
+            dst[0] = c1; dst[1] = c1; dst += rep[i + 1];
+            dst[0] = c2; dst[1] = c2; dst += rep[i + 2];
+            dst[0] = c3; dst[1] = c3; dst += rep[i + 3];
+        }
+        for (; i < last; i++)
+        {
+            unsigned c = pal[src[i]];
+            dst[0] = c; dst[1] = c; dst += rep[i];
+        }
+    }
+    else
+    {
+        unsigned c = pal[src[0]];
+        for (; i < last; i++)
+        {
+            unsigned next = pal[src[i + 1]];
+            dst[0] = c;
+            if (rep[i] == 2)
+                dst[1] = rg_blend_pixels(c, next);
+            dst += rep[i];
+            c = next;
+        }
+    }
+    {
+        unsigned c = pal[src[last]];
+        dst[0] = c;
+        if (rep[last] == 2)
+            dst[1] = c;
+    }
+}
+
 // The palette scaler for the common upscale between 1x and 2x (the Neo Geo's
 // 304 -> 434, the CPS1's 384 -> 480): every source pixel is drawn once or
 // twice (rep[i] is 1 or 2 for all i < src_count; the caller checks it once per

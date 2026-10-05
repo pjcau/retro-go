@@ -219,7 +219,8 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
     const int src_last = fast_2x ? update->width - 1 : map_viewport_to_source_x[draw_width - 1];
     const size_t src_offset = src_first * src_pixel_size;
     const size_t src_line_bytes = (src_last - src_first + 1) * src_pixel_size;
-    const uint32_t pal_hash = (format & RG_PIXEL_PALETTE) ? rg_line_hash(palette, 256 * sizeof(uint16_t), 0) : 0;
+    const int pal_count = (format & RG_PIXEL_INDEX16) && update->palette_count > 0 ? update->palette_count : 256;
+    const uint32_t pal_hash = (format & RG_PIXEL_PALETTE) ? rg_line_hash(palette, pal_count * sizeof(uint16_t), 0) : 0;
     // D2: the fused scaler covers the whole viewport width from source pixel 0 (no crop)
     const bool fused_scale = !fast_2x && source_x_count > 0 && crop_left == 0 &&
                              draw_width == display.viewport.width && (format & RG_PIXEL_FORMAT) != RG_PIXEL_888;
@@ -291,7 +292,11 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
                 else if (fused_scale)
                 {
                     // D2: pattern-driven scaling with the horizontal filter fused in
-                    if ((format & RG_PIXEL_PALETTE) && source_x_simple)
+                    if ((format & RG_PIXEL_INDEX16) && source_x_simple)
+                        rg_scale_line_pal16_12(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
+                    else if (format & RG_PIXEL_INDEX16)
+                        rg_scale_line_pal16(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, draw_width, filter_x);
+                    else if ((format & RG_PIXEL_PALETTE) && source_x_simple)
                         rg_scale_line_pal12(src, palette, source_x_repeat, source_x_count, line_buffer_ptr, filter_x);
                     // every upscale up to 4x, any source format: no test per pixel either
                     else if (source_x_up == 2 && (format & RG_PIXEL_PALETTE))
@@ -314,6 +319,8 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
                         rg_scale_line_565be(src, source_x_repeat, source_x_count, line_buffer_ptr, draw_width, filter_x);
                     line_buffer_ptr += draw_width;
                 }
+                else if (format & RG_PIXEL_INDEX16)
+                    RENDER_LINE(uint16_t, palette[buffer[x]])
                 else if (format & RG_PIXEL_PALETTE)
                     RENDER_LINE(uint8_t, palette[buffer[x]])
                 else if (format == RG_PIXEL_565_LE)

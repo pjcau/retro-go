@@ -173,6 +173,10 @@ bool rg_surface_copy(const rg_surface_t *source, const rg_rect_t *source_rect, r
     {
         COPY_PIXELS(source->palette[src[src_x]]);
     }
+    else if (source->format == RG_PIXEL_PAL16_BE)
+    {
+        COPY_PIXELS(source->palette[((const uint16_t *)src)[src_x]]; pixel = (pixel << 8) | (pixel >> 8));
+    }
     else if (source->format == RG_PIXEL_PAL565_BE)
     {
         COPY_PIXELS(source->palette[src[src_x]]; pixel = (pixel << 8) | (pixel >> 8));

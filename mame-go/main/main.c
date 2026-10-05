@@ -557,6 +557,72 @@ static int present_indexed(const void *pix, int bits, int width, int height, int
         dcur ^= 1;
         return 1;
     }
+    if (bits == 16 && !present_task_needed())
+    {
+        /* 16-bit pens (Metal Slug 2, KOF '95, Shock Troopers: more than 256
+         * colours a frame), 2026-10-05: as the 8-bit path above, the display
+         * reads MAME's pen bitmap and looks the colours up while it scales
+         * (RG_PIXEL_PAL16_BE). Before, core 1 converted every drawn frame to
+         * RGB565 in PSRAM (convert+display ~20 ms of it in Metal Slug 2, core 1
+         * at 90-96 %). Each of the two surfaces keeps its own palette copy:
+         * the display may still read one while MAME changes colours.
+         * The file neo_noindexed16 turns it off. */
+        static int direct16 = -1;
+        static rg_surface_t *ds16[2];
+        static uint16_t *pal16[2];
+        static int pal16_n[2], dcur16;
+        if (direct16 < 0)
+        {
+            FILE *f = fopen("/sd/retro-go/mame/neo_noindexed16", "r");
+            direct16 = f == NULL;
+            if (f) { fclose(f); RG_LOGI("16-bit frames converted on core 1 (neo_noindexed16)"); }
+        }
+        if (direct16)
+        {
+            if (!ds16[0] && (!(ds16[0] = rg_surface_create(0, 0, RG_PIXEL_PAL16_BE, 0)) ||
+                             !(ds16[1] = rg_surface_create(0, 0, RG_PIXEL_PAL16_BE, 0))))
+                direct16 = 0;
+        }
+        if (direct16)
+        {
+            rg_display_sync(true);
+            int c = dcur16;
+            if (pal16_n[c] < colors)
+            {
+                uint16_t *np = heap_caps_malloc(colors * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+                if (!np)
+                    direct16 = 0;
+                else
+                {
+                    free(pal16[c]);
+                    pal16[c] = np;
+                    pal16_n[c] = colors;
+                }
+            }
+        }
+        if (direct16)
+        {
+            rg_surface_t *d = ds16[dcur16];
+            const uint32_t *src_pal = palette;
+            uint16_t *pal = pal16[dcur16];
+            for (int i = 0; i < colors; i++)
+            {
+                uint16_t v = (uint16_t)src_pal[i];
+                pal[i] = (uint16_t)((v << 8) | (v >> 8));
+            }
+            d->palette = pal;
+            d->palette_count = colors;
+            d->data = (void *)pix;
+            d->width = width;
+            d->height = height;
+            d->stride = pitch * 2;
+            d->offset = 0;
+            rg_display_submit(d, 0);
+            last_shown = d;
+            dcur16 ^= 1;
+            return 1;
+        }
+    }
     if (no_memory) /* declined once for memory: the core's own path from now on */
         return 0;
     if (!present_task)
@@ -744,6 +810,18 @@ static void shot_copy_now(void)
     shot_copy.copy.data = data;
     shot_copy.copy.stride = row_bytes;
     shot_copy.copy.offset = 0;
+    if ((s->format & RG_PIXEL_INDEX16) && s->palette)
+    {
+        /* 16-bit pens: the palette is too large to keep, the colours are
+           looked up now and the copy becomes plain RGB565 (big-endian) */
+        uint16_t *px = (uint16_t *)data;
+        for (size_t i = 0; i < (size_t)s->width * s->height; i++)
+            px[i] = (s->palette_count <= 0 || px[i] < s->palette_count) ? s->palette[px[i]] : 0;
+        shot_copy.copy.format = RG_PIXEL_565_BE;
+        shot_copy.copy.palette = NULL;
+        shot_copy.copy.palette_count = 0;
+        return;
+    }
     if ((s->format & RG_PIXEL_PALETTE) && s->palette)
     {
         memcpy(shot_copy.palette, s->palette, sizeof(shot_copy.palette));
