@@ -201,24 +201,41 @@ static bool sdapp_install(const char *app)
 
     RG_LOGI("sdapp: copying %s (%d bytes) to the partition", path, (int)size);
     const int64_t start = rg_system_timer();
-    rg_gui_draw_message("%s...", in_file.project_name);
+    // The hourglass and a percentage under it, as for the games that take time
+    // to load: erasing is the first 40 %, writing the next 50, the check the rest.
+    const size_t block = 0x10000;
+    const size_t to_erase = (size + block - 1) & ~(block - 1);
+    rg_gui_draw_hourglass();
+    rg_gui_draw_loading(0);
     uint8_t *buffer = malloc(chunk);
-    if (buffer && esp_partition_erase_range(slot, 0, (size + 0xFFF) & ~0xFFF) == ESP_OK && fseek(fp, 0, SEEK_SET) == 0)
+    ok = buffer != NULL;
+    for (size_t at = 0; ok && at < to_erase; at += block)
+    {
+        ok = esp_partition_erase_range(slot, at, block) == ESP_OK;
+        rg_gui_draw_loading((int)((at + block) * 40 / to_erase));
+    }
+    if (ok && fseek(fp, 0, SEEK_SET) == 0)
     {
         size_t done = 0;
-        ok = true;
         while (ok && done < size)
         {
             const size_t want = RG_MIN(chunk, size - done);
             ok = fread(buffer, 1, want, fp) == want && esp_partition_write(slot, done, buffer, want) == ESP_OK;
             done += want;
+            rg_gui_draw_loading(40 + (int)(done * 50 / size));
         }
+    }
+    else
+    {
+        ok = false;
     }
     free(buffer);
     fclose(fp);
     // the whole image is checked (its checksum and hash) before it may be booted
     if (ok && esp_ota_set_boot_partition(slot) != ESP_OK)
         ok = false;
+    if (ok)
+        rg_gui_draw_loading(100);
     RG_LOGI("sdapp: %s in %d ms", ok ? "copied and verified" : "FAILED", (int)((rg_system_timer() - start) / 1000));
     if (!ok)
         rg_gui_alert(_("Copy failed"), path);
