@@ -14,13 +14,18 @@ import zlib
 DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "odroid-go")
 DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
 DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM3")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis sm64-go retro-extra mame-go mk64-go gbsp sdapp")
-# Apps kept on the SD card (/retro-go/apps/<app>.bin) and started through the one
-# partition "sdapp": the launcher copies the app's file into it when it is not
-# the one already there (launcher/main/applications.c). "sdapp" in an app list
-# stands for all of them: they are built, their binaries are gathered in
-# sdapps/ for the card, and the first one is put in the partition of the image.
-SD_APPS = ["cannonball", "wolf3d-go", "opentyrian-go"]
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis n64app retro-extra mame-go wolf3d-go opentyrian-go gbsp sdapp")
+# Apps kept on the SD card (/retro-go/apps/<app>.bin) and started through a
+# partition they share: the launcher copies the app's file into it when it is
+# not the one already there (launcher/main/applications.c, which picks the
+# partition by the file's size and names no app). The shared partition's name
+# in an app list stands for its apps: they are built, their binaries are
+# gathered in sdapps/ for the card, and the first one is put in the partition
+# of the image.
+SD_APPS = {
+    "n64app": ["sm64-go", "mk64-go"],  # the Nintendo 64 ports (user's request of 2026-10-06)
+    "sdapp": ["cannonball"],           # OutRun
+}
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 MAMEROM_SIZE = 4 * 1024 * 1024  # data partition "mamerom", see build_image()
@@ -31,12 +36,15 @@ PROJECT_APPS = {
   'retro-core':   [0, 16, 1245184],  # 1216 KB (binary 1034 KB): 64 KB went to mk64-go on 2026-10-06, so that the image keeps 64 KB free at its end
   'prboom-go':    [0, 16, 851968],  # 832 KB: the binary outgrew 768 KB and mkfw.py had already grown the partition on the board
   'gwenesis':     [0, 16, 1048576],
-  # Super Mario 64 (native port, assets on the SD card). 1.75 MB: exactly the room
-  # of Duke Nukem 3D (1 MB) and Quake (0.75 MB), taken out on 2026-10-05 at the
-  # user's choice to make a place for it on the 16 MB flash; the binary is 1.55 MB.
-  # It is not built by this tool (its assets come from the user's ROM, outside
-  # git): see PREBUILT_APPS and sm64-go/build_esp32.sh.
-  'sm64-go':      [0, 16, 1835008],
+  # The partition shared by the Nintendo 64 ports (SD_APPS above), 1792 KB: it
+  # was Super Mario 64's own (1.61 MB binary), where Duke Nukem 3D and Quake
+  # had been until 2026-10-05; Mario Kart 64 (1.23 MB) had one of 1344 KB too.
+  # Since 2026-10-06, at the user's request, the two take turns in this one
+  # (their binaries on the card, a copy of about 10 s when the other one is
+  # started) and Mario Kart 64's room went back to Wolfenstein 3D and
+  # OpenTyrian below. The ports are not built by this tool (their data comes
+  # from the user's ROMs): see PREBUILT_APPS and <app>/build_esp32.sh.
+  'n64app':       [0, 16, 1835008],
   # Set aside, not deleted: duke3d-go and quake-go still build (`build duke3d-go`)
   # and the launcher still has their tabs, which show only when the partition
   # exists. To put them back, restore these two lines, add them to DEFAULT_APPS
@@ -45,17 +53,18 @@ PROJECT_APPS = {
   #   'quake-go':     [0, 16, 786432],
   'retro-extra':  [0, 16, 1310720],  # 1.25 MB since 2026-10-01 (MSX/Lynx/2600 gone, binary ~0.5 MB): 256 KB to mame-go
   'mame-go':      [0, 16, 2097152],  # 2 MB since 2026-10-01: the 68000 dynarec (M68KJIT, +39 KB) did not fit 1.75 MB
-  # Mario Kart 64 (native port, pack on the SD card). 1344 KB: the room of
-  # Wolfenstein 3D and OpenTyrian (640 KB each) plus 64 KB from retro-core; the
-  # binary is 1.26 MB without sound. Not built by this tool (its data comes
-  # from the user's ROM): see PREBUILT_APPS and mk64-go/build_esp32.sh.
-  'mk64-go':      [0, 16, 1376256],
+  # Back in the flash on 2026-10-06 (the user's choice for the room Mario Kart
+  # 64 gave up), where Mario Kart 64's partition was: they start at once
+  # again, without the copy from the card. 640 KB and 704 KB: together the
+  # 1344 KB of that partition, so that everything after keeps its offset.
+  'wolf3d-go':    [0, 16, 655360],
+  'opentyrian-go': [0, 16, 720896],
   'gbsp':         [0, 16, 851968],  # GBA (gpSP interpreter, from upstream); fMSX removed 2026-09-29 to make room
-  # The partition shared by the apps kept on the SD card (SD_APPS above), 640 KB:
-  # it was OutRun's. Wolfenstein 3D (574 KB), OpenTyrian (597 KB) and OutRun
-  # (548 KB) take turns in it, at the user's choice of 2026-10-06. After it and
-  # the mamerom cache the flash has 64 KB left, and they must stay: the image
-  # ends with a 256-byte footer for retro-go's updater (FLASH_SIZE below).
+  # The shared partition of the smaller apps kept on the SD card (SD_APPS above),
+  # 640 KB: it was OutRun's, and OutRun (548 KB) is the one app in it now.
+  # After it and the mamerom cache the flash has 64 KB left, and they must
+  # stay: the image ends with a 256-byte footer for retro-go's updater
+  # (FLASH_SIZE below).
   'sdapp':        [0, 16, 655360],
 }
 # Apps this tool does not build itself: it takes <app>/build/<app>.bin as it is.
@@ -64,9 +73,9 @@ PREBUILT_APPS = {
     "mk64-go": "run mk64-go/build_esp32.sh <mk64.us.z64>: it leaves mk64-go/build/mk64-go.bin",
 }
 BUILDABLE_ONLY = {  # still buildable on their own, no partition of their own in the image
-  'cannonball':   [0, 16, 655360],  # the three SD_APPS: they share "sdapp"
-  'wolf3d-go':    [0, 16, 655360],
-  'opentyrian-go': [0, 16, 655360],
+  'cannonball':   [0, 16, 655360],  # the SD_APPS: each shares a partition
+  'sm64-go':      [0, 16, 1835008],
+  'mk64-go':      [0, 16, 1835008],
   'duke3d-go':    [0, 16, 1048576],
   'quake-go':     [0, 16, 786432],
 }
@@ -135,16 +144,17 @@ def build_image(apps, output_file, img_type="odroid", fatsize=0, target="unknown
             subtype = ota_next_id
             ota_next_id += 1
         binary = os.path.join(app, "build", app + ".bin")
-        if app == "sdapp":
-            # the shared partition starts with the first SD app in it; all of them
-            # are gathered for the card
+        if app in SD_APPS:
+            # a shared partition starts with the first of its apps in it; all of
+            # them are gathered for the card
             os.makedirs("sdapps", exist_ok=True)
-            for sd_app in SD_APPS:
+            for sd_app in SD_APPS[app]:
                 shutil.copyfile(os.path.join(sd_app, "build", sd_app + ".bin"), os.path.join("sdapps", sd_app + ".bin"))
                 if os.path.getsize(os.path.join("sdapps", sd_app + ".bin")) > part[2]:
-                    exit("%s does not fit the sdapp partition" % sd_app)
-            print("SD apps gathered in sdapps/ (copy them to /retro-go/apps/ on the card): %s\n" % " ".join(SD_APPS))
-            binary = os.path.join("sdapps", SD_APPS[0] + ".bin")
+                    exit("%s does not fit the %s partition" % (sd_app, app))
+            print("SD apps of %s gathered in sdapps/ (copy them to /retro-go/apps/ on the card): %s\n"
+                  % (app, " ".join(SD_APPS[app])))
+            binary = os.path.join("sdapps", SD_APPS[app][0] + ".bin")
         args += [str(part[0]), str(subtype), str(part[2]), app, binary]
     if "mame-go" in apps:
         # mame-go serves big read-only ROM regions (gfx, sound samples) from here,
@@ -282,13 +292,13 @@ try:
     if command in ["clean", "release"]:
         print("=== Step: Cleaning ===\n")
         for app in apps:
-            for real_app in (SD_APPS if app == "sdapp" else [app]):
+            for real_app in SD_APPS.get(app, [app]):
                 clean_app(real_app)
 
     if command in ["build", "build-fw", "build-img", "release", "run", "profile", "install"]:
         print("=== Step: Building ===\n")
         for app in apps:
-            for real_app in (SD_APPS if app == "sdapp" else [app]):
+            for real_app in SD_APPS.get(app, [app]):
                 build_app(real_app, args.target, command == "profile", args.no_networking, command == "release")
 
     if command in ["build-fw", "release"]:
