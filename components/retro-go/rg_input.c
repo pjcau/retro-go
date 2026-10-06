@@ -963,6 +963,20 @@ void rg_input_console_tick(void)
         char *app = strtok(NULL, " ");
         char *path = strtok(NULL, "");
         fflush(stdout);
+        // An app kept on the SD card has no partition of its name: it is copied
+        // into the one it shares, as the launcher does. Not possible when that
+        // partition is the running app's: go to the launcher first.
+        if ((strcmp(cmd, "launch") == 0 || strncmp(cmd, "resume", 6) == 0) && part && app && path
+            && !rg_system_have_app(part))
+        {
+            const char *shared = rg_system_sdapp_available(part) ? rg_system_sdapp_install(part) : NULL;
+            if (!shared)
+            {
+                printf("CTL %s failed: no partition %s, and its file could not be installed (from an app that shares the partition: launcher first)\n", cmd, part);
+                return;
+            }
+            part = (char *)shared;
+        }
         if (strcmp(cmd, "launch") == 0 && part && app && path)
             rg_system_switch_app(part, app, path, 0);
         else if (strncmp(cmd, "resume", 6) == 0 && part && app && path)

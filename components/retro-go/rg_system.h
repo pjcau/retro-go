@@ -219,6 +219,9 @@ void rg_system_restart(void) __attribute__((noreturn));
 void rg_system_exit(void) __attribute__((noreturn));
 void rg_system_switch_app(const char *part, const char *name, const char *args, uint32_t flags) __attribute__((noreturn));
 bool rg_system_have_app(const char *app);
+// Apps kept on the SD card (/retro-go/apps/<app>.bin), run from a partition they share
+bool rg_system_sdapp_available(const char *app);
+const char *rg_system_sdapp_install(const char *app);
 void rg_system_set_indicator(rg_indicator_t indicator, bool on);
 bool rg_system_get_indicator(rg_indicator_t indicator);
 void rg_system_set_indicator_mask(rg_indicator_t indicator, bool on);
