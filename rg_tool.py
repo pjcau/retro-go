@@ -14,14 +14,21 @@ import zlib
 DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "odroid-go")
 DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
 DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM3")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis sm64-go retro-extra mame-go wolf3d-go gbsp opentyrian-go cannonball")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis sm64-go retro-extra mame-go mk64-go gbsp sdapp")
+# Apps kept on the SD card (/retro-go/apps/<app>.bin) and started through the one
+# partition "sdapp": the launcher copies the app's file into it when it is not
+# the one already there (launcher/main/applications.c). "sdapp" in an app list
+# stands for all of them: they are built, their binaries are gathered in
+# sdapps/ for the card, and the first one is put in the partition of the image.
+SD_APPS = ["cannonball", "wolf3d-go", "opentyrian-go"]
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 MAMEROM_SIZE = 4 * 1024 * 1024  # data partition "mamerom", see build_image()
+FLASH_SIZE = 16 * 1024 * 1024  # of the handheld: an image larger than this is refused (build_image)
 PROJECT_APPS = {
   # Project name  Type, SubType, Size
   'launcher':     [0, 16, 1179648],
-  'retro-core':   [0, 16, 1310720],
+  'retro-core':   [0, 16, 1245184],  # 1216 KB (binary 1034 KB): 64 KB went to mk64-go on 2026-10-06, so that the image keeps 64 KB free at its end
   'prboom-go':    [0, 16, 851968],  # 832 KB: the binary outgrew 768 KB and mkfw.py had already grown the partition on the board
   'gwenesis':     [0, 16, 1048576],
   # Super Mario 64 (native port, assets on the SD card). 1.75 MB: exactly the room
@@ -38,17 +45,28 @@ PROJECT_APPS = {
   #   'quake-go':     [0, 16, 786432],
   'retro-extra':  [0, 16, 1310720],  # 1.25 MB since 2026-10-01 (MSX/Lynx/2600 gone, binary ~0.5 MB): 256 KB to mame-go
   'mame-go':      [0, 16, 2097152],  # 2 MB since 2026-10-01: the 68000 dynarec (M68KJIT, +39 KB) did not fit 1.75 MB
-  'wolf3d-go':    [0, 16, 655360],
+  # Mario Kart 64 (native port, pack on the SD card). 1344 KB: the room of
+  # Wolfenstein 3D and OpenTyrian (640 KB each) plus 64 KB from retro-core; the
+  # binary is 1.26 MB without sound. Not built by this tool (its data comes
+  # from the user's ROM): see PREBUILT_APPS and mk64-go/build_esp32.sh.
+  'mk64-go':      [0, 16, 1376256],
   'gbsp':         [0, 16, 851968],  # GBA (gpSP interpreter, from upstream); fMSX removed 2026-09-29 to make room
-  'opentyrian-go': [0, 16, 655360],
-  'cannonball':   [0, 16, 655360],  # OutRun (the Cannonball engine); the flash has 704 KB left after it
+  # The partition shared by the apps kept on the SD card (SD_APPS above), 640 KB:
+  # it was OutRun's. Wolfenstein 3D (574 KB), OpenTyrian (597 KB) and OutRun
+  # (548 KB) take turns in it, at the user's choice of 2026-10-06. After it and
+  # the mamerom cache the flash has 64 KB left, and they must stay: the image
+  # ends with a 256-byte footer for retro-go's updater (FLASH_SIZE below).
+  'sdapp':        [0, 16, 655360],
 }
 # Apps this tool does not build itself: it takes <app>/build/<app>.bin as it is.
-PREBUILT_APPS = {"sm64-go": "run sm64-go/build_esp32.sh <baserom.us.z64>: it leaves sm64-go/build/sm64-go.bin"}
-BUILDABLE_ONLY = {  # still buildable on their own, no partition in the image
-  # Mario Kart 64 (native port, pack on the SD card): being brought up, no
-  # partition yet. Built by mk64-go/build_esp32.sh, which needs the user's ROM.
-  'mk64-go':      [0, 16, 1572864],
+PREBUILT_APPS = {
+    "sm64-go": "run sm64-go/build_esp32.sh <baserom.us.z64>: it leaves sm64-go/build/sm64-go.bin",
+    "mk64-go": "run mk64-go/build_esp32.sh <mk64.us.z64>: it leaves mk64-go/build/mk64-go.bin",
+}
+BUILDABLE_ONLY = {  # still buildable on their own, no partition of their own in the image
+  'cannonball':   [0, 16, 655360],  # the three SD_APPS: they share "sdapp"
+  'wolf3d-go':    [0, 16, 655360],
+  'opentyrian-go': [0, 16, 655360],
   'duke3d-go':    [0, 16, 1048576],
   'quake-go':     [0, 16, 786432],
 }
@@ -116,7 +134,18 @@ def build_image(apps, output_file, img_type="odroid", fatsize=0, target="unknown
         if part[0] == 0 and (part[1] & 0xF0) == 0x10:  # Rewrite OTA indexes to maintain order
             subtype = ota_next_id
             ota_next_id += 1
-        args += [str(part[0]), str(subtype), str(part[2]), app, os.path.join(app, "build", app + ".bin")]
+        binary = os.path.join(app, "build", app + ".bin")
+        if app == "sdapp":
+            # the shared partition starts with the first SD app in it; all of them
+            # are gathered for the card
+            os.makedirs("sdapps", exist_ok=True)
+            for sd_app in SD_APPS:
+                shutil.copyfile(os.path.join(sd_app, "build", sd_app + ".bin"), os.path.join("sdapps", sd_app + ".bin"))
+                if os.path.getsize(os.path.join("sdapps", sd_app + ".bin")) > part[2]:
+                    exit("%s does not fit the sdapp partition" % sd_app)
+            print("SD apps gathered in sdapps/ (copy them to /retro-go/apps/ on the card): %s\n" % " ".join(SD_APPS))
+            binary = os.path.join("sdapps", SD_APPS[0] + ".bin")
+        args += [str(part[0]), str(subtype), str(part[2]), app, binary]
     if "mame-go" in apps:
         # mame-go serves big read-only ROM regions (gfx, sound samples) from here,
         # memory-mapped, instead of PSRAM (mame-go/main/main.c mamego_flash_store)
@@ -125,6 +154,13 @@ def build_image(apps, output_file, img_type="odroid", fatsize=0, target="unknown
         args += ["1", "129", fatsize, "vfs", "none"]
 
     run(args)
+    # mkfw.py lays the partitions out and appends its 256-byte footer without
+    # knowing the flash's size: a layout that fills the flash to the last byte
+    # gave an image of 16 MB + 256 bytes on 2026-10-06.
+    if img_type not in ["odroid", "esplay"] and os.path.getsize(output_file) > FLASH_SIZE:
+        os.rename(output_file, output_file + ".too-big")
+        exit("The image is %d bytes larger than the %d MB flash: shrink a partition (kept as %s.too-big)"
+             % (os.path.getsize(output_file + ".too-big") - FLASH_SIZE, FLASH_SIZE // 1048576, output_file))
 
 
 def clean_app(app):
@@ -246,12 +282,14 @@ try:
     if command in ["clean", "release"]:
         print("=== Step: Cleaning ===\n")
         for app in apps:
-            clean_app(app)
+            for real_app in (SD_APPS if app == "sdapp" else [app]):
+                clean_app(real_app)
 
     if command in ["build", "build-fw", "build-img", "release", "run", "profile", "install"]:
         print("=== Step: Building ===\n")
         for app in apps:
-            build_app(app, args.target, command == "profile", args.no_networking, command == "release")
+            for real_app in (SD_APPS if app == "sdapp" else [app]):
+                build_app(real_app, args.target, command == "profile", args.no_networking, command == "release")
 
     if command in ["build-fw", "release"]:
         print("=== Step: Packing ===\n")

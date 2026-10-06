@@ -5,6 +5,13 @@
 #include <string.h>
 #include <errno.h>
 
+#ifdef ESP_PLATFORM
+#include <esp_partition.h>
+#include <esp_ota_ops.h>
+#include <esp_app_desc.h>
+#include <esp_app_format.h>
+#endif
+
 #include "applications.h"
 #include "bookmarks.h"
 #include "gui.h"
@@ -130,6 +137,95 @@ static const char *get_file_path(retro_file_t *file)
     return buffer;
 }
 
+/* Apps kept on the SD card.
+ *
+ * The flash has no room for every app. Some have no partition of their own:
+ * their binary is a file, /retro-go/apps/<app>.bin, and one partition, "sdapp",
+ * is shared by them. Starting one copies its file into that partition first,
+ * unless it is the app already there (same build: the hash of its ELF, which
+ * every ESP-IDF app carries in its description), and then boots the partition.
+ * An ESP32 app runs from the flash, so it cannot be started from the card
+ * itself; this costs a copy when the app changes and nothing when it does not. */
+#define SDAPP_PARTITION "sdapp"
+#define SDAPP_PATH RG_BASE_PATH "/apps/%s.bin"
+
+static bool sdapp_available(const char *app)
+{
+#ifdef ESP_PLATFORM
+    char path[RG_PATH_MAX];
+    snprintf(path, sizeof(path), SDAPP_PATH, app);
+    return rg_system_have_app(SDAPP_PARTITION) && rg_storage_stat(path).is_file;
+#else
+    return false;
+#endif
+}
+
+#ifdef ESP_PLATFORM
+// offset of the app description in an app image: after the image header and the first segment's header
+#define SDAPP_DESC_OFFSET (sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t))
+
+static bool sdapp_install(const char *app)
+{
+    const esp_partition_t *slot =
+        esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, SDAPP_PARTITION);
+    char path[RG_PATH_MAX];
+    esp_app_desc_t in_file, in_slot;
+    const size_t chunk = 16 * 1024;
+    bool ok = false;
+
+    snprintf(path, sizeof(path), SDAPP_PATH, app);
+    FILE *fp = fopen(path, "rb");
+    if (!slot || !fp)
+    {
+        rg_gui_alert(_("Not installed"), path);
+        if (fp)
+            fclose(fp);
+        return false;
+    }
+    fseek(fp, 0, SEEK_END);
+    const size_t size = ftell(fp);
+    if (size > slot->size || size < SDAPP_DESC_OFFSET + sizeof(in_file) || fseek(fp, SDAPP_DESC_OFFSET, SEEK_SET) != 0
+        || fread(&in_file, 1, sizeof(in_file), fp) != sizeof(in_file) || in_file.magic_word != ESP_APP_DESC_MAGIC_WORD)
+    {
+        rg_gui_alert(_("Not an app, or too large"), path);
+        fclose(fp);
+        return false;
+    }
+    if (esp_ota_get_partition_description(slot, &in_slot) == ESP_OK
+        && memcmp(in_slot.app_elf_sha256, in_file.app_elf_sha256, sizeof(in_file.app_elf_sha256)) == 0)
+    {
+        RG_LOGI("sdapp: %s is already in the partition", app);
+        fclose(fp);
+        return true;
+    }
+
+    RG_LOGI("sdapp: copying %s (%d bytes) to the partition", path, (int)size);
+    const int64_t start = rg_system_timer();
+    rg_gui_draw_message("%s...", in_file.project_name);
+    uint8_t *buffer = malloc(chunk);
+    if (buffer && esp_partition_erase_range(slot, 0, (size + 0xFFF) & ~0xFFF) == ESP_OK && fseek(fp, 0, SEEK_SET) == 0)
+    {
+        size_t done = 0;
+        ok = true;
+        while (ok && done < size)
+        {
+            const size_t want = RG_MIN(chunk, size - done);
+            ok = fread(buffer, 1, want, fp) == want && esp_partition_write(slot, done, buffer, want) == ESP_OK;
+            done += want;
+        }
+    }
+    free(buffer);
+    fclose(fp);
+    // the whole image is checked (its checksum and hash) before it may be booted
+    if (ok && esp_ota_set_boot_partition(slot) != ESP_OK)
+        ok = false;
+    RG_LOGI("sdapp: %s in %d ms", ok ? "copied and verified" : "FAILED", (int)((rg_system_timer() - start) / 1000));
+    if (!ok)
+        rg_gui_alert(_("Copy failed"), path);
+    return ok;
+}
+#endif
+
 static void application_start(retro_file_t *file, int load_state)
 {
     RG_ASSERT_ARG(file);
@@ -145,6 +241,15 @@ static void application_start(retro_file_t *file, int load_state)
             return;
         }
     }
+#ifdef ESP_PLATFORM
+    if (!rg_system_have_app(partition))
+    {
+        // an app kept on the SD card: into the shared partition first
+        if (!sdapp_install(partition))
+            return;
+        partition = SDAPP_PARTITION;
+    }
+#endif
     char *part = strdup(partition);
     char *name = strdup(file->app->short_name);
     char *path = strdup(get_file_path(file));
@@ -674,7 +779,7 @@ static void application(const char *desc, const char *name, const char *exts, co
 {
     RG_ASSERT_ARG(desc && name && exts && part);
 
-    if (!rg_system_have_app(part))
+    if (!rg_system_have_app(part) && !sdapp_available(part))
     {
         RG_LOGI("Application '%s' (%s) not present, skipping", desc, part);
         return;
@@ -690,7 +795,7 @@ static void application(const char *desc, const char *name, const char *exts, co
     snprintf(app->paths.covers, RG_PATH_MAX, RG_BASE_PATH_COVERS "/%s", app->short_name);
     snprintf(app->paths.saves, RG_PATH_MAX, RG_BASE_PATH_SAVES "/%s", app->short_name);
     snprintf(app->paths.roms, RG_PATH_MAX, RG_BASE_PATH_ROMS "/%s", app->short_name);
-    app->available = rg_system_have_app(app->partition);
+    app->available = rg_system_have_app(app->partition) || sdapp_available(app->partition);
     app->files = calloc(100, sizeof(retro_file_t));
     app->files_capacity = 100;
     app->filenames = rg_bucket_create(4096);

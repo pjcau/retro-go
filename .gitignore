@@ -25,3 +25,5 @@ build/
 # old in-tree test benches, now in xtensa-68000-dynarec (leftover build dirs hold ROMs)
 /gbajit-test/
 /xjit-test/
+# binaries of the apps kept on the SD card, gathered by rg_tool.py for copying
+/sdapps/
