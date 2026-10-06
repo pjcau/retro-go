@@ -133,7 +133,19 @@ static const char *get_file_path(retro_file_t *file)
 static void application_start(retro_file_t *file, int load_state)
 {
     RG_ASSERT_ARG(file);
-    char *part = strdup(file->app->partition);
+    const char *partition = file->app->partition;
+    // The Nintendo 64 tab holds native ports, each an app of its own: the
+    // entry's extension says which. (<name>.sm64 is the tab's own app.)
+    if (strcmp(file->app->short_name, "n64") == 0 && rg_extension_match(file->name, "mk64"))
+    {
+        partition = "mk64-go";
+        if (!rg_system_have_app(partition))
+        {
+            rg_gui_alert(_("Not installed"), "Mario Kart 64 (mk64-go)");
+            return;
+        }
+    }
+    char *part = strdup(partition);
     char *name = strdup(file->app->short_name);
     char *path = strdup(get_file_path(file));
     int flags = (gui.startup_mode ? RG_BOOT_ONCE : 0);
@@ -710,7 +722,7 @@ void applications_init(void)
     application("OpenTyrian", "opentyrian", "tyr", "opentyrian-go", 0);
     application("OutRun (Cannonball)", "cannonball", "ball", "cannonball", 0); /* the OutRun ROMs sit in the folder, an empty <name>.ball starts it */
     application("Arcade 3D Racing", "arcade3d", "a3d", "retro-extra", 0); /* a native game: an empty <name>.a3d in the folder starts it */
-    application("Nintendo 64", "n64", "sm64", "sm64-go", 0); /* native ports, not an emulator: an empty <name>.sm64 in /roms/n64 starts Super Mario 64, whose assets are in /retro-go/sm64/sm64.seg */
+    application("Nintendo 64", "n64", "sm64 mk64", "sm64-go", 0); /* native ports, not an emulator: an empty <name>.sm64 in /roms/n64 starts Super Mario 64 (assets in /retro-go/sm64/sm64.seg), an empty <name>.mk64 starts Mario Kart 64 (app mk64-go, see application_start; assets in /retro-go/mk64/mk64.seg) */
     application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
     application("Neo Geo", "neogeo", "zip", "mame-go", 0); /* mame-go too; neogeo.zip (BIOS) lives in the folder */
     application("Capcom CPS-1", "cps1", "zip", "mame-go", 0); /* mame-go too: its own tab, apart from the 8-bit arcade games */
