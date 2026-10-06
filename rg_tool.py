@@ -46,6 +46,9 @@ PROJECT_APPS = {
 # Apps this tool does not build itself: it takes <app>/build/<app>.bin as it is.
 PREBUILT_APPS = {"sm64-go": "run sm64-go/build_esp32.sh <baserom.us.z64>: it leaves sm64-go/build/sm64-go.bin"}
 BUILDABLE_ONLY = {  # still buildable on their own, no partition in the image
+  # Mario Kart 64 (native port, pack on the SD card): being brought up, no
+  # partition yet. Built by mk64-go/build_esp32.sh, which needs the user's ROM.
+  'mk64-go':      [0, 16, 1572864],
   'duke3d-go':    [0, 16, 1048576],
   'quake-go':     [0, 16, 786432],
 }
