@@ -47,12 +47,32 @@ static int8_t maria_offset;
 static uint8_t maria_h08;
 static uint8_t maria_h16;
 static uint8_t maria_wmode;
+/* retro-home: CTRL's kangaroo bit for the line being stored. MARIA reads
+ * CTRL for every empty cell; the 6502 does not run while a line is stored,
+ * so it is read once per line (maria_StoreLineRAM). */
+static uint8_t maria_kmode;
 
-static uint8_t maria_ReadByte(uint16_t address)
+#ifdef RETRO_GO
+#include <esp_attr.h>
+/* MARIA was 72 % of a frame on the board (17 ms of 23.7, 2026-10-07): its
+ * scanline code runs from internal RAM, not through the flash cache. */
+#define MARIA_HOT IRAM_ATTR
+#else
+#define MARIA_HOT
+#endif
+
+static uint8_t maria_ReadByte_slow(uint16_t address);
+
+static inline uint8_t maria_ReadByte(uint16_t address)
 {
-   uint32_t page, chrOffset;
    if(cartridge_type != CARTRIDGE_TYPE_SOUPER)
       return memory_ram[address];
+   return maria_ReadByte_slow(address);
+}
+
+static uint8_t maria_ReadByte_slow(uint16_t address)
+{
+   uint32_t page, chrOffset;
    if((cartridge_souper_mode & CARTRIDGE_SOUPER_MODE_MFT) == 0 || address < 0x8000 ||
       ((cartridge_souper_mode & CARTRIDGE_SOUPER_MODE_CHR) == 0 && address < 0xc000))
    {
@@ -67,7 +87,7 @@ static uint8_t maria_ReadByte(uint16_t address)
    return cartridge_LoadROM((address & 0x0f7f) | chrOffset);
 }
 
-static void maria_StoreCell2(uint8_t data)
+static MARIA_HOT void maria_StoreCell2(uint8_t data)
 {
    if(maria_horizontal < MARIA_LINERAM_SIZE)
    {
@@ -75,8 +95,7 @@ static void maria_StoreCell2(uint8_t data)
          maria_lineRAM[maria_horizontal] = maria_palette | data;
       else
       {
-         uint8_t kmode = maria_ReadByte(CTRL) & 4;
-         if(kmode)
+         if(maria_kmode)
             maria_lineRAM[maria_horizontal] = 0;
       }
    }
@@ -84,7 +103,7 @@ static void maria_StoreCell2(uint8_t data)
    maria_horizontal++;
 }
 
-static void maria_StoreCell(uint8_t high, uint8_t low)
+static MARIA_HOT void maria_StoreCell(uint8_t high, uint8_t low)
 {
   if(maria_horizontal < MARIA_LINERAM_SIZE)
   {
@@ -92,15 +111,14 @@ static void maria_StoreCell(uint8_t high, uint8_t low)
       maria_lineRAM[maria_horizontal] = (maria_palette & 16) | high | low;
     else
     { 
-      uint8_t kmode = maria_ReadByte(CTRL) & 4;
-      if(kmode)
+      if(maria_kmode)
         maria_lineRAM[maria_horizontal] = 0;
     }
   }
   maria_horizontal++;
 }
 
-static bool maria_IsHolyDMA(void)
+static MARIA_HOT bool maria_IsHolyDMA(void)
 {
    if(maria_pp.w > 32767)
    {
@@ -112,14 +130,14 @@ static bool maria_IsHolyDMA(void)
   return false;
 }
 
-static uint8_t maria_GetColor(uint8_t data)
-{
-  if(data & 3)
-    return maria_ReadByte(BACKGRND + data);
-  return maria_ReadByte(BACKGRND);
-}
+/* retro-home: the 32 colours a line can use (BACKGRND, then the palette
+ * registers; index & 3 == 0 is the background), read once per line in
+ * maria_WriteLineRAM instead of once per pixel. Same values: the 6502 does not
+ * run while a line is written. */
+static uint8_t maria_line_colors[32];
+#define maria_GetColor(data) (maria_line_colors[(data) & 31])
 
-static void maria_StoreGraphic(void)
+static MARIA_HOT void maria_StoreGraphic(void)
 {
    uint8_t data = maria_ReadByte(maria_pp.w);
    if(maria_wmode)
@@ -155,9 +173,11 @@ static void maria_StoreGraphic(void)
    maria_pp.w++;
 }
 
-static void maria_WriteLineRAM(uint8_t* buffer)
+static MARIA_HOT void maria_WriteLineRAM(uint8_t* buffer)
 {
    uint8_t rmode = maria_ReadByte(CTRL) & 3;
+   for(int c = 0; c < 32; c++)
+      maria_line_colors[c] = (c & 3) ? maria_ReadByte(BACKGRND + c) : maria_ReadByte(BACKGRND);
 
    if(rmode == 0)
    {
@@ -212,10 +232,12 @@ static void maria_WriteLineRAM(uint8_t* buffer)
    }
 }
 
-static void maria_StoreLineRAM(void)
+static MARIA_HOT void maria_StoreLineRAM(void)
 {
    int index;
    uint8_t mode;
+
+   maria_kmode = maria_ReadByte(CTRL) & 4;
 
    for(index = 0; index < MARIA_LINERAM_SIZE; index++)
       maria_lineRAM[index] = 0;
@@ -291,7 +313,7 @@ void maria_Reset(void)
       maria_surface[index] = 0;
 }
 
-uint32_t maria_RenderScanline(void)
+MARIA_HOT uint32_t maria_RenderScanline(void)
 {
    maria_cycles = 0;
    if((maria_ReadByte(CTRL) & 96) == 64 && maria_scanline >= maria_displayArea.top && maria_scanline <= maria_displayArea.bottom)
