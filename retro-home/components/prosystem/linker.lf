@@ -1,0 +1,12 @@
+# ProSystem's zeroed buffers (the MARIA surface 91 KB, the 64 KB address
+# space, the 32 KB Souper RAM) go to the external RAM: retro-go's internal
+# RAM cannot give 190 KB.
+[scheme:prosystem_bss_external]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:prosystem]
+archive: libprosystem.a
+entries:
+    * (prosystem_bss_external)
