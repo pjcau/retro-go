@@ -14,7 +14,7 @@ import zlib
 DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "odroid-go")
 DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
 DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM3")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis retro-extra mame-go wolf3d-go opentyrian-go gbsp sdapp")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis retro-extra mame-go wolf3d-go opentyrian-go gbsp sdapp fmsx retro-home")
 # Apps kept on the SD card (/retro-go/apps/<app>.bin) and started through a
 # partition they share: the launcher copies the app's file into it when it is
 # not the one already there (launcher/main/applications.c, which picks the
@@ -66,10 +66,15 @@ PROJECT_APPS = {
   'gbsp':         [0, 16, 851968],  # GBA (gpSP interpreter, from upstream); fMSX removed 2026-09-29 to make room
   # The shared partition of the smaller apps kept on the SD card (SD_APPS above),
   # 640 KB: it was OutRun's, and OutRun (548 KB) is the one app in it now.
-  # After it and the mamerom cache the flash has 64 KB left, and they must
-  # stay: the image ends with a 256-byte footer for retro-go's updater
-  # (FLASH_SIZE below).
   'sdapp':        [0, 16, 655360],
+  # The 1792 KB the Nintendo 64 ports gave back (2026-10-07), for the user's
+  # request of the same day: MSX (fMSX, back after 8736496f; 654 KB binary)
+  # and retro-home (Atari 5200, Atari 7800, Commodore 64; 677 KB). The
+  # mamerom cache comes after them, so it moves and is rebuilt at the first
+  # arcade start. After it the flash has 64 KB left, and they must stay: the
+  # image ends with a 256-byte footer for retro-go's updater (FLASH_SIZE below).
+  'fmsx':         [0, 16, 720896],
+  'retro-home':   [0, 16, 1114112],
 }
 # Apps this tool does not build itself: it takes <app>/build/<app>.bin as it is.
 PREBUILT_APPS = {
