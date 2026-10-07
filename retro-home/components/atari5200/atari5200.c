@@ -64,7 +64,12 @@ int tv_mode = TV_NTSC; /* retro-home: the 5200 was an NTSC console only */
 unsigned char * memory=NULL; //mem;
 
 // local variables
-static char logmsg[64];
+/* retro-home: was 64 bytes, and "8k cart load '<full path>', crc32=..." is
+ * longer with a path like /sd/roms/a52/Galaxian (USA).zip: the sprintf wrote
+ * past it into the statics after it (the memory pointer among them). On the
+ * board that was a crash in load_CART for two cartridges and a 6502 jumping
+ * into zero page for the third (2026-10-07). */
+static char logmsg[512];
 
 static CONTROLLER cont1, cont2;
 static int pot_max_left = POT_LEFT;
@@ -291,7 +296,7 @@ static void load_CART(char * cartname)
       for (i = 0; i < 32768; i++) memory[0x4000 + i] = emu_FileGetc();
       // get crc32 from 32k data
       crc32 = calc_crc32(memory + 0x4000, 32768);
-      sprintf(logmsg, "32 Trying to load '%s', crc32=0x%08X\n", cartname, (unsigned int)crc32);
+      snprintf(logmsg, sizeof(logmsg), "32 Trying to load '%s', crc32=0x%08X\n", cartname, (unsigned int)crc32);
       emu_printf(logmsg);
       break;
     case 16384: // 16k cart
@@ -300,7 +305,7 @@ static void load_CART(char * cartname)
 
       // get crc32 from 16k data
       crc32 = calc_crc32(memory + 0x4000, 16384);
-      sprintf(logmsg, "16 Trying to load '%s', crc32=0x%08X\n", cartname, (unsigned int)crc32);
+      snprintf(logmsg, sizeof(logmsg), "16 Trying to load '%s', crc32=0x%08X\n", cartname, (unsigned int)crc32);
       emu_printf(logmsg);
 
       // get cart "signature"
@@ -372,7 +377,7 @@ static void load_CART(char * cartname)
       for (i = 0; i < num16kMappings; i++) {
         if (0 == strncmp(sig, p16kMaps[i].crc, 8)) {
           mapnum = p16kMaps[i].mapping;
-          sprintf(logmsg, "Mapping %d found for crc=0x%s !\n", mapnum, sig);
+          snprintf(logmsg, sizeof(logmsg), "Mapping %d found for crc=0x%s !\n", mapnum, sig);
           emu_printf(logmsg);
           i = num16kMappings; // exit search
         }
@@ -400,13 +405,13 @@ static void load_CART(char * cartname)
         }
       // get crc32 from 8k data
       crc32 = calc_crc32(memory + 0x4000, 8192);
-      sprintf(logmsg, "8k cart load '%s', crc32=0x%08X\n", cartname, (unsigned int)crc32);
+      snprintf(logmsg, sizeof(logmsg), "8k cart load '%s', crc32=0x%08X\n", cartname, (unsigned int)crc32);
       emu_printf(logmsg);
       break;
     default:    // oops!
       // these rom dumps are strange, because some carts are 8K, yet
       // all the dumps are either 16K or 32K!
-      sprintf(logmsg, "Cartridge ROM size not 16K or 32K. Unable to load.");
+      snprintf(logmsg, sizeof(logmsg), "Cartridge ROM size not 16K or 32K. Unable to load.");
       emu_printf(logmsg);      
       return; /* retro-home: void function (was return -1) */
       break;

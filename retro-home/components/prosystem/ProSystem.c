@@ -66,6 +66,13 @@ void prosystem_Reset(void)
    prosystem_cycles = sally_ExecuteRES();
 }
 
+/* retro-home profile: microseconds in MARIA's scanline rendering, summed
+ * over frames; the app prints and clears it (A78PROF). */
+#ifdef RETRO_GO
+#include <esp_timer.h>
+uint32_t prosystem_prof_maria_us;
+#endif
+
 void prosystem_ExecuteFrame(const uint8_t* input)
 {
    uint32_t scanlinesPerBupchipTick;
@@ -100,7 +107,15 @@ void prosystem_ExecuteFrame(const uint8_t* input)
          }
       }
 
+#ifdef RETRO_GO
+      {
+         const uint32_t maria_start = (uint32_t)esp_timer_get_time();
+         cycles = maria_RenderScanline();
+         prosystem_prof_maria_us += (uint32_t)esp_timer_get_time() - maria_start;
+      }
+#else
       cycles = maria_RenderScanline();
+#endif
       if(cartridge_flags & CARTRIDGE_CYCLE_STEALING_MASK)
          prosystem_cycles += cycles;
 

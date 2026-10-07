@@ -191,9 +191,12 @@ void a78_main(void)
             // A78PROF: the emulation of a frame (6502 and MARIA, including
             // the drawing into its own picture), the rest of the loop
             const int64_t period = rg_system_timer() - prof_since;
-            RG_LOGI("A78PROF frames=%d emulation=%d us a frame, the rest %d us a frame",
-                    prof_frames, (int)(prof_frame_us / prof_frames),
+            extern uint32_t prosystem_prof_maria_us;
+            RG_LOGI("A78PROF frames=%d emulation=%d us a frame (MARIA %d, the 6502 and the rest %d), outside it %d us",
+                    prof_frames, (int)(prof_frame_us / prof_frames), (int)(prosystem_prof_maria_us / prof_frames),
+                    (int)((prof_frame_us - prosystem_prof_maria_us) / prof_frames),
                     (int)((period - prof_frame_us) / prof_frames));
+            prosystem_prof_maria_us = 0;
             prof_since = rg_system_timer();
             prof_frame_us = 0;
             prof_frames = 0;
