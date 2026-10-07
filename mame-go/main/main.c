@@ -163,6 +163,25 @@ static bool bench_hash_next;
  * matter. "--input play2" of tools/neoframes.c. */
 #define BENCH4_PLAY_AT 1900
 
+/* A bench build plays its script instead of the gamepad. If one is left on the
+ * board by mistake, the player gets the gamepad back from the options menu
+ * ("Bench input: Off"); not saved, so the next bench run starts scripted. */
+static bool bench_script = true;
+
+static rg_gui_event_t bench_input_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
+        bench_script = !bench_script;
+    strcpy(option->value, bench_script ? _("On (script)") : _("Off (gamepad)"));
+    return RG_DIALOG_VOID;
+}
+
+static void options_handler(rg_gui_option_t *dest)
+{
+    *dest++ = (rg_gui_option_t){0, _("Bench input"), "-", RG_DIALOG_FLAG_NORMAL, &bench_input_cb};
+    *dest++ = (rg_gui_option_t)RG_DIALOG_END;
+}
+
 static uint32_t bench_input(uint32_t f)
 {
 #if MAMEBENCH == 4
@@ -1230,7 +1249,7 @@ static void mame_task(void *arg)
             audio_buffer_status(true, 50, false);    /* draw every frame */
 #endif
         joystick = rg_input_read_gamepad();
-        if (!(joystick & (RG_KEY_MENU | RG_KEY_OPTION)))
+        if (bench_script && !(joystick & (RG_KEY_MENU | RG_KEY_OPTION)))
             joystick = bench_input(bench_frame);
         bench_hash_next = bench_frame % 300 == 299;
 #else
@@ -1275,9 +1294,15 @@ void app_main(void)
         .reset = &reset_handler,
         .screenshot = &screenshot_handler,
         .event = &event_handler,
+#ifdef MAMEBENCH
+        .options = &options_handler,
+#endif
     };
 
     app = rg_system_init(AUDIO_SAMPLE_RATE, &handlers, NULL);
+#ifdef MAMEBENCH
+    RG_LOGW("bench build: the game plays a script, not the gamepad (Options > Bench input: Off gives it back)");
+#endif
     rg_storage_mkdir(SYSTEM_DIR);
     rg_storage_mkdir(SAVE_DIR);
 

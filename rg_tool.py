@@ -14,7 +14,7 @@ import zlib
 DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "odroid-go")
 DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
 DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM3")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis n64app retro-extra mame-go wolf3d-go opentyrian-go gbsp sdapp")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis retro-extra mame-go wolf3d-go opentyrian-go gbsp sdapp")
 # Apps kept on the SD card (/retro-go/apps/<app>.bin) and started through a
 # partition they share: the launcher copies the app's file into it when it is
 # not the one already there (launcher/main/applications.c, which picks the
@@ -23,7 +23,7 @@ DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go gwenesis
 # gathered in sdapps/ for the card, and the first one is put in the partition
 # of the image.
 SD_APPS = {
-    "n64app": ["sm64-go", "mk64-go"],  # the Nintendo 64 ports (user's request of 2026-10-06)
+    # "n64app": ["sm64-go", "mk64-go"],  # the Nintendo 64 ports: out of the flash since 2026-10-07 (user's request)
     "sdapp": ["cannonball"],           # OutRun
 }
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
@@ -44,7 +44,11 @@ PROJECT_APPS = {
   # started) and Mario Kart 64's room went back to Wolfenstein 3D and
   # OpenTyrian below. The ports are not built by this tool (their data comes
   # from the user's ROMs): see PREBUILT_APPS and <app>/build_esp32.sh.
-  'n64app':       [0, 16, 1835008],
+  # Out of the image since 2026-10-07 (user's request: the Nintendo 64 ports
+  # leave the flash, the room stays free). To put them back, restore this line,
+  # "n64app" in DEFAULT_APPS and its SD_APPS entry, and put sm64-go.bin and
+  # mk64-go.bin back in /retro-go/apps/ (kept in /retro-go/apps-n64-off/).
+  #   'n64app':       [0, 16, 1835008],
   # Set aside, not deleted: duke3d-go and quake-go still build (`build duke3d-go`)
   # and the launcher still has their tabs, which show only when the partition
   # exists. To put them back, restore these two lines, add them to DEFAULT_APPS
