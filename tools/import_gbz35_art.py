@@ -20,7 +20,7 @@ import os, subprocess, sys, tempfile
 from PIL import Image
 
 # Logos drawn in plain black vanish on the launcher's dark header: paint them white.
-BLACK_LOGOS = {"a26"}
+BLACK_LOGOS = {"a26", "a78", "a52"}
 
 # launcher tab short name -> es-theme-gbz35 folder
 SYSTEMS = {
@@ -35,12 +35,18 @@ SYSTEMS = {
     "cannonball": "mame",  # OutRun is a Sega arcade game: the cabinet art
     "arcade3d": "ports",   # a native game, like the ports
     "n64": "n64",          # the native Nintendo 64 ports (Super Mario 64)
+    "a78": "atari7800",    # retro-home (2026-10-07)
+    "a52": "atari5200",
+    "c64": "c64",
 }
 
 # Tabs whose theme logo would name the wrong thing (MAME, PORTS): the banner is
 # the tab's name as text instead, in the colours of the Capcom CPS-1 banner.
-TEXT_BANNERS = {"cannonball": "OUTRUN", "arcade3d": "ARCADE 3D RACING"}
-TEXT_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+# The Atari 5200 logo writes "5200" sideways, too small to read at 22 px.
+TEXT_BANNERS = {"cannonball": "OUTRUN", "arcade3d": "ARCADE 3D RACING", "a52": "ATARI 5200"}
+TEXT_FONT = next((f for f in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                              "/System/Library/Fonts/Supplemental/Arial Bold.ttf") if os.path.exists(f)),
+                 "DejaVuSans-Bold.ttf")
 THEME_DIR = os.path.join(os.path.dirname(__file__), "..", "themes", "default")
 MAGENTA = (255, 0, 255)
 

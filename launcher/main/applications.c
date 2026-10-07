@@ -725,6 +725,10 @@ void applications_init(void)
     application("NEC PC Engine", "pce", "pce zip", "retro-core", 0);
     application("Atari Lynx", "lnx", "lnx zip", "retro-core", 64);
     application("Atari 2600", "a26", "a26 bin zip", "retro-extra", 0);
+    application("Atari 5200", "a52", "a52 bin zip", "retro-home", 0);
+    application("Atari 7800", "a78", "a78 bin zip", "retro-home", 0);
+    application("Commodore 64", "c64", "prg d64 zip", "retro-home", 0); /* KERNAL, BASIC and CHARGEN in /retro-go/bios/c64 */
+    application("MSX", "msx", "rom mx1 mx2 dsk", "fmsx", 0); /* the MSX BIOS files in /retro-go/bios/msx */
     application("Neo Geo Pocket", "ngp", "ngp ngc npc zip", "retro-extra", 0);
     application("DOOM", "doom", "wad zip", "prboom-go", 0);
     application("Duke Nukem 3D", "duke3d", "grp", "duke3d-go", 0);
