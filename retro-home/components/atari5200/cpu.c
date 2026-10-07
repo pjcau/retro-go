@@ -371,7 +371,12 @@ void CPU_NMI(void)
 #ifdef SKIP
 #define ENTER_MONITOR  if (!Atari800_Exit(TRUE)) exit(0)
 #else
-#define ENTER_MONITOR  exit(0)
+/* retro-home: the 6502 met an opcode that jams a real one (CIM). Atari800
+ * would enter its monitor; MCUME called exit(), which ESP-IDF answers with
+ * abort() (board, Galaxian, 2026-10-07). It is logged with its address, and
+ * the emulation goes on. */
+extern void a52_cim_report(unsigned pc);
+#define ENTER_MONITOR  a52_cim_report(GET_PC())
 #endif
 #endif
 #define DO_BREAK \

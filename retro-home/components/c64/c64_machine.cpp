@@ -28,6 +28,7 @@
     the IEC bus here, so it never engaged anyway).
 */
 
+#include <esp_attr.h>
 #include "c64.h"
 #include "c64_cpu.h"
 #include "c64_sid.h"
@@ -45,7 +46,7 @@ unsigned char rom_characters[C64_ROM_CHARGEN_SIZE];
    surface (in PSRAM); the VIC itself only ever touches the internal-RAM
    c64_line_buffer, which c64_run_line() flushes one line at a time. */
 uint16_t *c64_framebuffer;
-uint16_t c64_line_buffer[C64_SCREEN_WIDTH];
+DRAM_ATTR uint16_t c64_line_buffer[C64_SCREEN_WIDTH]; // internal RAM: the rest of this component's data is in external RAM (linker.lf)
 
 extern CONSTROM rarray_t PLA_READ[8];
 extern CONSTROM warray_t PLA_WRITE[8];

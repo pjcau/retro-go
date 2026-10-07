@@ -138,6 +138,19 @@ void emu_DrawVsync(void) {}
 void emu_sndInit(void) {}
 void emu_sndPlaySound(int chan, int volume, int freq) {}
 
+/* The 6502 met an opcode that jams a real one (cpu.c's ENTER_MONITOR): said
+ * once per address, with the bytes there, and the emulation goes on. */
+extern uint8_t Atari_GetByte(uint16_t addr);
+void a52_cim_report(unsigned pc)
+{
+    static unsigned last_pc = ~0u;
+    if (pc == last_pc)
+        return;
+    last_pc = pc;
+    RG_LOGW("6502 jam at $%04X: %02X %02X %02X (the previous byte %02X)", pc & 0xFFFF,
+            Atari_GetByte(pc), Atari_GetByte(pc + 1), Atari_GetByte(pc + 2), Atari_GetByte(pc - 1));
+}
+
 /* ---- retro-go */
 
 static bool screenshot_handler(const char *filename, int width, int height)

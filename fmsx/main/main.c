@@ -482,9 +482,21 @@ void app_main(void)
         "-skip", "50",
         "-home", BiosFolder,
         "-joy", "1",
-        NULL, NULL, NULL,
+        NULL, NULL, NULL, NULL,
     };
-    int argc = RG_COUNT(argv) - 3;
+    int argc = RG_COUNT(argv) - 4;
+
+    // fMSX starts as an MSX2 and gives up when MSX2.ROM or MSX2EXT.ROM is not
+    // there, even for an MSX1 cartridge (board, 2026-10-07): with only MSX.ROM
+    // it is started as an MSX1, which most cartridges are written for.
+    char msx2_path[RG_PATH_MAX], msx2ext_path[RG_PATH_MAX];
+    snprintf(msx2_path, sizeof(msx2_path), "%s/MSX2.ROM", BiosFolder);
+    snprintf(msx2ext_path, sizeof(msx2ext_path), "%s/MSX2EXT.ROM", BiosFolder);
+    if (!rg_storage_exists(msx2_path) || !rg_storage_exists(msx2ext_path))
+    {
+        RG_LOGI("MSX2.ROM or MSX2EXT.ROM missing: starting as an MSX1");
+        argv[argc++] = "-msx1";
+    }
 
     if (rg_extension_match(app->romPath, "dsk"))
     {

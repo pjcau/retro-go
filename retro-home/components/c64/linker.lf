@@ -1,0 +1,13 @@
+# The C64's zeroed data (its 64 KB of RAM inside the cpu state, colour RAM,
+# the ROM images, about 129 KB) goes to the external RAM: in internal RAM it
+# left the Atari 7800, in the same app, no room for its own 64 KB address
+# space (2026-10-07). The C64 ran at 50 frames a second with 30 % to spare.
+[scheme:c64_bss_external]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:c64]
+archive: libc64.a
+entries:
+    * (c64_bss_external)

@@ -33,8 +33,10 @@
 #include "Riot.h"
 
 uint8_t memory_ram[MEMORY_SIZE] = {0};
-uint8_t memory_rom[MEMORY_SIZE] = {0};
-uint8_t memory_souper_ram[MEMORY_SOUPER_EXRAM_SIZE] = {0};
+/* retro-home: which bytes are ROM, a bit each (was a byte each: 64 KB). This
+ * file's tables stay in internal RAM (linker.lf), the 6502 reads and writes
+ * them all the time; the Souper RAM is in souper_ram.c, in external RAM. */
+uint8_t memory_rom_bits[MEMORY_SIZE / 8] = {0};
 
 void memory_Reset(void)
 {
@@ -42,10 +44,10 @@ void memory_Reset(void)
    for(index = 0; index < MEMORY_SIZE; index++)
    {
       memory_ram[index] = 0;
-      memory_rom[index] = 1;
+      MEMORY_ROM_SET(index, 1);
    }
    for(index = 0; index < 16384; index++)
-      memory_rom[index] = 0;
+      MEMORY_ROM_SET(index, 0);
 }
 
 uint16_t memory_souper_GetRamAddress(uint16_t address)
@@ -84,7 +86,7 @@ uint8_t memory_Read(uint16_t address)
 
 void memory_Write(uint16_t address, uint8_t data)
 {
-   if(!memory_rom[address])
+   if(!MEMORY_ROM(address))
    {
       switch(address)
       {
@@ -187,7 +189,7 @@ void memory_WriteROM(uint16_t address, uint16_t size, const uint8_t* data)
       for(index = 0; index < size; index++)
       {
          memory_ram[address + index] = data[index];
-         memory_rom[address + index] = 1;
+         MEMORY_ROM_SET(address + index, 1);
       }
    }
 }
@@ -201,7 +203,7 @@ void memory_ClearROM(uint16_t address, uint16_t size)
       for(index = 0; index < size; index++)
       {
          memory_ram[address + index] = 0;
-         memory_rom[address + index] = 0;
+         MEMORY_ROM_SET(address + index, 0);
       }
    }
 }

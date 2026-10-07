@@ -115,11 +115,17 @@ void a78_main(void)
 
     // The BIOS is optional (ProSystem starts the cartridge without it); with it
     // the game starts after the Atari logo, as on the console.
+    // The cartridge's region first, then the other one (a card may hold only
+    // the European BIOS: board, 2026-10-07).
+    const char *bios_names[2] = {"7800 BIOS (U).rom", "7800 BIOS (E).rom"};
+    const int first = cartridge_region == REGION_PAL ? 1 : 0;
     char bios[RG_PATH_MAX];
-    snprintf(bios, sizeof(bios), RG_BASE_PATH_BIOS "/%s",
-             cartridge_region == REGION_PAL ? "7800 BIOS (E).rom" : "7800 BIOS (U).rom");
-    bios_enabled = bios_Load(bios);
-    RG_LOGI("BIOS %s: %s", bios, bios_enabled ? "loaded" : "not found, starting the cartridge without it");
+    for (int i = 0; i < 2 && !bios_enabled; i++)
+    {
+        snprintf(bios, sizeof(bios), RG_BASE_PATH_BIOS "/%s", bios_names[(first + i) & 1]);
+        bios_enabled = bios_Load(bios);
+    }
+    RG_LOGI("BIOS: %s", bios_enabled ? bios : "none found, starting the cartridge without it");
 
     // left difficulty B ("novice"), right A: the defaults ProSystem's libretro
     // front end uses (Tower Toppler needs the right one at A)
@@ -144,6 +150,8 @@ void a78_main(void)
     rg_audio_sample_t *stereo = malloc((samples + 16) * sizeof(rg_audio_sample_t));
     uint32_t previous = 0;
     int skipFrames = 0;
+    int64_t prof_since = rg_system_timer(), prof_frame_us = 0;
+    int prof_frames = 0;
 
     while (true)
     {
@@ -174,7 +182,22 @@ void a78_main(void)
         bool drawFrame = skipFrames == 0;
         bool slowFrame = false;
 
+        const int64_t prof_start = rg_system_timer();
         prosystem_ExecuteFrame(input);
+        prof_frame_us += rg_system_timer() - prof_start;
+        prof_frames++;
+        if (rg_system_timer() - prof_since >= 1000000)
+        {
+            // A78PROF: the emulation of a frame (6502 and MARIA, including
+            // the drawing into its own picture), the rest of the loop
+            const int64_t period = rg_system_timer() - prof_since;
+            RG_LOGI("A78PROF frames=%d emulation=%d us a frame, the rest %d us a frame",
+                    prof_frames, (int)(prof_frame_us / prof_frames),
+                    (int)((period - prof_frame_us) / prof_frames));
+            prof_since = rg_system_timer();
+            prof_frame_us = 0;
+            prof_frames = 0;
+        }
 
         if (drawFrame)
         {

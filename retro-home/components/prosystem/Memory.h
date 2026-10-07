@@ -42,7 +42,11 @@ extern void memory_WriteROM(uint16_t address, uint16_t size, const uint8_t* data
 extern void memory_ClearROM(uint16_t address, uint16_t size);
 extern uint16_t memory_souper_GetRamAddress(uint16_t address);
 extern uint8_t memory_ram[MEMORY_SIZE];
-extern uint8_t memory_rom[MEMORY_SIZE];
+extern uint8_t memory_rom_bits[MEMORY_SIZE / 8];
+#define MEMORY_ROM(a) ((memory_rom_bits[(a) >> 3] >> ((a) & 7)) & 1)
+#define MEMORY_ROM_SET(a, v) \
+   ((v) ? (memory_rom_bits[(a) >> 3] |= (uint8_t)(1u << ((a) & 7))) \
+        : (memory_rom_bits[(a) >> 3] &= (uint8_t)~(1u << ((a) & 7))))
 extern uint8_t memory_souper_ram[MEMORY_SOUPER_EXRAM_SIZE];
 
 #ifdef __cplusplus
