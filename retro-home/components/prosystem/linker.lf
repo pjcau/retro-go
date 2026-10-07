@@ -1,7 +1,12 @@
-# ProSystem's zeroed buffers (the MARIA surface 91 KB, the 32 KB Souper RAM)
-# go to the external RAM, except Memory.c's: the 64 KB address space and the
-# ROM flags (8 KB), which the 6502 uses at every access. With them in external
-# RAM the emulation ran at 41 frames a second of 60 (board, 2026-10-07).
+# Where ProSystem's zeroed data lives.
+#
+# The three big arrays go to the external RAM: the MARIA surface (91 KB),
+# POKEY's 17-bit noise table (128 KB) and the Souper cartridge's RAM (32 KB).
+# Everything else stays in internal RAM: the 64 KB address space and ROM
+# flags (Memory.c) and the small state MARIA, the 6502, the TIA and POKEY read
+# all the time (MARIA's line buffer, colours and registers, cartridge_type...).
+# With all of it in external RAM, the 7800 ran at 41-42 frames a second of 60
+# (board, 2026-10-07); moving only the address space changed nothing.
 [scheme:prosystem_bss_external]
 entries:
     bss -> extern_ram
@@ -10,5 +15,6 @@ entries:
 [mapping:prosystem]
 archive: libprosystem.a
 entries:
-    * (prosystem_bss_external)
-    Memory (default)
+    Maria:maria_surface (prosystem_bss_external)
+    Pokey:pokey_poly17 (prosystem_bss_external)
+    souper_ram (prosystem_bss_external)

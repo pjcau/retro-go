@@ -24,6 +24,7 @@
  * ----------------------------------------------------------------------------
  */
 #include "Maria.h"
+#include <string.h>
 #include "Equates.h"
 #include "Pair.h"
 #include "Memory.h"
@@ -140,6 +141,21 @@ static uint8_t maria_line_colors[32];
 static MARIA_HOT void maria_StoreGraphic(void)
 {
    uint8_t data = maria_ReadByte(maria_pp.w);
+   /* retro-home: 160A/320A mode (wmode 0), the cells all inside the line,
+    * no holey DMA: the four cells written straight, as maria_StoreCell2
+    * would (a pixel of 0 is transparent unless kangaroo mode clears it). */
+   if(!maria_wmode && maria_horizontal <= MARIA_LINERAM_SIZE - 4 && !maria_IsHolyDMA())
+   {
+      uint8_t *cell = &maria_lineRAM[maria_horizontal];
+      const uint8_t p0 = (data >> 6) & 3, p1 = (data >> 4) & 3, p2 = (data >> 2) & 3, p3 = data & 3;
+      if(p0) cell[0] = maria_palette | p0; else if(maria_kmode) cell[0] = 0;
+      if(p1) cell[1] = maria_palette | p1; else if(maria_kmode) cell[1] = 0;
+      if(p2) cell[2] = maria_palette | p2; else if(maria_kmode) cell[2] = 0;
+      if(p3) cell[3] = maria_palette | p3; else if(maria_kmode) cell[3] = 0;
+      maria_horizontal += 4;
+      maria_pp.w++;
+      return;
+   }
    if(maria_wmode)
    {
       if(maria_IsHolyDMA())
@@ -239,8 +255,7 @@ static MARIA_HOT void maria_StoreLineRAM(void)
 
    maria_kmode = maria_ReadByte(CTRL) & 4;
 
-   for(index = 0; index < MARIA_LINERAM_SIZE; index++)
-      maria_lineRAM[index] = 0;
+   memset(maria_lineRAM, 0, MARIA_LINERAM_SIZE);
 
    mode = maria_ReadByte(maria_dp.w + 1);
 
