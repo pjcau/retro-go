@@ -1,7 +1,8 @@
 #include "shared.h"
 
-// retro-home: Atari 7800 (ProSystem), Atari 5200 (Atari800 via MCUME). The
-// launcher tab that started the app is its configNs.
+// retro-home: Atari 7800 (ProSystem), Atari 5200 (Atari800 via MCUME),
+// Commodore 64 (Teensy64 via MCUME). The launcher tab that started the app is
+// its configNs.
 
 void app_main(void)
 {
@@ -13,6 +14,8 @@ void app_main(void)
         a78_main();
     else if (strcmp(app->configNs, "a52") == 0)
         a52_main();
+    else if (strcmp(app->configNs, "c64") == 0)
+        c64_main();
     else
         RG_PANIC("Unknown app for retro-home");
 
