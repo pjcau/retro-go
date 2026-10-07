@@ -15,7 +15,9 @@
 #include "Palette.h"
 #include "Region.h"
 #include "Tia.h"
-#include "Pokey.h"
+// Pokey.h by its declarations: the macOS checkout is case-insensitive, and the
+// Atari 5200 core's pokey.h comes first in the include path
+extern uint8_t pokey_buffer[];
 
 #define A78_WIDTH 320
 #define A78_MAX_HEIGHT 272
