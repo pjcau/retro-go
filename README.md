@@ -253,6 +253,9 @@ If you wish to build or modify Retro-Go, you can find help in the following docu
 - The SNES emulator is a port of [Snes9x 2005](https://github.com/libretro/snes9x2005).
 - The DOOM engine is a port of [PrBoom 2.5.0](http://prboom.sourceforge.net/).
 - The Genesis emulator is a port of [Gwenesis](https://github.com/bzhxx/gwenesis/) by bzhxx.
+- The MSX emulator is a port of [fMSX](https://fms.komkon.org/fMSX/) by Marat Fayzullin.
+- The Atari 7800 emulator is [ProSystem](https://github.com/libretro/prosystem-libretro) by Greg Stanton (libretro core).
+- The Atari 5200 and Commodore 64 emulators come from [MCUME](https://github.com/Jean-MarcHarvengt/MCUME) by Jean-Marc Harvengt: the Atari800 core and Frank Bösing's Teensy64, with Dag Lem's reSID.
 - PNG support is provided by [lodepng](https://github.com/lvandeve/lodepng/).
 - PCE cover art is from [Christian_Haitian](https://github.com/christianhaitian).
 - Some icons from [Rokey](https://iconarchive.com/show/seed-icons-by-rokey.html).
@@ -263,3 +266,6 @@ If you wish to build or modify Retro-Go, you can find help in the following docu
 # License
 Everything in this project is licensed under the [GPLv2 license](COPYING) with the exception of the following components:
 - retro-core/components/handy (Lynx emulator, zlib)
+- fmsx/components/fmsx (MSX Emulator, custom non-commercial license)
+- retro-home/components/c64 (Commodore 64: Teensy64, GPLv3 or later; reSID, GPLv2 or later): with it the retro-home app is GPLv3 or later, see its LICENSE.md
+- retro-home/components/atari5200 (Atari 5200: the Atari800 core via MCUME, GPLv2 or later)
