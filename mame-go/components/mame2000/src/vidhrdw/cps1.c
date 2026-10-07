@@ -1057,9 +1057,11 @@ void cps1_draw_gfx_opaque(
 	#define DATATYPE unsigned char
 	#define IF_NOT_TRANSPARENT(n,x,y)
 	#define DW_OPAQUE
+	#define DW_OPAQUE8
 	#define SELF_INCLUDE
 	#include "cps1.c"
 	#undef SELF_INCLUDE
+	#undef DW_OPAQUE8
 	#undef DW_OPAQUE
 	#undef DATATYPE
 	#undef IF_NOT_TRANSPARENT
@@ -2717,6 +2719,39 @@ void cps1_eof_callback(void)
 			}
 		}
 		else
+#ifdef DW_OPAQUE8
+		/* mame-go, 2026-10-07: an opaque 8-bit tile row is put together as
+		   32-bit words in internal RAM and stored with one memcpy, instead
+		   of a byte store per pixel into the PSRAM bitmap (scroll 3 as the
+		   bottom layer and scroll 2 low: cps1_draw_gfx_opaque was 21.6 % of
+		   core 0 in Final Fight, board profile 2026-10-06). The same
+		   pixels: pixel k of a row is the nibble 7-k of its word, from the
+		   top. */
+		if (size <= 32)
+		{
+			uint32_t row[8];
+			for (i=0; i<size; i++)
+			{
+				int y = flipy ? sy-i : sy+i;
+				bm=(DATATYPE *)dest->line[y]+sx;
+				for (j=0; j<size/8; j++)
+				{
+					dwval=*src++;
+					row[2*j] = (uint32_t)(unsigned char)paldata[(dwval>>28)&0x0f]
+					         | (uint32_t)(unsigned char)paldata[(dwval>>24)&0x0f] << 8
+					         | (uint32_t)(unsigned char)paldata[(dwval>>20)&0x0f] << 16
+					         | (uint32_t)(unsigned char)paldata[(dwval>>16)&0x0f] << 24;
+					row[2*j+1] = (uint32_t)(unsigned char)paldata[(dwval>>12)&0x0f]
+					           | (uint32_t)(unsigned char)paldata[(dwval>>8)&0x0f] << 8
+					           | (uint32_t)(unsigned char)paldata[(dwval>>4)&0x0f] << 16
+					           | (uint32_t)(unsigned char)paldata[dwval&0x0f] << 24;
+				}
+				memcpy(bm, row, size);
+				src+=srcdelta;
+			}
+		}
+		else
+#endif
 		{
 			for (i=0; i<size; i++)
 			{
