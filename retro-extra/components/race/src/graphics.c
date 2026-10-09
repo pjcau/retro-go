@@ -12,6 +12,7 @@
 #include "types.h"
 #include "graphics.h"
 #include "race-memory.h"
+#include "race_prof.h"
 
 #if defined(ABGR1555)
 #define RMASK 0x001f
@@ -630,29 +631,39 @@ void drawScrollPlane(unsigned short* draw,
 void myGraphicsBlitLine(unsigned char render)  /* NOTA */
 {
 	int i,x0,x1;
-    if (*scanlineY < 152)
+	/* The VDP registers live in VRAM, and the renderer writes to a frame
+	 * buffer the compiler cannot prove is a different object, so every *reg
+	 * below was re-read from VRAM after each pixel store - *scanlineY alone
+	 * some twenty times a line. Nothing here writes a register (the VBlank
+	 * flag at 0x8010 is set after the line is done), so read each one once. */
+	const unsigned int y = *scanlineY;
+    if (y < 152)
     {
         if(render)
         {
-			unsigned short* draw = &drawBuffer[(*scanlineY)*(screen->w)];
+			unsigned short* draw = &drawBuffer[y*(screen->w)];
 			unsigned short bgcol;
             unsigned int bw = (m_emuInfo.machine == NGP);
             unsigned short OOWCol = NGPC_TO_RGB565(oowTable[*oowSelect & 0x07]);
             unsigned short* pal;
             unsigned short* mempal;
+            const unsigned int wndY = *wndTopLeftY, wndSX = *wndSizeX, wndSY = *wndSizeY;
 
-			if (*scanlineY==0)
+			if (y==0)
 				sortSprites(bw);
-			if (*scanlineY<*wndTopLeftY || *scanlineY>*wndTopLeftY+*wndSizeY || *wndSizeX==0 || *wndSizeY==0)
+			if (y<wndY || y>wndY+wndSY || wndSX==0 || wndSY==0)
 			{
 
+				PROF_GPUSH(PROF_GBG);
 				for (i=0;i<NGPC_SIZEX;i++)
 					draw[i] = OOWCol;
+				PROF_GPOP();
 			}
 			else
 			{
-				if (((*scanlineY)&7) == 0)
+				if ((y&7) == 0)
 				{
+		            PROF_GPUSH(PROF_GPAL);
 		            if (bw)
     		        {
         		        for(i=0;i<4;i++)
@@ -673,6 +684,7 @@ void myGraphicsBlitLine(unsigned char render)  /* NOTA */
 						for (i=0;i<192;i++)
 							*(pal++) = NGPC_TO_RGB565(*(mempal++));
         		    }
+		            PROF_GPOP();
 				}
 
 
@@ -687,60 +699,83 @@ void myGraphicsBlitLine(unsigned char render)  /* NOTA */
         	        
 
 				x0 = *wndTopLeftX;
-				x1 = x0+*wndSizeX;
+				x1 = x0+wndSX;
 				if (x1>NGPC_SIZEX)
 					x1 = NGPC_SIZEX;
 
+				PROF_GPUSH(PROF_GBG);
 				for (i=x0;i<x1;i++)
 					draw[i] = bgcol;
+				PROF_GPOP();
 
-				if (mySprPri40->count[*scanlineY])
-					drawSprites(draw,mySprPri40->refs[*scanlineY],mySprPri40->count[*scanlineY],x0,x1);
+				PROF_GPUSH(PROF_GSPR);
+				if (mySprPri40->count[y])
+					drawSprites(draw,mySprPri40->refs[y],mySprPri40->count[y],x0,x1);
+				PROF_GPOP();
+
+				const unsigned int scrFX = *scrollFrontX, scrFY = *scrollFrontY;
+				const unsigned int scrBX = *scrollBackX, scrBY = *scrollBackY;
 
 	            if (*frame1Pri & 0x80)
 	            {
-        			drawScrollPlane(draw,tile_table_front,64,*scrollFrontX,*scrollFrontY+*scanlineY,x0,x1,bw);
-	            	if (mySprPri80->count[*scanlineY])
-						drawSprites(draw,mySprPri80->refs[*scanlineY],mySprPri80->count[*scanlineY],x0,x1);
+        			PROF_GPUSH(PROF_GSCROLL);
+        			drawScrollPlane(draw,tile_table_front,64,scrFX,scrFY+y,x0,x1,bw);
+        			PROF_GPOP();
+	            	PROF_GPUSH(PROF_GSPR);
+	            	if (mySprPri80->count[y])
+						drawSprites(draw,mySprPri80->refs[y],mySprPri80->count[y],x0,x1);
+	            	PROF_GPOP();
 		        	 
+		        	PROF_GPUSH(PROF_GSCROLL);
 		        	/* NOTA  Wrestling Madness && Big Bang Pro Wrestling */
 		        	if (mainrom[0x000020] != 0x66)
-		        	drawScrollPlane(draw,tile_table_back,128,*scrollBackX,*scrollBackY+*scanlineY,x0,x1,bw);
+		        	drawScrollPlane(draw,tile_table_back,128,scrBX,scrBY+y,x0,x1,bw);
 		        	
 		        	else{
-		        	if (*scrollBackY > 0)
-		        	drawScrollPlane(draw,tile_table_back,128,*scrollBackX,*scrollBackY+*scanlineY,x0,x1,bw);
+		        	if (scrBY > 0)
+		        	drawScrollPlane(draw,tile_table_back,128,scrBX,scrBY+y,x0,x1,bw);
 		        	else 
-		        	drawScrollPlane(draw,tile_table_back,128,1,*scrollBackY+*scanlineY,x0,x1,bw);}
+		        	drawScrollPlane(draw,tile_table_back,128,1,scrBY+y,x0,x1,bw);}
+		        	PROF_GPOP();
 	            
 	            }
 	            else
 	            {
-		        	drawScrollPlane(draw,tile_table_back,128,*scrollBackX,*scrollBackY+*scanlineY,x0,x1,bw);
-					if (mySprPri80->count[*scanlineY])
-						drawSprites(draw,mySprPri80->refs[*scanlineY],mySprPri80->count[*scanlineY],x0,x1);
-	    	    	drawScrollPlane(draw,tile_table_front,64,*scrollFrontX,*scrollFrontY+*scanlineY,x0,x1,bw);
+		        	PROF_GPUSH(PROF_GSCROLL);
+		        	drawScrollPlane(draw,tile_table_back,128,scrBX,scrBY+y,x0,x1,bw);
+		        	PROF_GPOP();
+					PROF_GPUSH(PROF_GSPR);
+					if (mySprPri80->count[y])
+						drawSprites(draw,mySprPri80->refs[y],mySprPri80->count[y],x0,x1);
+					PROF_GPOP();
+	    	    	PROF_GPUSH(PROF_GSCROLL);
+	    	    	drawScrollPlane(draw,tile_table_front,64,scrFX,scrFY+y,x0,x1,bw);
+	    	    	PROF_GPOP();
 	            }
 
-				if (mySprPriC0->count[*scanlineY])
-					drawSprites(draw,mySprPriC0->refs[*scanlineY],mySprPriC0->count[*scanlineY],x0,x1);
+				PROF_GPUSH(PROF_GSPR);
+				if (mySprPriC0->count[y])
+					drawSprites(draw,mySprPriC0->refs[y],mySprPriC0->count[y],x0,x1);
+				PROF_GPOP();
 
+				PROF_GPUSH(PROF_GBG);
 				for (i=0;i<x0;i++)
 					draw[i] = OOWCol;
 				for (i=x1;i<NGPC_SIZEX;i++)
 					draw[i] = OOWCol;
+				PROF_GPOP();
 
 	        }
         }
-        if (*scanlineY == 151)
+        if (y == 151)
         {
             /* start VBlank period */
             tlcsMemWriteB(0x00008010,tlcsMemReadB(0x00008010) | 0x40);
             graphics_paint(render);
         }
-        *scanlineY+= 1;
+        *scanlineY = y + 1;
     }
-    else if (*scanlineY == 198)
+    else if (y == 198)
     {
         /* stop VBlank period */
         tlcsMemWriteB(0x00008010,tlcsMemReadB(0x00008010) & ~0x40);
@@ -748,7 +783,7 @@ void myGraphicsBlitLine(unsigned char render)  /* NOTA */
         *scanlineY = 0;
     }
     else
-        *scanlineY+= 1;
+        *scanlineY = y + 1;
 }
 
 

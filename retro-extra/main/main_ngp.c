@@ -13,6 +13,7 @@
 #include <state.h>
 #include <neopopsound.h>
 #include <neopop_blip.h>
+#include <race_prof.h>
 #include <libretro.h>
 
 #define NGP_WIDTH  160
@@ -157,7 +158,15 @@ void ngp_main(void)
         rg_emu_load_state(app->saveSlot);
 
     rg_system_set_tick_rate(NGP_FPS);
-    app->frameskip = 1;
+    /* 0 = decide per frame, as the NES and PCE cores do. A fixed 1 was the
+     * whole reason only ~29 of the 60 frames a second reached the screen: the
+     * auto-frameskip in rg_system.c only lowers frameskip while it is above 1
+     * (deliberately, to avoid stuttering at the margin), so once an app sets 1
+     * it never draws more than every other frame however much headroom it has.
+     * With 0 the loop below draws every frame and skips one only after a frame
+     * that overran, and rg_system raises it to 1 if the game really cannot keep
+     * up - which is where Metal Slug will end up either way. */
+    app->frameskip = 0;
 
     const int samplesPerFrame = NGP_SAMPLE_RATE / NGP_FPS;
     static int16_t mono[NGP_SAMPLE_RATE / NGP_FPS + 16];
@@ -194,10 +203,13 @@ void ngp_main(void)
 
         if (drawFrame)
         {
+            PROF_PUSH(PROF_SEND);
             slowFrame = !rg_display_sync(false);
             rg_display_submit(currentUpdate, 0);
+            PROF_POP();
         }
 
+        PROF_PUSH(PROF_MIX);
         ngp_sound_update((uint16_t *)mono, samplesPerFrame * sizeof(int16_t));
         dac_update((uint16_t *)mono, samplesPerFrame * sizeof(int16_t));
         for (int i = 0; i < samplesPerFrame; i++)
@@ -207,9 +219,11 @@ void ngp_main(void)
             stereo[2 * i + 1].left = stereo[2 * i + 1].right = mono[i];
             prev = mono[i];
         }
+        PROF_POP();
 
         rg_system_tick(rg_system_timer() - startTime);
         rg_audio_submit(stereo, samplesPerFrame * 2);
+        PROF_FRAME();
 
         if (skipFrames == 0)
         {

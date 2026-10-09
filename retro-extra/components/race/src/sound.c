@@ -27,6 +27,7 @@
 
 #include "neopopsound.h"
 #include "neopop_blip.h"
+#include "race_prof.h"
 
 int sndCycles = 0;
 
@@ -85,9 +86,13 @@ void ngpSoundExecute(void)
 {
 #if defined(DRZ80) || defined(CZ80)
    int toRun = sndCycles/2;
+   /* NGPPROF: called from the TLCS-900H's memory handlers, so the Z80's time
+    * has to be taken out of "tlcs" rather than counted twice. */
+   PROF_PUSH(PROF_Z80);
    if(ngpRunning)
       Z80_Execute(toRun);
    sndCycles -= toRun;
+   PROF_POP();
 #else
    int		elapsed;
    while(sndCycles > 0)
