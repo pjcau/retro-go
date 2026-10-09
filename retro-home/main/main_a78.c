@@ -182,6 +182,8 @@ void a78_main(void)
         bool drawFrame = skipFrames == 0;
         bool slowFrame = false;
 
+        // a frame that will not be shown is emulated without its picture
+        maria_skip_write = !drawFrame;
         const int64_t prof_start = rg_system_timer();
         prosystem_ExecuteFrame(input);
         prof_frame_us += rg_system_timer() - prof_start;

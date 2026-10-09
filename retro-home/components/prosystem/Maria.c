@@ -52,6 +52,10 @@ static uint8_t maria_wmode;
  * CTRL for every empty cell; the 6502 does not run while a line is stored,
  * so it is read once per line (maria_StoreLineRAM). */
 static uint8_t maria_kmode;
+/* retro-home: set by the front end for a frame it will not show. The line
+ * colours are then not written to maria_surface; MARIA's DMA (the line RAM,
+ * the cycles it takes from the 6502, the NMIs) runs as before. */
+bool maria_skip_write = false;
 
 #ifdef RETRO_GO
 #include <esp_attr.h>
@@ -348,7 +352,7 @@ MARIA_HOT uint32_t maria_RenderScanline(void)
          if(maria_ReadByte(maria_dpp.w) & 128)
             sally_ExecuteNMI();
       }
-      else if(maria_scanline >= maria_visibleArea.top && maria_scanline <= maria_visibleArea.bottom)
+      else if(!maria_skip_write && maria_scanline >= maria_visibleArea.top && maria_scanline <= maria_visibleArea.bottom)
          maria_WriteLineRAM(maria_surface + ((maria_scanline - maria_displayArea.top) * Rect_GetLength(&maria_displayArea)));
 
       if(maria_scanline != maria_displayArea.bottom)

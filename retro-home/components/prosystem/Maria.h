@@ -43,6 +43,7 @@ extern rect maria_displayArea;
 extern rect maria_visibleArea;
 extern uint8_t maria_surface[MARIA_SURFACE_SIZE];
 extern uint16_t maria_scanline;
+extern bool maria_skip_write;
 
 #ifdef __cplusplus
 }
