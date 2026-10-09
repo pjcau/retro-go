@@ -167,12 +167,23 @@ static const char *const zone_tag_names[PU_MAX] = {
 
 void Z_LogStats(const char *where)
 {
-  size_t total = 0;
+  size_t total = 0, blocks = 0, site_total = 0, site_blocks = 0;
   size_t order[8];
   int shown = 0;
 
   for (int tag = 0; tag < PU_MAX; tag++)
-    total += zone_bytes[tag];
+    total += zone_bytes[tag], blocks += zone_blocks[tag];
+
+  /* The per-tag and the per-site totals are kept by different code (only
+   * Z_ChangeTag touches tags, only zone_resite touches sites), so they
+   * agreeing is a check on both. A report saying MISMATCH means the numbers
+   * below cannot be trusted, not that something leaked. */
+  for (int i = 0; i < ZONE_SITES; i++)
+    site_total += zone_sites[i].bytes, site_blocks += zone_sites[i].blocks;
+  if (site_total != total || site_blocks != blocks)
+    lprintf(LO_INFO, "DOOMMEM MISMATCH sites %u/%u tags %u/%u\n",
+            (unsigned)site_total, (unsigned)site_blocks,
+            (unsigned)total, (unsigned)blocks);
 
   lprintf(LO_INFO, "DOOMMEM %s zone %u B (%+d since last)", where,
           (unsigned)total, (int)(total - zone_total_prev));
