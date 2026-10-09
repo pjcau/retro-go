@@ -170,13 +170,18 @@ static boolean P_CheckForZDoomNodes(int lumpnum, int gl_lumpnum)
 {
   const void *data;
 
+  /* Only the first four bytes are wanted, and the lumps are loaded properly
+   * later, so both are unlocked again: a locked lump stays PU_STATIC for the
+   * rest of the run and NODES + SSECTORS are tens of KB of a level. */
   data = W_CacheLumpNum(lumpnum + ML_NODES);
   if (*(const int *)data == ZNOD)
     I_Error("P_CheckForZDoomNodes: ZDoom nodes not supported yet");
+  W_UnlockLumpNum(lumpnum + ML_NODES);
 
   data = W_CacheLumpNum(lumpnum + ML_SSECTORS);
   if (*(const int *)data == ZGLN)
     I_Error("P_CheckForZDoomNodes: ZDoom GL nodes not supported yet");
+  W_UnlockLumpNum(lumpnum + ML_SSECTORS);
 
   return false;
 }
@@ -188,10 +193,12 @@ static boolean P_CheckForZDoomNodes(int lumpnum, int gl_lumpnum)
 static void P_GetNodesVersion(int lumpnum, int gl_lumpnum)
 {
   const void *data;
+  boolean gl_segs_locked = false;
 
   data = W_CacheLumpNum(gl_lumpnum+ML_GL_VERTS);
   if ( (gl_lumpnum > lumpnum) && (compatibility_level >= prboom_2_compatibility) ) {
     if (*(const int *)data == gNd2) {
+      gl_segs_locked = true;
       data = W_CacheLumpNum(gl_lumpnum+ML_GL_SEGS);
       if (*(const int *)data == gNd3) {
         nodesVersion = gNd3;
@@ -218,6 +225,12 @@ static void P_GetNodesVersion(int lumpnum, int gl_lumpnum)
     if (P_CheckForZDoomNodes(lumpnum, gl_lumpnum))
       I_Error("P_GetNodesVersion: ZDoom nodes not supported yet");
   }
+
+  /* Same as above: the magic number is all that was read from these. The
+   * other paths above end in I_Error, so this covers every surviving one. */
+  W_UnlockLumpNum(gl_lumpnum+ML_GL_VERTS);
+  if (gl_segs_locked)
+    W_UnlockLumpNum(gl_lumpnum+ML_GL_SEGS);
 }
 
 //
