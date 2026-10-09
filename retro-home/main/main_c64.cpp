@@ -13,6 +13,13 @@
         /retro-go/bios/c64/chargen.rom   4096 bytes
     A missing one is named in an alert, then the app exits.
 
+    PAL or NTSC -- the machine is one or the other, and a game written for
+    the wrong one plays a fifth too slow or too fast. "Video" in the options
+    menu is Auto, PAL or NTSC; Auto reads the dump's file name ("(USA)",
+    "(NTSC)" -> the NTSC machine, anything else PAL). Changing it restarts
+    the program, because the raster counter and the CIA timers are in the
+    machine's own clock.
+
     Games -- .prg, .d64 or a .zip holding either. A .prg is put in RAM at its
     own load address; of a .d64 the FIRST program file of the directory is
     loaded the same way. Nothing has to be typed: once the KERNAL has printed
@@ -34,6 +41,7 @@
         R           RETURN
         MENU        retro-go's game menu
         OPTION      retro-go's options menu, which holds:
+                      "Video"          Auto, PAL or NTSC
                       "Joystick port"  2 or 1
                       "Type key"       pick a key with left/right, A sends it
                                        (A-Z, 0-9, SPACE, RETURN, RUN/STOP,
@@ -43,6 +51,7 @@
 
 #include "shared.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,10 +59,14 @@
 #include "c64.h"
 #include "c64_emuapi.h"
 #include "c64_sid.h"
-#include "c64_machine.h"
 
-#define C64_FPS 50
+/* The audio output rate never changes; what changes with the region is how
+   many of its samples one frame is worth. The buffers are sized for PAL,
+   which is the slower frame rate and so the bigger frame. */
 #define C64_RATE AUDIO_SAMPLE_RATE
+#define C64_PAL_FPS 50
+#define C64_NTSC_FPS 60
+#define C64_MAX_SAMPLES (C64_RATE / C64_PAL_FPS + 2)
 
 static rg_app_t *app;
 static rg_surface_t *update;
@@ -71,6 +84,85 @@ static int phase_frames;
 
 static uint32_t joystick;
 static int joy_bits; /* C64_JOY*_* for the core, refreshed once a frame */
+
+/* ---------------------------------------------------------------------- */
+/* PAL or NTSC                                                            */
+/* ---------------------------------------------------------------------- */
+/*
+  A C64 program was written for one machine or the other, and the two differ
+  by 20 % in frame rate, so running an NTSC game on the PAL machine is not a
+  matter of taste -- it plays a fifth too slow, with its music to match.
+
+  The setting is per app (not per file): "Video" in the options menu, Auto by
+  default, and Auto reads the file name. It is applied at c64_init() time, so
+  changing it restarts the program.
+*/
+enum video_choice
+{
+    VIDEO_AUTO = 0,
+    VIDEO_PAL = 1,
+    VIDEO_NTSC = 2
+};
+#define SETTING_VIDEO "video"
+
+static enum video_choice video;
+static int fps = C64_PAL_FPS;
+static bool region_change_pending;
+
+/* The name Auto reads: the file the launcher picked, not prg_name -- that is
+   the program's name inside a .d64, and the tag is on the file. */
+static const char *rom_file_name = "";
+
+static bool name_has(const char *name, const char *tag)
+{
+    const size_t n = strlen(tag);
+    for (const char *p = name; *p; p++)
+    {
+        size_t i = 0;
+        while (i < n && p[i] && tolower((unsigned char)p[i]) == tag[i])
+            i++;
+        if (i == n)
+            return true;
+    }
+    return false;
+}
+
+/* What Auto makes of the file name. The dump sets tag the machine in the
+   name, so "(NTSC)", "[NTSC]" or "(USA)" is a 6567; a European tag, and
+   anything untagged, is the PAL machine the C64 sold most of. */
+static c64_region_t region_from_name(const char *name)
+{
+    static const char *pal_tags[] = {"(pal", "[pal", "(europe", "(e)", "(uk", "(germany", "(france"};
+    static const char *ntsc_tags[] = {"(ntsc", "[ntsc", "(usa", "[usa", "(us)", "(u)", "(japan", "(canada"};
+
+    for (size_t i = 0; i < RG_COUNT(pal_tags); i++)
+        if (name_has(name, pal_tags[i]))
+            return C64_REGION_PAL;
+    for (size_t i = 0; i < RG_COUNT(ntsc_tags); i++)
+        if (name_has(name, ntsc_tags[i]))
+            return C64_REGION_NTSC;
+    return C64_REGION_PAL;
+}
+
+static c64_region_t chosen_region(void)
+{
+    if (video == VIDEO_PAL)
+        return C64_REGION_PAL;
+    if (video == VIDEO_NTSC)
+        return C64_REGION_NTSC;
+    return region_from_name(rom_file_name);
+}
+
+/* The machine, the SID's clock and retro-go's frame pacing all move together.
+   c64_init() has to follow (reset_handler does it), because the raster
+   counter and the CIA timers are in the old clock. */
+static void apply_region(c64_region_t r)
+{
+    fps = (r == C64_REGION_NTSC) ? C64_NTSC_FPS : C64_PAL_FPS;
+    c64_set_region(r);
+    c64_sid_init(c64_clock_speed(), (float)C64_RATE);
+    rg_system_set_tick_rate(fps);
+}
 
 /* ---------------------------------------------------------------------- */
 /* The program image, and the file calls the patched KERNAL LOAD uses      */
@@ -237,8 +329,29 @@ static rg_gui_event_t type_key_cb(rg_gui_option_t *option, rg_gui_event_t event)
     return RG_DIALOG_VOID;
 }
 
+static rg_gui_event_t video_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT || event == RG_DIALOG_ENTER)
+    {
+        const int step = (event == RG_DIALOG_PREV) ? 2 : 1;
+        video = (enum video_choice)((video + step) % 3);
+        rg_settings_set_number(NS_APP, SETTING_VIDEO, video);
+        /* Done at the top of the frame loop: it restarts the machine. */
+        region_change_pending = true;
+    }
+
+    if (video == VIDEO_PAL)
+        strcpy(option->value, "PAL");
+    else if (video == VIDEO_NTSC)
+        strcpy(option->value, "NTSC");
+    else
+        sprintf(option->value, "Auto (%s)", chosen_region() == C64_REGION_NTSC ? "NTSC" : "PAL");
+    return RG_DIALOG_VOID;
+}
+
 static void options_handler(rg_gui_option_t *dest)
 {
+    *dest++ = rg_gui_option_t{0, _("Video"), (char *)"-", RG_DIALOG_FLAG_NORMAL, &video_cb};
     *dest++ = rg_gui_option_t{0, _("Joystick port"), (char *)"-", RG_DIALOG_FLAG_NORMAL, &joystick_port_cb};
     *dest++ = rg_gui_option_t{0, _("Type key"), (char *)"-", RG_DIALOG_FLAG_NORMAL, &type_key_cb};
     *dest++ = rg_gui_option_t RG_DIALOG_END;
@@ -544,18 +657,19 @@ extern "C" void c64_main(void)
 
     build_named_keys();
 
-    c64_sid_init(CLOCKSPEED, (float)C64_RATE);
+    rom_file_name = rg_basename(app->romPath);
+    video = (enum video_choice)rg_settings_get_number(NS_APP, SETTING_VIDEO, VIDEO_AUTO);
+    apply_region(chosen_region());
     c64_joystick_port(2);
     c64_init();
 
-    RG_LOGI("C64 started: PAL, %d raster lines, %d cycles/frame, audio %d Hz", c64_lines_per_frame(),
-            c64_cycles_per_frame(), C64_RATE);
+    RG_LOGI("C64 started: %s, %d raster lines, %d cycles/frame, %d fps, audio %d Hz",
+            c64_region_name(), c64_lines_per_frame(), c64_cycles_per_frame(), fps, C64_RATE);
 
-    rg_system_set_tick_rate(C64_FPS);
     app->frameskip = -1;
 
-    static int16_t mono[C64_RATE / C64_FPS + 2];
-    static rg_audio_sample_t stereo[C64_RATE / C64_FPS + 2];
+    static int16_t mono[C64_MAX_SAMPLES];
+    static rg_audio_sample_t stereo[C64_MAX_SAMPLES];
     int sample_frac = 0;
     int skipFrames = 0;
 
@@ -574,6 +688,16 @@ extern "C" void c64_main(void)
 
     while (true)
     {
+        if (region_change_pending)
+        {
+            region_change_pending = false;
+            apply_region(chosen_region());
+            sample_frac = 0;
+            reset_handler(true);
+            RG_LOGI("C64 now %s: %d raster lines, %d cycles/frame, %d fps", c64_region_name(),
+                    c64_lines_per_frame(), c64_cycles_per_frame(), fps);
+        }
+
         joystick = rg_input_read_gamepad();
 
         if (joystick & RG_KEY_MENU)
@@ -655,10 +779,12 @@ extern "C" void c64_main(void)
             rg_display_submit(update, 0);
         }
 
-        sample_frac += C64_RATE % C64_FPS;
-        const int samples = C64_RATE / C64_FPS + (sample_frac >= C64_FPS ? 1 : 0);
-        if (sample_frac >= C64_FPS)
-            sample_frac -= C64_FPS;
+        /* 32000 Hz out whatever the region: only how many samples a frame is
+           worth changes, 640 on PAL and 533 or 534 on NTSC. */
+        sample_frac += C64_RATE % fps;
+        const int samples = C64_RATE / fps + (sample_frac >= fps ? 1 : 0);
+        if (sample_frac >= fps)
+            sample_frac -= fps;
         c64_sid_render(mono, samples, c64_cycles_per_frame());
         for (int i = 0; i < samples; i++)
             stereo[i].left = stereo[i].right = mono[i];
