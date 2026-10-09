@@ -66,6 +66,11 @@ void DrZ80ngpPortWriteB(unsigned short port, unsigned char data);
 unsigned char DrZ80ngpPortReadB(unsigned short port);
 #endif
 
+/* The five addresses the Koyote hack intercepts all sit inside 0x6DA2..0x6F85,
+ * so one range test takes the place of five compares on every access that lands
+ * in work RAM - which is nearly all of them. */
+#define RACE_KOYOTE_HACK(addr) ((unsigned int)((addr) - 0x6DA2u) <= 0x6F85u - 0x6DA2u)
+
 static INLINE unsigned char *get_address(unsigned int addr)
 {
    addr&= 0x00FFFFFF;
@@ -75,6 +80,7 @@ static INLINE unsigned char *get_address(unsigned int addr)
          return &cpuram[addr];
       if (addr>0x00003fff && addr<0x00018000)
       {
+         if (RACE_KOYOTE_HACK(addr))
          switch (addr)  /* Thanks Koyote */
          {
             case 0x6F80:
@@ -112,7 +118,13 @@ static INLINE unsigned char *get_address(unsigned int addr)
    return 0;  /* Flavor ERROR */
 }
 
-/* read a byte from a memory address (addr) */
+/* read a byte from a memory address (addr)
+ *
+ * Work RAM and the cart are tested first because that is where nearly every
+ * read lands: on NGP code compiled by cc900 the hottest instruction by far is
+ * the 24-bit absolute byte load (opcode 0xC2), which is this function inlined.
+ * The ordering and the Koyote range test below are the whole change - every
+ * address range still returns exactly what it did. */
 static INLINE unsigned char tlcsMemReadB(unsigned int addr)
 {
 	addr&= 0x00FFFFFF;
@@ -120,47 +132,42 @@ static INLINE unsigned char tlcsMemReadB(unsigned int addr)
 	if(currentCommand == COMMAND_INFO_READ)
         return flashReadInfo(addr);
 
-	if (addr < 0x00200000)
-   {
-      if (addr < 0x000008A0)
-      {
-         if(addr == 0xBC)
-            ngpSoundExecute();
-         return cpuram[addr];
-      }
-      else if (addr > 0x00003FFF && addr < 0x00018000)
-      {
-         switch (addr)  /* Thanks Koyote */
-         {
-            case 0x6DA2:
-               return 0x80;
-            case 0x6F80:
-               return 0xFF;
-            case 0x6F80+1:
-               return 0x03;
-            case 0x6F85:
-               return 0x00;
-            case 0x6F82:
-               return ngpInputState;
-            default:
-               break;
-         }
-         return mainram[addr-0x00004000];
-      }
-   }
-	else
+	if (addr - 0x00004000u < 0x00014000u)        /* work RAM */
 	{
-		if (addr<0x00400000)
-            return mainrom[(addr-0x00200000)/*&cartAddrMask*/];
-		if (addr<0x00800000)
-            return 0xFF;
-		if (addr<0x00a00000)
-            return mainrom[(addr-(0x00800000-0x00200000))/*&cartAddrMask*/];
-		if (addr<0x00ff0000)
-            return 0xFF;
-		return cpurom[addr-0x00ff0000];
+		if (RACE_KOYOTE_HACK(addr))
+		switch (addr)  /* Thanks Koyote */
+		{
+			case 0x6DA2:
+				return 0x80;
+			case 0x6F80:
+				return 0xFF;
+			case 0x6F80+1:
+				return 0x03;
+			case 0x6F85:
+				return 0x00;
+			case 0x6F82:
+				return ngpInputState;
+			default:
+				break;
+		}
+		return mainram[addr-0x00004000];
 	}
-	return 0xFF;
+	if (addr - 0x00200000u < 0x00200000u)        /* cart, first 2 MB */
+		return mainrom[(addr-0x00200000)/*&cartAddrMask*/];
+
+	if (addr < 0x000008A0)
+	{
+		if(addr == 0xBC)
+			ngpSoundExecute();
+		return cpuram[addr];
+	}
+	if (addr < 0x00800000)                        /* 0x8A0..0x3FFF, 0x18000.. */
+		return 0xFF;
+	if (addr<0x00a00000)
+		return mainrom[(addr-(0x00800000-0x00200000))/*&cartAddrMask*/];
+	if (addr<0x00ff0000)
+		return 0xFF;
+	return cpurom[addr-0x00ff0000];
 }
 
 /* read a word from a memory address (addr) */
