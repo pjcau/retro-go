@@ -11,4 +11,11 @@ include(../base.cmake)
 if(DEFINED ENV{DOOMMEM} AND NOT "$ENV{DOOMMEM}" STREQUAL "0")
     idf_build_set_property(COMPILE_DEFINITIONS "-DDOOMMEM=1" APPEND)
 endif()
+# `DOOMWARP=40 DOOMMEM=1 python rg_tool.py ... build prboom-go`: a multi-level
+# bench needing no pad and no level exit - E1M1 starts by itself, the next map
+# every <seconds>, E1M1..E1M9 twice, then it stops. The value is the seconds
+# spent in each map, so 40 is an 18-load run of twelve minutes (main/main.c).
+if(DEFINED ENV{DOOMWARP} AND NOT "$ENV{DOOMWARP}" STREQUAL "0")
+    idf_build_set_property(COMPILE_DEFINITIONS "-DDOOMWARP=$ENV{DOOMWARP}" APPEND)
+endif()
 project(prboom-go)

@@ -450,6 +450,10 @@ void I_SetMusicVolume(int volume)
     music_player->setvolume(volume);
 }
 
+#ifdef DOOMWARP
+static void warp_bench(void);           // the level-load bench, defined below
+#endif
+
 void I_StartTic(void)
 {
     static int64_t last_time = 0;
@@ -458,6 +462,10 @@ void I_StartTic(void)
     uint32_t joystick = rg_input_read_gamepad();
     uint32_t changed = prev_joystick ^ joystick;
     event_t event = {0};
+
+#ifdef DOOMWARP
+    warp_bench();
+#endif
 
     // Long press on menu will open retro-go's menu if needed, instead of DOOM's.
     // This is still needed to quit (DOOM 2) and for the debug menu. We'll unify that mess soon...
@@ -588,19 +596,63 @@ static void doom_main_task(void *arg)
  *
  * The counters are read without a lock while the game task allocates, so a
  * single report can be off by one block; the trend is what it is for. */
-static void log_memory(void)
+static void log_memory(const char *what)
 {
     multi_heap_info_t internal, spiram;
-    char where[96];
+    char where[128];
 
     heap_caps_get_info(&internal, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     heap_caps_get_info(&spiram, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
-    snprintf(where, sizeof(where), "up=%us int=%u(%u) ext=%u(%u)",
+    snprintf(where, sizeof(where), "%sup=%us int=%u(%u) ext=%u(%u)", what,
              (unsigned)(rg_system_timer() / 1000000),
              (unsigned)internal.total_free_bytes, (unsigned)internal.largest_free_block,
              (unsigned)spiram.total_free_bytes, (unsigned)spiram.largest_free_block);
     Z_LogStats(where);
+}
+#endif
+
+#ifdef DOOMWARP
+/* `DOOMWARP=<seconds> python rg_tool.py ... build prboom-go`: a multi-level
+ * bench that needs no pad and no level exit. It starts E1M1 by itself and
+ * warps to the next map every <seconds>, E1M1..E1M9 twice, then stops and
+ * stays in the last one. With DOOMMEM=1 each warp logs what the zone holds
+ * first, so a level load costs exactly one line (load=N map=E1MX ...).
+ *
+ * The warp is the IDCLEV path (m_cheat.c:450): no intermission, no save.
+ * The player stands still, so the lump cache fills less than in real play -
+ * this measures what a LOAD leaves behind, not what playing costs. */
+#define DOOMWARP_LOADS 18
+
+static void warp_bench(void)
+{
+    static int64_t next_warp;
+    static int load;                    // 0 before the first level is asked for
+    int64_t now = rg_system_timer();
+
+    if (!load)                          // leave the title screen without a key
+    {
+        load = 1;
+        next_warp = now + DOOMWARP * 1000000;
+        G_DeferedInitNew(sk_medium, 1, 1);
+        return;
+    }
+
+    if (load > DOOMWARP_LOADS || gamestate != GS_LEVEL || now < next_warp)
+        return;
+
+    next_warp = now + DOOMWARP * 1000000;
+#if defined(DOOMMEM) && defined(ESP_PLATFORM)
+    {
+        char what[40];
+        snprintf(what, sizeof(what), "load=%d map=E1M%d ", load, (load - 1) % 9 + 1);
+        log_memory(what);
+    }
+#endif
+    if (++load <= DOOMWARP_LOADS)
+        G_DeferedInitNew(sk_medium, 1, (load - 1) % 9 + 1);
+    else
+        RG_LOGI("DOOMWARP: %d level loads done\n", DOOMWARP_LOADS);
 }
 #endif
 
@@ -671,7 +723,7 @@ void app_main()
             RG_LOGI("doom_main stack free: %u bytes of %u\n",
                     (unsigned)uxTaskGetStackHighWaterMark(doom_task), DOOM_STACK_SIZE);
 #ifdef DOOMMEM
-            log_memory();
+            log_memory("");
 #endif
         }
     }
