@@ -290,7 +290,44 @@ static MARIA_HOT void maria_StoreLineRAM(void)
          maria_dp.w += 5;
       }
 
-      if(!indirect)
+      if(!indirect && !maria_wmode && cartridge_type != CARTRIDGE_TYPE_SOUPER)
+      {
+         /* retro-home: a direct 160A/320A object on an ordinary cartridge,
+          * with MARIA's state in locals for the whole object instead of
+          * re-read from the statics for every byte. Cells that would reach
+          * past the line, and holey DMA, take maria_StoreGraphic's path. */
+         int index;
+         uint8_t *const line = maria_lineRAM;
+         const uint8_t palette = maria_palette, kmode = maria_kmode;
+         uint8_t horizontal = maria_horizontal;
+         maria_pp.b.h += maria_offset;
+         uint16_t pp = maria_pp.w;
+         maria_cycles += 3 * width;
+         for(index = 0; index < width; index++)
+         {
+            const bool holey = pp > 32767 && ((maria_h16 && (pp & 4096)) || (maria_h08 && (pp & 2048)));
+            if(holey || horizontal > MARIA_LINERAM_SIZE - 4)
+            {
+               maria_horizontal = horizontal;
+               maria_pp.w = pp;
+               maria_StoreGraphic();
+               horizontal = maria_horizontal;
+               pp = maria_pp.w;
+               continue;
+            }
+            const uint8_t data = memory_ram[pp++];
+            uint8_t *cell = &line[horizontal];
+            const uint8_t p0 = data >> 6, p1 = (data >> 4) & 3, p2 = (data >> 2) & 3, p3 = data & 3;
+            if(p0) cell[0] = palette | p0; else if(kmode) cell[0] = 0;
+            if(p1) cell[1] = palette | p1; else if(kmode) cell[1] = 0;
+            if(p2) cell[2] = palette | p2; else if(kmode) cell[2] = 0;
+            if(p3) cell[3] = palette | p3; else if(kmode) cell[3] = 0;
+            horizontal += 4;
+         }
+         maria_horizontal = horizontal;
+         maria_pp.w = pp;
+      }
+      else if(!indirect)
       {
          int index;
          maria_pp.b.h += maria_offset;
