@@ -7,11 +7,21 @@ and behaviour questions without a board.
 
     cd prboom-go/tools/host
     ./build.sh
-    build/doomhost doom1.wad 40000 2000 attract
+    build/doomhost doom1.wad 40000 2000 attract      # the demo loop
+    build/doomhost doom1.wad 21000 700 warp 700      # E1M1..E1M9 over and over
 
-Arguments: the IWAD, how many tics to run, how often to report, and `attract`
-for the title screen's demo loop (which reloads a level every couple of
-minutes) instead of a single demo on one map.
+Arguments: the IWAD, how many tics to run, how often to report, then a mode.
+
+| mode | what it runs |
+|:---|:---|
+| (none) | one demo: continuous play on a single map |
+| `attract` | the title screen's demo loop, a level reload every couple of minutes |
+| `warp <tics>` | E1M1..E1M9 over and over, `<tics>` in each, reporting just before every load |
+
+`warp` is the host twin of the firmware's `DOOMWARP=<seconds>` bench. Its
+reports carry `load=N map=E1MX` and `frame=<hash>`, a hash of the frame last
+drawn: the run is deterministic, so a change meant to be invisible has to
+leave every one of those hashes alone.
 
 The engine is built with `DOOMMEM=1`, so every report is the same
 `Z_LogStats()` line the firmware prints (see `prboom-go/CMakeLists.txt`):

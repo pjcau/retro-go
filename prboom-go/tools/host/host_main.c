@@ -226,10 +226,23 @@ void I_Init(void)
   usegamma = 0;
 }
 
+/* A hash of the frame last drawn. In warp mode the run is deterministic (no
+ * input, DOOM's own PRNG), so these are reproducible, and a change that is
+ * meant to be invisible must leave them all alone. */
+static uint32_t host_frame_hash(void)
+{
+  uint32_t h = 2166136261u;
+  for (size_t i = 0; i < sizeof(host_screen); i++)
+    h = (h ^ host_screen[i]) * 16777619u;
+  return h;
+}
+
 /* -- the harness -------------------------------------------------------- */
 static const char *host_argv[16];
 static int host_tics = 20000;
 static int host_report_every = 1000;
+static int host_warp;                    /* tics to spend in each map, 0 = off */
+static int host_map;
 
 /* One tic per D_DoomLoop iteration: the engine runs as fast as the CPU. */
 void host_tick(void)
@@ -239,7 +252,20 @@ void host_tick(void)
 
   host_mix();
 
-  if (tic / host_report_every != reported)
+  /* "warp" mode: E1M1..E1M9 over and over, reporting just before each load,
+   * which is what shows what a level load leaves behind. */
+  if (host_warp && tic >= (host_map + 1) * host_warp)
+  {
+    char where[64];
+    snprintf(where, sizeof(where), "load=%d map=E1M%d tic=%d frame=%08x",
+             host_map + 1, host_map % 9 + 1, tic, host_frame_hash());
+    Z_LogStats(where);
+    fflush(stdout);
+    host_map++;
+    G_DeferedInitNew(sk_medium, 1, host_map % 9 + 1);
+  }
+
+  if (!host_warp && tic / host_report_every != reported)
   {
     reported = tic / host_report_every;
     char where[64];
@@ -281,7 +307,14 @@ int main(int argc, char **argv)
   /* Without "attract": play one demo (continuous play on a single map).
    * With it: the title screen's demo loop, which reloads a level every
    * couple of minutes - that is where a per-level leak shows. */
-  if (!(argc > 4 && !strcmp(argv[4], "attract")))
+  /* "attract": the title screen's demo loop, which reloads a level every
+   *   couple of minutes.
+   * "warp <tics>": E1M1..E1M9 over and over, <tics> in each - what a level
+   *   load leaves behind, measured per load.
+   * Neither: one demo, continuous play on a single map. */
+  if (argc > 4 && !strcmp(argv[4], "warp"))
+    host_warp = argc > 5 ? atoi(argv[5]) : 700;
+  else if (strcmp(argc > 4 ? argv[4] : "", "attract"))
   {
     host_argv[myargc++] = "-playdemo";
     host_argv[myargc++] = "demo1";
