@@ -183,11 +183,29 @@ static void c1_dump(void)
         memset(a, 0, sizeof(c1));
     }
 }
+/* The tables are claimed before the ROM cache takes PSRAM: during a game only
+   ~17 KB of it is free, heap_caps_calloc returned NULL, and the sampler then
+   did nothing at all without saying so (the 2026-10-09 GBA runs produced no
+   GBASAMPLE line for that reason). */
+static void samp_alloc(void)
+{
+    samp = heap_caps_calloc(SAMP_N, sizeof(*samp), MALLOC_CAP_SPIRAM);
+    samp1 = heap_caps_calloc(SAMP1_N, sizeof(*samp1), MALLOC_CAP_SPIRAM);
+    if (samp && samp1)
+        RG_LOGI("sampling profiler: %u KB of PSRAM claimed before the ROM cache",
+                (unsigned)((SAMP_N * sizeof(*samp) + SAMP1_N * sizeof(*samp1)) / 1024));
+    else
+        RG_LOGE("sampling profiler: %u KB of PSRAM REFUSED, there will be no GBASAMPLE",
+                (unsigned)((SAMP_N * sizeof(*samp) + SAMP1_N * sizeof(*samp1)) / 1024));
+}
 static void samp_dump(void)
 {
     uint32_t total = 0;
     if (!samp)
+    {
+        printf("GBASAMPLE unavailable: the tables were refused at startup\n");
         return;
+    }
     samp_on = false;
     uint32_t jit = 0, jit_ram = 0;
 #ifdef HAVE_DYNAREC
@@ -676,6 +694,9 @@ void app_main(void)
     }
 #endif
     sram_alloc();   /* before the ROM cache: during a game PSRAM is full */
+#ifdef GBAPROF
+    samp_alloc();   /* the same, and for the same reason */
+#endif
     init_gamepak_buffer();
     RG_LOGI("ROM cache: %u blocks of 1 MB", (unsigned)gamepak_buffer_count);
     init_sound();
@@ -958,8 +979,6 @@ void app_main(void)
                 static int seconds;
                 if (++seconds == 4)
                 {
-                    samp = heap_caps_calloc(SAMP_N, sizeof(*samp), MALLOC_CAP_SPIRAM);
-                    samp1 = heap_caps_calloc(SAMP1_N, sizeof(*samp1), MALLOC_CAP_SPIRAM);
                     esp_register_freertos_tick_hook_for_cpu(samp_tick, 0);
                     esp_register_freertos_tick_hook_for_cpu(c1_tick, 1);
                     samp_on = true;
