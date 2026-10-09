@@ -52,6 +52,49 @@ extern CONSTROM rarray_t PLA_READ[8];
 extern CONSTROM warray_t PLA_WRITE[8];
 
 /* ------------------------------------------------------------------------ */
+/* Video standard                                                           */
+/* ------------------------------------------------------------------------ */
+/*
+  The machine starts up as a PAL 6569, which is what MCUME's build settings
+  fixed it to. c64_set_region() is the only writer; everything that used to
+  be a #if in c64_machine.h reads these.
+
+  The right-hand blanking is where the two cycle counts differ: a raster line
+  is 10 cycles of left blanking, the sprite cycles, the display, then 2
+  cycles of right blanking on a 6569 and 4 on a 6567R8 -- 63 and 65 cycles.
+
+  They keep their PAL initialisers so that they land in .data: linker.lf puts
+  this component's .bss in the external RAM, and the VIC reads these on every
+  raster line.
+*/
+int c64_rg_lines = 312;
+int c64_rg_line_cycles = 63;
+int c64_rg_right_hblank = 2;
+float c64_rg_clock = 17734475.0f / 18.0f;
+
+static c64_region_t region = C64_REGION_PAL;
+
+void c64_set_region(c64_region_t r)
+{
+	region = r;
+	if (r == C64_REGION_NTSC) {
+		c64_rg_lines = 263;
+		c64_rg_line_cycles = 65;
+		c64_rg_right_hblank = 4;
+		c64_rg_clock = 14318180.0f / 14.0f; /* 1022727.14 Hz */
+	} else {
+		c64_rg_lines = 312;
+		c64_rg_line_cycles = 63;
+		c64_rg_right_hblank = 2;
+		c64_rg_clock = 17734475.0f / 18.0f; /* 985248.61 Hz */
+	}
+}
+
+c64_region_t c64_get_region(void) { return region; }
+const char *c64_region_name(void) { return region == C64_REGION_NTSC ? "NTSC" : "PAL"; }
+float c64_clock_speed(void) { return c64_rg_clock; }
+
+/* ------------------------------------------------------------------------ */
 /* Keyboard matrix                                                          */
 /* ------------------------------------------------------------------------ */
 /*
@@ -253,8 +296,8 @@ void c64_run_line(void)
 	vic_do();
 
 	/* The line the VIC has just drawn, if it was a visible one. */
-	const int display_line = cpu.vic.rasterLine - C64_FIRST_DISPLAY_LINE;
-	if (c64_framebuffer && display_line >= 0 && display_line < C64_SCREEN_HEIGHT)
+	const int display_line = c64_display_row(cpu.vic.rasterLine);
+	if (c64_framebuffer && display_line >= 0)
 		memcpy(c64_framebuffer + (unsigned)display_line * C64_SCREEN_WIDTH, c64_line_buffer,
 		       sizeof(c64_line_buffer));
 
@@ -345,6 +388,7 @@ struct c64_state_header {
 	uint32_t version;
 	uint32_t cpu_size;
 	uint32_t sid_size;
+	uint32_t region; /* c64_region_t: a PAL state does not fit an NTSC machine */
 };
 
 size_t c64_state_size(void)
@@ -358,7 +402,8 @@ bool c64_state_save(void *dest, size_t size)
 		return false;
 
 	struct c64_state_header header = {
-		C64_STATE_MAGIC, 1, (uint32_t)sizeof(cpu), (uint32_t)c64_sid_state_size(),
+		C64_STATE_MAGIC, 2, (uint32_t)sizeof(cpu), (uint32_t)c64_sid_state_size(),
+		(uint32_t)region,
 	};
 	uint8_t *p = (uint8_t *)dest;
 	memcpy(p, &header, sizeof(header));
@@ -377,8 +422,14 @@ bool c64_state_load(const void *src, size_t size)
 	struct c64_state_header header;
 	const uint8_t *p = (const uint8_t *)src;
 	memcpy(&header, p, sizeof(header));
-	if (header.magic != C64_STATE_MAGIC || header.version != 1 ||
+	if (header.magic != C64_STATE_MAGIC || header.version != 2 ||
 	    header.cpu_size != sizeof(cpu) || header.sid_size != (uint32_t)c64_sid_state_size())
+		return false;
+	/* The raster counter, the CIA timers and the SID's cycle debt are all in
+	   the machine's own clock, so a state only fits the machine that wrote
+	   it. Refusing is the honest answer: the front end would otherwise show
+	   a PAL game running on a 263-line VIC. */
+	if (header.region != (uint32_t)region)
 		return false;
 	p += sizeof(header);
 

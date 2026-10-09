@@ -26,6 +26,25 @@ extern "C" {
    LOAD from inside a program will not work, but nothing else changes. */
 bool c64_patch_kernal(void);
 
+/* Video standard. A C64 is one machine or the other: the VIC-II's raster
+   count, the clock the CPU and the SID run on and the frame rate all differ.
+   Games made for one run at the wrong speed on the other, so the front end
+   picks it per program. */
+typedef enum {
+	C64_REGION_PAL = 0,  /* 6569:   312 lines x 63 cycles, 50.125 Hz */
+	C64_REGION_NTSC = 1, /* 6567R8: 263 lines x 65 cycles, 59.826 Hz */
+} c64_region_t;
+
+/* Set the standard. Takes effect at the next c64_init(), and the front end
+   must re-do c64_sid_init() with the new c64_clock_speed() and re-set its
+   tick rate; nothing else in the machine survives a region change. */
+void c64_set_region(c64_region_t region);
+c64_region_t c64_get_region(void);
+const char *c64_region_name(void);
+
+/* The emulated CPU/VIC clock in Hz, which is also the SID's. */
+float c64_clock_speed(void);
+
 /* Reset the machine. The three ROM arrays of c64_roms.h must be filled,
    c64_patch_kernal() called and c64_sid_init() done first. */
 void c64_init(void);
@@ -33,12 +52,12 @@ void c64_init(void);
 /* Run one raster line. One frame is C64_LINES_PER_FRAME of these. */
 void c64_run_line(void);
 
-/* Raster lines per frame (312 for PAL) and the emulated CPU cycles they take,
-   so the front end can charge the right number of cycles to the SID. */
+/* Raster lines per frame (312 PAL, 263 NTSC) and the emulated CPU cycles they
+   take, so the front end can charge the right number of cycles to the SID. */
 int c64_lines_per_frame(void);
 int c64_cycles_per_frame(void);
 
-/* The raster line the VIC is on, 0 .. c64_lines_per_frame()-1. */
+/* The raster line the VIC is on, 0 .. c64_lines_per_frame(). */
 int c64_raster_line(void);
 
 /* Keyboard. The core reads the C64's key matrix through CIA1, so a key is

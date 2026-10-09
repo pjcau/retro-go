@@ -21,12 +21,12 @@
 #define C64_SCREEN_WIDTH  320
 #define C64_SCREEN_HEIGHT 240
 
-/* 200 lines of screen, the rest border, centred -- and the raster lines they
-   correspond to. vic.cpp derives its own FIRSTDISPLAYLINE/LASTDISPLAYLINE
-   from these, and so does the per-line copy in c64_machine.cpp. */
+/* 200 lines of screen, the rest border, centred -- and the raster line the
+   first of the 240 rows is. Both vic.cpp (what it draws) and c64_machine.cpp
+   (where it copies it) go through c64_display_row() of c64_machine.h, which
+   is what knows that NTSC has fewer raster lines than rows to fill. */
 #define C64_BORDER_HEIGHT      ((C64_SCREEN_HEIGHT - 200) / 2)
 #define C64_FIRST_DISPLAY_LINE (51 - C64_BORDER_HEIGHT)
-#define C64_LAST_DISPLAY_LINE  (250 + C64_BORDER_HEIGHT)
 
 #define RGBVAL16(r, g, b) ((((r) >> 3) & 0x1f) << 11 | (((g) >> 2) & 0x3f) << 5 | (((b) >> 3) & 0x1f))
 

@@ -45,10 +45,8 @@
 #endif
 
 
-//Note: PAL/NTSC are EMULATED - This is not the real videomode!
-#ifndef PAL
-#define PAL           1 //use 0 for NTSC
-#endif
+//PAL/NTSC is no longer a build option: it is chosen at runtime, see
+//c64_set_region() in c64.h and the variables of c64_machine.h.
 
 #ifndef FASTBOOT
 #define FASTBOOT      1 //0 to disable fastboot

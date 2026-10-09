@@ -65,7 +65,6 @@
 #define SCREEN_WIDTH          320
 #define LINE_MEM_WIDTH        320
 #define FIRSTDISPLAYLINE      C64_FIRST_DISPLAY_LINE
-#define LASTDISPLAYLINE       C64_LAST_DISPLAY_LINE
 #define BORDER_LEFT           0
 #define BORDER_RIGHT          0
 
@@ -1379,11 +1378,11 @@ void vic_do(void) {
     if (r == lastLine) cpu.vic.borderFlag = true;
   }
 
-  if (r < FIRSTDISPLAYLINE || r > LASTDISPLAYLINE ) {
+  if (c64_display_row(r) < 0) {
     if (r == 0)
-      cpu_clock(CYCLESPERRASTERLINE - 10 - 2 - MAXCYCLESSPRITES - 1); // (minus hblank l + r)
+      cpu_clock(CYCLESPERRASTERLINE - 10 - RIGHTHBLANK - MAXCYCLESSPRITES - 1); // (minus hblank l + r)
     else
-      cpu_clock(CYCLESPERRASTERLINE - 10 - 2 - MAXCYCLESSPRITES  );
+      cpu_clock(CYCLESPERRASTERLINE - 10 - RIGHTHBLANK - MAXCYCLESSPRITES  );
     goto noDisplayIncRC;
   }
 
@@ -1667,7 +1666,7 @@ noDisplayIncRC:
           //Sprite Cycles END
 
 
-          if (r < FIRSTDISPLAYLINE || r > LASTDISPLAYLINE ) continue;
+          if (c64_display_row(r) < 0) continue;
 
           uint16_t x =  (((cpu.vic.R[0x10] >> i) & 1) << 8) | cpu.vic.R[i * 2];
           if (x >= SPRITE_MAX_X) continue;
@@ -1805,11 +1804,7 @@ noDisplayIncRC:
 #endif
 
    //HBlank:
-#if PAL
-   cpu_clock(2);
-#else
-   cpu_clock(3);
-#endif
+   cpu_clock(RIGHTHBLANK);
 
 
 #if 0
