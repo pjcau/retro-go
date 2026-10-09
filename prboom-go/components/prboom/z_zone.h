@@ -87,6 +87,12 @@ void *(Z_Calloc)(size_t n, size_t n2, int tag, void **user DA(const char *, int)
 void *(Z_Realloc)(void *p, size_t n, int tag, void **user DA(const char *, int));
 char *(Z_Strdup)(const char *s, int tag, void **user DA(const char *, int));
 
+#ifdef DOOMMEM
+/* Live zone bytes per tag and the eight call sites holding the most, with the
+ * change since the previous call. Built only with `DOOMMEM=1`. */
+void Z_LogStats(const char *where);
+#endif
+
 #ifdef INSTRUMENTED
 /* cph - save space if not debugging, don't require file
  * and line to memory calls */

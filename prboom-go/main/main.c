@@ -573,6 +573,37 @@ static void doom_main_task(void *arg)
     vTaskDelete(NULL);
 }
 
+#if defined(DOOMMEM) && defined(ESP_PLATFORM)
+/* `DOOMMEM=1 python rg_tool.py ... build prboom-go`: what the zone holds, next
+ * to the two heaps, every 10 s. It separates the two things that look alike on
+ * the HEAP line:
+ *
+ *  - the lump cache filling the heap by design: `ext` falls while `cache`
+ *    grows, both settle, `purges` stays at 0 until the 1.5 MB PSRAM reserve
+ *    is reached (z_zone.c), and `static`/`level` stay flat;
+ *  - a leak: `int` falls, or a site's (+delta) stays positive for minutes.
+ *
+ * Resolve the site addresses with the toolchain's addr2line, as in
+ *   xtensa-esp32s3-elf-addr2line -pfiCe prboom-go/build/prboom-go.elf <addr>
+ *
+ * The counters are read without a lock while the game task allocates, so a
+ * single report can be off by one block; the trend is what it is for. */
+static void log_memory(void)
+{
+    multi_heap_info_t internal, spiram;
+    char where[96];
+
+    heap_caps_get_info(&internal, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    heap_caps_get_info(&spiram, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    snprintf(where, sizeof(where), "up=%us int=%u(%u) ext=%u(%u)",
+             (unsigned)(rg_system_timer() / 1000000),
+             (unsigned)internal.total_free_bytes, (unsigned)internal.largest_free_block,
+             (unsigned)spiram.total_free_bytes, (unsigned)spiram.largest_free_block);
+    Z_LogStats(where);
+}
+#endif
+
 void app_main()
 {
     const rg_handlers_t handlers = {
@@ -639,6 +670,9 @@ void app_main()
             vTaskDelay(pdMS_TO_TICKS(10000));
             RG_LOGI("doom_main stack free: %u bytes of %u\n",
                     (unsigned)uxTaskGetStackHighWaterMark(doom_task), DOOM_STACK_SIZE);
+#ifdef DOOMMEM
+            log_memory();
+#endif
         }
     }
 #endif

@@ -70,6 +70,10 @@ typedef struct memblock
   struct memblock *next,*prev;
   void **user;
 
+#ifdef DOOMMEM
+  uint32_t site;              // index into zone_sites, 0 = unknown
+#endif
+
 #ifdef INSTRUMENTED
   const char *file;
   int line;
@@ -83,6 +87,131 @@ typedef struct memblock
 static const size_t HEADER_SIZE = (sizeof(memblock_t)+CHUNK_SIZE-1) & ~(CHUNK_SIZE-1);
 
 static memblock_t *blockbytag[PU_MAX];
+
+#ifdef DOOMMEM
+/* Zone accounting for the heap hunt (`DOOMMEM=1`): live bytes and blocks per
+ * tag, and the call sites holding them, so a falling free heap can be traced
+ * to the code that allocated what is still there. Two adds per allocation and
+ * four bytes of header; the build flag keeps it out of a release.
+ *
+ * Sites are return addresses. Resolve them with
+ *   xtensa-esp32s3-elf-addr2line -pfiCe build/prboom-go.elf <addr>
+ */
+#define ZONE_SITES 128
+
+typedef struct {
+  void *ra;
+  size_t bytes, blocks, bytes_prev;
+} zone_site_t;
+
+static zone_site_t zone_sites[ZONE_SITES];     // [0] collects the overflow
+static size_t zone_bytes[PU_MAX], zone_blocks[PU_MAX];
+static size_t zone_total_prev;
+static unsigned zone_purges;                   // cache freed to keep the reserve
+static unsigned zone_oom_purges;               // cache freed after malloc failed
+static unsigned zone_allocs;                   // allocations since the last report
+
+static uint32_t zone_site_index(void *ra)
+{
+  uint32_t h = (uint32_t)(uintptr_t)ra;
+  h = (h >> 2) * 2654435761u;
+  for (uint32_t i = 0; i < 16; i++)
+  {
+    uint32_t slot = 1 + ((h + i) % (ZONE_SITES - 1));
+    if (zone_sites[slot].ra == ra)
+      return slot;
+    if (!zone_sites[slot].ra)
+    {
+      zone_sites[slot].ra = ra;
+      return slot;
+    }
+  }
+  return 0;   // this hash is full: charged to the unknown slot, never dropped
+}
+
+static void zone_account(memblock_t *block, void *ra)
+{
+  zone_allocs++;
+  block->site = zone_site_index(ra);
+  zone_sites[block->site].bytes += block->size;
+  zone_sites[block->site].blocks++;
+  zone_bytes[block->tag] += block->size;
+  zone_blocks[block->tag]++;
+}
+
+static void zone_unaccount(memblock_t *block)
+{
+  zone_sites[block->site].bytes -= block->size;
+  zone_sites[block->site].blocks--;
+  zone_bytes[block->tag] -= block->size;
+  zone_blocks[block->tag]--;
+}
+
+/* The wrappers below call Z_Malloc, so without this every Z_Calloc/Z_Realloc/
+ * Z_Strdup would be charged to z_zone.c instead of to its caller. */
+static void zone_resite(void *p, void *ra)
+{
+  if (!p)
+    return;
+  memblock_t *block = (memblock_t *)((char *)p - HEADER_SIZE);
+  zone_sites[block->site].bytes -= block->size;
+  zone_sites[block->site].blocks--;
+  block->site = zone_site_index(ra);
+  zone_sites[block->site].bytes += block->size;
+  zone_sites[block->site].blocks++;
+}
+
+static const char *const zone_tag_names[PU_MAX] = {
+  "free", "static", "sound", "music", "level", "levspec", "cache"
+};
+
+void Z_LogStats(const char *where)
+{
+  size_t total = 0;
+  size_t order[8];
+  int shown = 0;
+
+  for (int tag = 0; tag < PU_MAX; tag++)
+    total += zone_bytes[tag];
+
+  lprintf(LO_INFO, "DOOMMEM %s zone %u B (%+d since last)", where,
+          (unsigned)total, (int)(total - zone_total_prev));
+  for (int tag = PU_FREE + 1; tag < PU_MAX; tag++)
+    if (zone_blocks[tag])
+      lprintf(LO_INFO, " %s %u/%u", zone_tag_names[tag],
+              (unsigned)zone_bytes[tag], (unsigned)zone_blocks[tag]);
+  lprintf(LO_INFO, " allocs %u purges %u+%u\n", zone_allocs, zone_purges,
+          zone_oom_purges);
+  zone_total_prev = total;
+  zone_allocs = 0;
+
+  /* The eight sites holding the most, with what each gained since the last
+   * report: a true leak is a site whose delta stays positive. */
+  while (shown < 8)
+  {
+    int best = -1;
+    for (int i = 0; i < ZONE_SITES; i++)
+    {
+      if (!zone_sites[i].blocks)
+        continue;
+      bool taken = false;
+      for (int j = 0; j < shown; j++)
+        taken |= (order[j] == (size_t)i);
+      if (taken)
+        continue;
+      if (best < 0 || zone_sites[i].bytes > zone_sites[best].bytes)
+        best = i;
+    }
+    if (best < 0)
+      break;
+    order[shown++] = best;
+    lprintf(LO_INFO, "DOOMMEM   site %p %u B %u blk (%+d)\n", zone_sites[best].ra,
+            (unsigned)zone_sites[best].bytes, (unsigned)zone_sites[best].blocks,
+            (int)(zone_sites[best].bytes - zone_sites[best].bytes_prev));
+    zone_sites[best].bytes_prev = zone_sites[best].bytes;
+  }
+}
+#endif /* DOOMMEM */
 
 #ifdef INSTRUMENTED
 
@@ -261,6 +390,9 @@ void *(Z_Malloc)(size_t size, int tag, void **user DA(const char *file, int line
   block->zoneid = ZONEID;     // signature required in block header
   block->tag = tag;           // tag
   block->user = user;         // user
+#ifdef DOOMMEM
+  zone_account(block, __builtin_return_address(0));
+#endif
   block = (memblock_t *)((char *) block + HEADER_SIZE);
   if (user)                   // if there is a user
     *user = block;            // set user to point to new block
@@ -296,6 +428,10 @@ void (Z_Free)(void *p DA(const char *file, int line))
 #endif
            );
   block->zoneid = 0;          // Nullify id so another free fails
+
+#ifdef DOOMMEM
+  zone_unaccount(block);
+#endif
 
   if (block->user)            // Nullify user if one exists
     *block->user = NULL;
@@ -421,6 +557,13 @@ void (Z_ChangeTag)(void *ptr, int tag DA(const char *file, int line))
     }
 #endif
 
+#ifdef DOOMMEM
+  zone_bytes[block->tag] -= block->size;
+  zone_blocks[block->tag]--;
+  zone_bytes[tag] += block->size;
+  zone_blocks[tag]++;
+#endif
+
   block->tag = tag;
 }
 
@@ -435,18 +578,29 @@ void *(Z_Realloc)(void *ptr, size_t n, int tag, void **user DA(const char *file,
       if (user) // in case Z_Free nullified same user
         *user=p;
     }
+#ifdef DOOMMEM
+  zone_resite(p, __builtin_return_address(0));
+#endif
   return p;
 }
 
 void *(Z_Calloc)(size_t n1, size_t n2, int tag, void **user DA(const char *file, int line))
 {
-  return (n1*=n2) ? memset((Z_Malloc)(n1, tag, user DA(file, line)), 0, n1) : NULL;
+  void *p = (n1*=n2) ? memset((Z_Malloc)(n1, tag, user DA(file, line)), 0, n1) : NULL;
+#ifdef DOOMMEM
+  zone_resite(p, __builtin_return_address(0));
+#endif
+  return p;
 }
 
 char *(Z_Strdup)(const char *s, int tag, void **user DA(const char *file, int line))
 {
   size_t len = strlen(s) + 1;
-  return memcpy((Z_Malloc)(len, tag, user DA(file, line)), s, len);
+  char *p = memcpy((Z_Malloc)(len, tag, user DA(file, line)), s, len);
+#ifdef DOOMMEM
+  zone_resite(p, __builtin_return_address(0));
+#endif
+  return p;
 }
 
 void (Z_CheckHeap)(DAC(const char *file, int line))
