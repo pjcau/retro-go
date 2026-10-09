@@ -826,6 +826,16 @@ void app_main(void)
                     last_flush = flush_ram_count;
                 }
 #endif
+                {
+                    /* which tile-row path the renderer took (video.cpp): the
+                       flat rows are the ones drawn without a test per pixel */
+                    extern u32 gbaprof_rows[8];
+                    const float f = frames ? frames : 1;
+                    printf("GBAROWS per frame: bottom layer %.0f | layer above flat %.0f holed %.0f | sprite flat %.0f holed %.0f\n",
+                           gbaprof_rows[0] / f, gbaprof_rows[1] / f, gbaprof_rows[2] / f,
+                           gbaprof_rows[3] / f, gbaprof_rows[4] / f);
+                    memset(gbaprof_rows, 0, sizeof(gbaprof_rows));
+                }
                 printf("GBAPROF %d frames (%d drawn): ms/frame cpu %.2f sound %.2f display %.2f | render %.2f per drawn frame | %d instr/frame, %.0f cycles/instr | %u ROM pages loaded\n",
                        frames, drawn_n, cpu_us / 1000.f / frames, snd_us / 1000.f / frames, disp_us / 1000.f / frames,
                        drawn_n ? render_us / 1000.f / drawn_n : 0.f, (int)(instr / frames), instr ? cpu_us * 240.0 / instr : 0.0, (unsigned)gbaprof_pageloads);
