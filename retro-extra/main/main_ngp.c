@@ -13,6 +13,7 @@
 #include <state.h>
 #include <neopopsound.h>
 #include <neopop_blip.h>
+#include <race_prof.h>
 #include <libretro.h>
 
 #define NGP_WIDTH  160
@@ -194,10 +195,13 @@ void ngp_main(void)
 
         if (drawFrame)
         {
+            PROF_PUSH(PROF_SEND);
             slowFrame = !rg_display_sync(false);
             rg_display_submit(currentUpdate, 0);
+            PROF_POP();
         }
 
+        PROF_PUSH(PROF_MIX);
         ngp_sound_update((uint16_t *)mono, samplesPerFrame * sizeof(int16_t));
         dac_update((uint16_t *)mono, samplesPerFrame * sizeof(int16_t));
         for (int i = 0; i < samplesPerFrame; i++)
@@ -207,9 +211,11 @@ void ngp_main(void)
             stereo[2 * i + 1].left = stereo[2 * i + 1].right = mono[i];
             prev = mono[i];
         }
+        PROF_POP();
 
         rg_system_tick(rg_system_timer() - startTime);
         rg_audio_submit(stereo, samplesPerFrame * 2);
+        PROF_FRAME();
 
         if (skipFrames == 0)
         {

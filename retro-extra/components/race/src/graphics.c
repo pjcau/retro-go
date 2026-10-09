@@ -12,6 +12,7 @@
 #include "types.h"
 #include "graphics.h"
 #include "race-memory.h"
+#include "race_prof.h"
 
 #if defined(ABGR1555)
 #define RMASK 0x001f
@@ -646,13 +647,16 @@ void myGraphicsBlitLine(unsigned char render)  /* NOTA */
 			if (*scanlineY<*wndTopLeftY || *scanlineY>*wndTopLeftY+*wndSizeY || *wndSizeX==0 || *wndSizeY==0)
 			{
 
+				PROF_GPUSH(PROF_GBG);
 				for (i=0;i<NGPC_SIZEX;i++)
 					draw[i] = OOWCol;
+				PROF_GPOP();
 			}
 			else
 			{
 				if (((*scanlineY)&7) == 0)
 				{
+		            PROF_GPUSH(PROF_GPAL);
 		            if (bw)
     		        {
         		        for(i=0;i<4;i++)
@@ -673,6 +677,7 @@ void myGraphicsBlitLine(unsigned char render)  /* NOTA */
 						for (i=0;i<192;i++)
 							*(pal++) = NGPC_TO_RGB565(*(mempal++));
         		    }
+		            PROF_GPOP();
 				}
 
 
@@ -691,18 +696,27 @@ void myGraphicsBlitLine(unsigned char render)  /* NOTA */
 				if (x1>NGPC_SIZEX)
 					x1 = NGPC_SIZEX;
 
+				PROF_GPUSH(PROF_GBG);
 				for (i=x0;i<x1;i++)
 					draw[i] = bgcol;
+				PROF_GPOP();
 
+				PROF_GPUSH(PROF_GSPR);
 				if (mySprPri40->count[*scanlineY])
 					drawSprites(draw,mySprPri40->refs[*scanlineY],mySprPri40->count[*scanlineY],x0,x1);
+				PROF_GPOP();
 
 	            if (*frame1Pri & 0x80)
 	            {
+        			PROF_GPUSH(PROF_GSCROLL);
         			drawScrollPlane(draw,tile_table_front,64,*scrollFrontX,*scrollFrontY+*scanlineY,x0,x1,bw);
+        			PROF_GPOP();
+	            	PROF_GPUSH(PROF_GSPR);
 	            	if (mySprPri80->count[*scanlineY])
 						drawSprites(draw,mySprPri80->refs[*scanlineY],mySprPri80->count[*scanlineY],x0,x1);
+	            	PROF_GPOP();
 		        	 
+		        	PROF_GPUSH(PROF_GSCROLL);
 		        	/* NOTA  Wrestling Madness && Big Bang Pro Wrestling */
 		        	if (mainrom[0x000020] != 0x66)
 		        	drawScrollPlane(draw,tile_table_back,128,*scrollBackX,*scrollBackY+*scanlineY,x0,x1,bw);
@@ -712,23 +726,34 @@ void myGraphicsBlitLine(unsigned char render)  /* NOTA */
 		        	drawScrollPlane(draw,tile_table_back,128,*scrollBackX,*scrollBackY+*scanlineY,x0,x1,bw);
 		        	else 
 		        	drawScrollPlane(draw,tile_table_back,128,1,*scrollBackY+*scanlineY,x0,x1,bw);}
+		        	PROF_GPOP();
 	            
 	            }
 	            else
 	            {
+		        	PROF_GPUSH(PROF_GSCROLL);
 		        	drawScrollPlane(draw,tile_table_back,128,*scrollBackX,*scrollBackY+*scanlineY,x0,x1,bw);
+		        	PROF_GPOP();
+					PROF_GPUSH(PROF_GSPR);
 					if (mySprPri80->count[*scanlineY])
 						drawSprites(draw,mySprPri80->refs[*scanlineY],mySprPri80->count[*scanlineY],x0,x1);
+					PROF_GPOP();
+	    	    	PROF_GPUSH(PROF_GSCROLL);
 	    	    	drawScrollPlane(draw,tile_table_front,64,*scrollFrontX,*scrollFrontY+*scanlineY,x0,x1,bw);
+	    	    	PROF_GPOP();
 	            }
 
+				PROF_GPUSH(PROF_GSPR);
 				if (mySprPriC0->count[*scanlineY])
 					drawSprites(draw,mySprPriC0->refs[*scanlineY],mySprPriC0->count[*scanlineY],x0,x1);
+				PROF_GPOP();
 
+				PROF_GPUSH(PROF_GBG);
 				for (i=0;i<x0;i++)
 					draw[i] = OOWCol;
 				for (i=x1;i<NGPC_SIZEX;i++)
 					draw[i] = OOWCol;
+				PROF_GPOP();
 
 	        }
         }

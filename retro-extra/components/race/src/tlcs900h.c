@@ -36,6 +36,7 @@
 #include "race-memory.h"
 #include "ngpBios.h"
 #include "types.h"
+#include "race_prof.h"
 
 int finscan;
 int contador;
@@ -7647,6 +7648,10 @@ void tlcs_execute(int cycles, int skipRender)
     int elapsed;
     int hCounter = ngOverflow;
 
+    /* NGPPROF: everything in here is the TLCS-900H unless a nested push says
+     * otherwise (the Z80 in ngpSoundExecute, the line renderer, soundStep), so
+     * "tlcs" ends up being the interpreter plus the timers and interrupts. */
+    PROF_PUSH(PROF_CPU);
     while(cycles > 0)
     {
         /* AKTODO */
@@ -7663,14 +7668,18 @@ void tlcs_execute(int cycles, int skipRender)
         }
         tlcsTimers(elapsed);
         elapsed*=tlcsClockMulti;
+        PROF_PUSH(PROF_SND);
         soundStep(elapsed);
+        PROF_POP();
 
         hCounter-= elapsed;
 
         if (hCounter < 0)
         {
             /* time equivalent to 1 horizontal line has passed */
+            PROF_PUSH(PROF_GFX);
             myGraphicsBlitLine(!skipRender);
+            PROF_POP();
 
             //NOTA     
             
@@ -7695,6 +7704,7 @@ void tlcs_execute(int cycles, int skipRender)
         }
         cycles-= elapsed;
     }
+    PROF_POP();
     ngOverflow = hCounter + cycles;
 
     /* MHE used to sound update here!?!? */
