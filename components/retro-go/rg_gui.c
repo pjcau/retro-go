@@ -941,6 +941,7 @@ intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options_const, 
     int sel = RG_MIN(RG_MAX(0, selected_index), options_count - 1);
     int sel_old = -1;
 
+    rg_system_set_menu_open(true);
     rg_gui_draw_status_bars();
     rg_gui_draw_dialog(title, options, options_count, sel);
     rg_input_wait_for_key(RG_KEY_ALL, false, 1000);
@@ -1040,6 +1041,7 @@ intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options_const, 
 
     rg_input_wait_for_key(joystick, false, 1000);
     rg_display_force_redraw();
+    rg_system_set_menu_open(false);
     // free(shadow_options);
     free(shadow_text_buffer);
 
@@ -2288,21 +2290,31 @@ static const char *reset_reason_str(void)
 
 void rg_gui_sysmon_menu(void)
 {
-    // The emulator is stopped while a menu is open, so its figures are those of the
-    // last second of play before the menu: taken once here, never refreshed.
+    // The emulator is stopped while a menu is open and the menu loop ticks without
+    // drawing, so the game figures are rg_sysmon's last whole second of emulation
+    // with no menu in it (stats.game), taken before the menu opened.
     // Everything under "Live" comes from rg_sysmon, which samples once per second.
     const rg_stats_t game = rg_system_get_stats();
     const rg_app_t *app = rg_system_get_app();
     char game_speed[48], game_busy[48], game_load[48];
-    char temp[48], clock[48], ram[48], ram_block[48], psram[48], psram_block[48];
+    char temp[48], clock[48], load[48], ram[48], ram_block[48], psram[48], psram_block[48];
     char stack[48], battery[48], uptime[48], reset[48];
 
-    snprintf(game_speed, 48, "%d fps (%d%%)", (int)roundf(game.totalFPS), (int)roundf(game.speedPercent));
-    snprintf(game_busy, 48, "%d%%, skip %d", (int)roundf(game.busyPercent), app->frameskip);
-    if (game.cpuLoad[0] >= 0.f)
-        snprintf(game_load, 48, "%d%% / %d%%", (int)roundf(game.cpuLoad[0]), (int)roundf(game.cpuLoad[1]));
+    if (game.game.valid)
+    {
+        snprintf(game_speed, 48, "%d fps (%d%%)", (int)roundf(game.game.fps), (int)roundf(game.game.speedPercent));
+        snprintf(game_busy, 48, "%d%%, skip %d", (int)roundf(game.game.busyPercent), app->frameskip);
+        if (game.game.cpuLoad[0] >= 0.f)
+            snprintf(game_load, 48, "%d%% / %d%%", (int)roundf(game.game.cpuLoad[0]), (int)roundf(game.game.cpuLoad[1]));
+        else
+            snprintf(game_load, 48, "N/A");
+    }
     else
-        snprintf(game_load, 48, "N/A");
+    {
+        snprintf(game_speed, 48, "no game running");
+        snprintf(game_busy, 48, "-");
+        snprintf(game_load, 48, "-");
+    }
     snprintf(reset, 48, "%s", reset_reason_str());
 
     rg_gui_option_t options[] = {
@@ -2313,6 +2325,7 @@ void rg_gui_sysmon_menu(void)
         {0, "Live",                NULL, RG_DIALOG_FLAG_SKIP, NULL},
         {0, "Die temp   ", temp,        RG_DIALOG_FLAG_NORMAL, NULL},
         {0, "CPU clock  ", clock,       RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "Core 0 / 1 ", load,        RG_DIALOG_FLAG_NORMAL, NULL},
         {0, "RAM free   ", ram,         RG_DIALOG_FLAG_NORMAL, NULL},
         {0, "RAM block  ", ram_block,   RG_DIALOG_FLAG_NORMAL, NULL},
         {0, "PSRAM free ", psram,       RG_DIALOG_FLAG_NORMAL, NULL},
@@ -2329,6 +2342,7 @@ void rg_gui_sysmon_menu(void)
     int64_t next_refresh = 0;
     bool redraw = false;
 
+    rg_system_set_menu_open(true);
     rg_gui_draw_status_bars();
     rg_input_wait_for_key(RG_KEY_ALL, false, 1000);
 
@@ -2360,6 +2374,10 @@ void rg_gui_sysmon_menu(void)
             else
                 snprintf(temp, 48, "%.1f C (max %.1f)", stats.temperature, stats.maxTemperature);
             snprintf(clock, 48, "%d MHz", rg_system_get_cpu_speed());
+            if (stats.cpuLoad[0] >= 0.f)
+                snprintf(load, 48, "%d%% / %d%%", (int)roundf(stats.cpuLoad[0]), (int)roundf(stats.cpuLoad[1]));
+            else
+                snprintf(load, 48, "N/A");
             snprintf(ram, 48, "%dK, low %dK", stats.freeMemoryInt / 1024, stats.minFreeMemoryInt / 1024);
             snprintf(ram_block, 48, "%dK, DMA %dK", stats.freeBlockInt / 1024, stats.freeMemoryDma / 1024);
             snprintf(psram, 48, "%dK/%dK, low %dK", stats.freeMemoryExt / 1024, stats.totalMemoryExt / 1024,
@@ -2372,10 +2390,13 @@ void rg_gui_sysmon_menu(void)
                 snprintf(battery, 48, "N/A");
             snprintf(uptime, 48, "%dh %02dm %02ds", up / 3600, (up / 60) % 60, up % 60);
 
-            RG_LOGI("sysmon: temp=%.1f max=%.1f int=%d low=%d dma=%d ext=%d low=%d stack=%d game=%dfps load=%d/%d",
+            RG_LOGI("sysmon: temp=%.1f max=%.1f int=%d low=%d dma=%d ext=%d low=%d stack=%d load=%d/%d "
+                    "game=%d fps=%d busy=%d load=%d/%d",
                     stats.temperature, stats.maxTemperature, stats.freeMemoryInt, stats.minFreeMemoryInt,
                     stats.freeMemoryDma, stats.freeMemoryExt, stats.minFreeMemoryExt, stats.freeStackMain,
-                    (int)roundf(game.totalFPS), (int)roundf(game.cpuLoad[0]), (int)roundf(game.cpuLoad[1]));
+                    (int)roundf(stats.cpuLoad[0]), (int)roundf(stats.cpuLoad[1]), game.game.valid,
+                    (int)roundf(game.game.fps), (int)roundf(game.game.busyPercent),
+                    (int)roundf(game.game.cpuLoad[0]), (int)roundf(game.game.cpuLoad[1]));
 
             next_refresh = rg_system_timer() + 1000000;
             redraw = true;
@@ -2399,6 +2420,7 @@ void rg_gui_sysmon_menu(void)
 
     rg_input_wait_for_key(joystick, false, 1000);
     rg_display_force_redraw();
+    rg_system_set_menu_open(false);
 }
 
 static rg_gui_event_t slot_select_cb(rg_gui_option_t *option, rg_gui_event_t event)

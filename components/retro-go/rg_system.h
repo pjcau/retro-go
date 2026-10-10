@@ -215,6 +215,10 @@ typedef struct
     float temperature;      // die temperature in C, NAN if no sensor
     float maxTemperature;   // highest die temperature since boot
     float cpuLoad[2];       // percent of each core NOT spent in its idle task, -1 if unknown
+    struct {                // the last whole 1 s window of emulation with no menu open in it
+        bool valid;
+        float fps, speedPercent, busyPercent, cpuLoad[2];
+    } game;
 } rg_stats_t;
 
 rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_unused);
@@ -254,6 +258,7 @@ int64_t rg_system_timer(void);
 rg_app_t *rg_system_get_app(void);
 // rg_config_t rg_system_get_config(void);
 rg_stats_t rg_system_get_stats(void);
+void rg_system_set_menu_open(bool open);
 
 // Speed and Overclock
 void rg_system_set_app_speed(float speed);

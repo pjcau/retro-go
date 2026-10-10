@@ -99,6 +99,10 @@ static int overclockLevel, overclockMhz;
 static uint32_t indicators;
 static rg_color_t ledColor = -1;
 static rg_stats_t statistics;
+// Bumped each time a game menu opens or closes: a stats window that saw it change is
+// partly menu, whose loop ticks without drawing frames, and is not a game window.
+static volatile int menuEpoch;
+static volatile int menuOpen; // nesting depth: dialogs open from other dialogs
 static rg_app_t app;
 static rg_task_t tasks[8];
 
@@ -267,6 +271,25 @@ static void update_statistics(void)
 
     update_memory_statistics();
     update_sensor_statistics();
+
+    static int prevEpoch;
+    int epoch = menuEpoch;
+    if (!menuOpen && epoch == prevEpoch && counters.totalFrames != previous.totalFrames && previous.ticks)
+    {
+        statistics.game.valid = true;
+        statistics.game.fps = statistics.totalFPS;
+        statistics.game.speedPercent = statistics.speedPercent;
+        statistics.game.busyPercent = statistics.busyPercent;
+        statistics.game.cpuLoad[0] = statistics.cpuLoad[0];
+        statistics.game.cpuLoad[1] = statistics.cpuLoad[1];
+    }
+    prevEpoch = epoch;
+}
+
+void rg_system_set_menu_open(bool open)
+{
+    menuOpen = RG_MAX(0, menuOpen + (open ? 1 : -1));
+    menuEpoch++;
 }
 
 static void update_indicators(bool reset_animation)
