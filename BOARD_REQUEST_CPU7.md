@@ -1,156 +1,170 @@
-# GBA: Auto frameskip that goes back down
+# GBA: Auto frameskip that comes back down, and must never be worse
 
-Fork `gba-cpu` **`31b6dd7e`**, submodule **`2b87220`**, on master `6ecc9d9b`.
-Play build **777008 B**, GBAPROF build **787136 B**. One flash.
+Fork `gba-cpu` **`ffb457bb`**, submodule **`2b87220`**, on master `6ecc9d9b`.
+Play build **777120 B**, GBAPROF build **787408 B**. One flash.
 
-Auto now raises *and* lowers: skip a frame only while the game cannot reach
-full speed, and draw every frame again as soon as it can. Mario Kart's menus at
-60 drawn, the race at skip 1, and back on the way out.
+Auto now raises *and* lowers, at every level. CPU6 showed why that matters: on
+the real road skip 1 is not enough (FPS 55-58, BUSY 98-100), Auto reaches 2, and
+`rg_system` never brings it back because its reducer wants BUSY under 85 — so a
+player got 20 drawn for most of a race.
+
+**This run is a three-way A/B, and the rule is that dynamic Auto must not be
+worse than the best fixed setting.** Section 5 says what happens if it is.
 
 ---
 
 ## 1. The prediction, checked before it was written
 
-I was asked to confirm that a drawn frame's core-0 time at skip 1 really
-predicts the skip-0 cost. It does, with a known bias, and here is the working
-rather than an assertion. Solving the three CPU5 runs for the two per-frame
-costs — skip 0 (all 54 drawn, 18.29), skip 1 (31 of 61 drawn, 15.87), skip 2
-(20 of 60 drawn, 14.72):
+Solving the three CPU5 runs for the two per-frame costs — skip 0 (54 drawn,
+18.29), skip 1 (31 of 61 drawn, 15.87), skip 2 (20 of 60 drawn, 14.72):
 
 | | |
 |---|---|
 | a **drawn** frame (core 1 drawing) | **19.10 ms** |
 | a **skipped** frame (core 1 idle) | **12.53 ms** |
 
-and then `(drawn + k·skipped)/(k+1)` reproduces your measured averages at
-**skip 1 to 0.05 ms** and **skip 2 exactly** — so the two costs barely depend on
-the level, which is what makes the prediction usable at all.
+`(drawn + k·skipped)/(k+1)` then reproduces your measured averages at **skip 1
+to 0.05 ms** and **skip 2 exactly**, so the two costs barely depend on the level.
+Two consequences:
 
-Two things fall out, and the second is the answer to your question:
-
-- **S = 12.53 is 1.11 ms below the 13.64 core1_idle floor**, exactly as it
-  should be: a real skipped frame also drops the rline/OAM/palette snapshot and
-  `gbsp_render_wait`, which `core1_idle=1` still ran. That is an independent
-  check on the model, not a fitted constant.
+- **S = 12.53 is 1.11 ms below the 13.64 `core1_idle` floor** — as it must be,
+  since a real skipped frame also drops the rline/OAM/palette snapshot and
+  `gbsp_render_wait`, which `core1_idle=1` still ran. An independent check on
+  the model, not a fitted constant.
 - **A drawn frame at skip ≥ 1 costs 0.81 ms *more* than a frame at skip 0**
-  (19.10 against 18.29). At skip 0 core 1 lags by up to ~77 lines and its work
-  spreads over every frame; a drawn frame ends in `gbsp_render_wait`, so it
-  carries a whole frame of core-1 work by itself.
+  (19.10 vs 18.29): at skip 0 core 1 lags by up to ~77 lines and spreads its
+  work over every frame, while a drawn frame ends in `gbsp_render_wait` and
+  carries a whole frame of core-1 work alone.
 
-So the predictor is **pessimistic by ~0.8 ms**, which is the safe direction: Auto
-holds a skip slightly longer than it strictly must and will not drop to 0 onto a
-scene that cannot carry it. With the 15.8 ms threshold the true margin under the
-16.67 ms budget is about **1.67 ms**, not 0.87. No alternative mechanism is
-needed — the bias also shrinks exactly where it matters least, because it comes
-from core 1's load, which is small in the light scenes where lowering happens.
+So the predictor is **pessimistic by ~0.8 ms** — the safe direction. With the
+15.8 ms threshold the true margin under 16.67 is about **1.67 ms**.
 
 ## 2. The controller
 
 - **Lower** `k → k−1` when `(drawn + (k−1)·skipped)/k` is under **15.8 ms** and
-  has stayed there **2 s**. At k=1 that is just the drawn time; at k=2 it is the
-  average skip 1 would give.
-- **Raise** on the same test as before — `SPEED < 96 %` and `BUSY > 85 %` —
-  capped at **2**.
-- **2 s cooldown** after either, so a wrong call cannot oscillate faster than
-  once every four seconds.
-- `frameskipMax` stays **0**, so `rg_system`'s auto never joins in: gbsp owns
-  the whole decision and there is nobody to fight.
+  has held for the current hold time. At k=1 that is the drawn time; at k=2 it
+  is the average skip 1 would give. **Every level, not just 1→0.**
+- **Raise** on `SPEED < 96 %` and `BUSY > 85 %`, capped at **2**, and **never
+  delayed** — losing speed is the one outcome that must not happen.
+- **Anti-flapping backoff**: a raise within **3 s** of a drop means the drop was
+  wrong, so the next must hold twice as long — **3 → 6 → 12 → 24 → 30 s** — and
+  **30 s with no raise** forgets it. A borderline scene therefore settles at the
+  higher skip rather than flipping, and the worst case is one drop attempt per
+  30 s.
+- `frameskipMax` is **0**, so `rg_system` never joins in.
 
-**Every change logs one line** with the numbers behind it:
+**Cost to core 0**: the frame path is two `rsr CCOUNT` instructions
+(`esp_cpu_get_cycle_count`) and one add plus one increment — about **four cycles
+of the four million in a frame**. No divide, no float, no log inside the frame;
+the division, the single float compare and every log line are in the
+once-a-second tick. Two reads is the minimum for a span: one read per frame
+would only give the paced wall time, which is 16.67 ms whenever the game keeps
+up and so says nothing about what a frame costs.
+
+**Lines to expect**:
 
 ```
-frameskip 0 -> 1: speed 90%, drawn 18.29 ms, skipped 0.00 ms
-frameskip 1 -> 0: 12.80 ms predicted a frame, drawn 12.80, skipped 11.90
+frameskip 0 -> 1: speed 90%, drawn 18.29 ms, skipped 0.00 ms, hold now 3s
+frameskip 1 -> 0: 12.80 ms predicted, drawn 12.80, skipped 11.90, held 3s
+frameskip residency: skip0 12s, skip1 46s, skip2 2s of 60s, 38.4 drawn fps, hold 3s
 ```
 
-That is the point of this run: **the log should show the mechanism, not just the
-result.** The two timing points around the emulation are no longer GBAPROF-only
-(Auto needs them in a play build) — two `esp_timer` reads a frame, ~0.4 µs of
-16 ms.
+The residency line comes every ten seconds and is what answers "how long at
+each level" and "average drawn fps" without arithmetic on your side.
 
-## 3. Runs
+## 3. Runs — the three-way A/B
 
 ```bash
-python rg_tool.py --target esp32-emu-turbo build gbsp              # 777008 B, play
-GBAPROF=1 python rg_tool.py --target esp32-emu-turbo build gbsp    # 787136 B
+python rg_tool.py --target esp32-emu-turbo build gbsp              # 777120 B, play
+GBAPROF=1 python rg_tool.py --target esp32-emu-turbo build gbsp    # 787408 B
 ```
 
-`gbaopt.txt` keys unchanged (`perf`, `core1_idle`, `nohash`, `rint`, `l1`,
-`skip`, and the idle-loop keys). **Leave `skip=` out for every run below** —
-a pin switches the controller off, which is the whole thing under test. `perf=1`
-is fine and does not affect it.
+`/sd/retro-go/config/gbaopt.txt`. New key **`autodyn=0`** restores exactly
+pre-CPU7 Auto (raise only, `rg_system`'s rule) — that is the control and, if
+this fails, the fallback.
 
-### Run 1 — Mario Kart, the full cycle (the headline)
+**Mario Kart must be driven on the real road, not A held on the grass.** That is
+where CPU6 found the problem, so: `load 1`, then **drive a full lap or two,
+steering, for 60 s**. Same route in all three Mario Kart runs, as closely as you
+can — if the route differs the comparison is worth little, so say so if it did.
 
-**No `load`.** Start from the launcher so the menus come first, and please log
-continuously through all of it, ~2 minutes:
+| # | game | card | 60 s |
+|---|---|---|---|
+| 1 | Mario Kart | `perf=1` (dynamic Auto) | the candidate |
+| 2 | Mario Kart | `perf=1 skip=0` | fixed 0 |
+| 3 | Mario Kart | `perf=1 skip=1` | fixed 1 |
+| 4 | Mario Kart | `perf=1 autodyn=0` | **today's Auto**, for the "never worse" comparison — expect it to reach 2 and stay |
+| 5 | Sonic Advance | `perf=1` (dynamic Auto) | must stay at 0 |
+| 6 | Sonic Advance | `perf=1 skip=0` | fixed 0 |
+| 7 | Metal Slug Advance | `perf=1` (dynamic Auto) | must stay at 0 |
+| 8 | Metal Slug Advance | `perf=1 skip=0` | fixed 0 |
 
-1. the **title and menus** — let it sit 10 s;
-2. pick a cup and **start the race**, hold A, 30 s;
-3. **pause** (START) and sit in the pause menu 10 s;
-4. **resume** the race, 20 s;
-5. back out to the **menus**, 15 s.
+### The table I need
 
-What I want, with timestamps:
+Per run:
 
-- **every `frameskip N -> M` line**, in order, with its drawn/skipped/predicted
-  milliseconds — this is the deliverable;
-- **the count of transitions**. Expect roughly four: 0→1 entering the race, 1→0
-  on the pause menu, 0→1 resuming, 1→0 backing out. **More than ~8 is
-  flapping** and a finding;
-- `FPS:` with `S:` / `R:` and `BUSY:` in each phase, so I can see 60 drawn in
-  the menus and 30 in the race;
-- `SPEED:` ~100 % in the race.
+| column | where from |
+|---|---|
+| **average SPEED %** | mean of the per-second `SPEED:`/stats values over the run |
+| **minimum SPEED % in a 1 s window** | the worst single second — this is the one that catches a stall a mean would hide |
+| **drawn fps** | `R:` full+partial per second, or the residency line's figure on the Auto runs |
+| **transitions** | count of `frameskip N -> M` lines (0 for every fixed and `autodyn=0` run) |
+| **time at each level** | the residency line, Auto runs only |
+| `cpu` ms | median of the last 6 `GBAPROF` lines |
 
-### Runs 2 and 3 — the games that must not change
+Plus, for the Auto runs, **every `frameskip N -> M` line in order with its
+timestamp** — that is how I see the mechanism rather than the result.
 
-| # | game | expect |
-|---|---|---|
-| 2 | **Sonic Advance**, Auto, 60 s | **frameskip 0 the whole time, 60/60, and not one `frameskip N -> M` line** |
-| 3 | **Metal Slug Advance**, Auto, 60 s | the same: 0 throughout, 60/60, no transition lines |
+## 4. Pass criteria
 
-These are the regression: both were 60/60 already, so the controller must never
-touch them. One transition line in either is a bug, even if the fps looks fine.
+All of these, together:
 
-### Run 4 — the pin still wins
+1. **dynamic Auto's average SPEED is never more than 1 % below the best fixed
+   setting** for that game;
+2. **drawn fps ≥ fixed skip=1** on Mario Kart, and **= 60** on Sonic and Metal
+   Slug;
+3. **drawn fps on Auto ≥ what today's Auto gives** (run 4 — about 20 on the
+   road);
+4. **at most one transition per 10 s during the race** (so ≤ 6 in a 60 s run);
+5. **no visible stutter at a transition on the webcam.** Watch runs 1, 5 and 7
+   at the moments the log shows a change: a change of smoothness is expected and
+   fine, a hitch, a jump in game speed or a torn frame is **a fail**. This is the
+   one criterion I cannot evaluate from here.
 
-`skip=1` on Mario Kart, 30 s: 30 drawn, ≈15.9 ms, and **no `frameskip N -> M`
-lines at all** (a pin disables the controller). This also re-checks CPU6's
-finding (a) — no `Raised frameskip` spam either.
+Expected if it works: menus at 0, most of the road at 1, 2 only on the heavy
+stretches — so drawn fps between 20 and 30, above run 4's 20.
 
-## 4. Play check
+## 5. The rule on a fail
 
-Reinstall the **play build** (777008 B) with `board_install.sh`, delete
-`/sd/retro-go/config/gbaopt.txt`, then:
+**Not an option, a rule.** If any criterion in section 4 fails, the play build's
+default goes back to today's Auto — raise only — and the dynamic controller
+stays opt-in behind `autodyn=1`. That is one line in `frameskip_apply`
+(`fs_dynamic` starts at 0 instead of 1); the code for both paths is already in
+this build, which is why `autodyn=0` is run 4 rather than a separate flash.
 
-1. **Mario Kart, menus → race → menus** on Auto (the default), watched on the
-   webcam. The question is whether the *transitions* are acceptable: the race
-   dropping to 30 drawn and the menus coming back to 60 should look like a
-   change of smoothness, **not a stutter, a hitch or a jump in game speed**. If
-   a transition is visible as a glitch, say so — that is the one thing I cannot
-   judge from here and it decides whether Auto should be the default.
-2. **Sonic Advance** — every frame drawn, 60/60.
+Tell me **which** criterion failed and with what numbers, and I will either make
+that flip or fix the controller with the drawn/skipped figures from the log —
+which is why every line carries them.
+
+**Revert on the board, immediately**: `autodyn=0` in the card file, or Frameskip
+→ 0 or 1 in the menu (a pin disables the controller entirely).
+
+## 6. Play check
+
+Reinstall the **play build** (777120 B) with `board_install.sh`, delete
+`gbaopt.txt`, then:
+
+1. **Mario Kart: menus → drive a lap → pause → drive → back to the menus**, on
+   Auto. Watch the transitions on the webcam (criterion 5) and the log lines
+   around them.
+2. **Sonic Advance** — every frame drawn, 60/60, no transition lines.
 3. **Buttons with real presses**: SELECT / START / A / START / RIGHT, confirming
    on the webcam that RIGHT steers, A accelerates and START pauses.
 4. **Menu → Frameskip** reads `Auto`, cycles `Auto → 0 → 1 → 2` and no further,
    and the choice survives leaving and re-entering the game.
 
-## 5. Pass criterion
-
-**Mario Kart on Auto: 60 drawn in the menus, 30 drawn in the race at SPEED
-100 %, and the transitions both ways within about four changes over the two
-minutes** — with Sonic and Metal Slug untouched at 0.
-
-If it **flaps** (many transitions, or one every few seconds in a steady scene),
-the threshold is too close to the real cost and I will lower `FS_BUDGET_US` or
-lengthen the hold using the drawn/skipped numbers from the log — which is why
-every line carries them.
-
-**Revert**: Frameskip → 0 or 1 in the menu pins it and switches the controller
-off entirely; or reflash CPU6's build (`137c9e8d`).
-
-## 6. Not evidence
+## 7. Not evidence
 
 Instruction counts, the frame hash, `instr/frame` and `cycles/instr`, host
-timings, and a single `GBAPROF` line. Medians of the last six where a number is
-wanted — but for this run the **log lines in order** matter more than any median.
+timings. For this run the **ordered log lines and the minimum 1 s SPEED** matter
+more than any average.
