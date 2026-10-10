@@ -1,5 +1,6 @@
 #include <rg_system.h>
 #include <esp_system.h>   /* esp_reset_reason: a crash is not a power cut */
+#include <esp_cpu.h>      /* esp_cpu_get_cycle_count: the frameskip controller's clock */
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -116,75 +117,105 @@ static int frameskip_opt = -1;
    so Auto holds a skip slightly longer than it strictly must, and never drops
    to 0 on a scene that cannot carry it. */
 #define FS_BUDGET_US   15800   /* 16667 minus a margin that also covers the bias */
-#define FS_HOLD        2       /* seconds the prediction must stay under it */
-#define FS_COOLDOWN    2       /* seconds after a change before another one */
+#define FS_HOLD_MIN    3       /* seconds the prediction must hold before a drop */
+#define FS_HOLD_MAX    30      /* ... after the backoff below has doubled it */
+#define FS_RAISE_SOON  3       /* a raise this soon after a drop means it was wrong */
+#define FS_CALM        30      /* seconds with no raise that clear the backoff */
+#define FS_CPU_MHZ     240
 
-static int64_t fs_drawn_us, fs_skip_us;
-static int fs_drawn_n, fs_skip_n, fs_good, fs_cooldown;
+static int fs_dynamic = 1;     /* 0: raise only, as before -- the opt-out */
+static uint64_t fs_drawn_cyc, fs_skip_cyc;
+static uint32_t fs_drawn_n, fs_skip_n;
+static int fs_good, fs_hold = FS_HOLD_MIN, fs_since_drop = FS_CALM, fs_since_raise = FS_CALM;
+static uint32_t fs_at[3], fs_drawn_total, fs_seconds;   /* what the board reports */
 
-static void frameskip_auto_frame(int64_t cpu_us, bool drawn)
+/* In the frame path: one add and one increment, no divide, no float, no log.
+   The two reads around it are rsr CCOUNT, one instruction each -- about four
+   cycles of the four million in a frame. Two is the minimum for a span: a
+   single read per frame would only give the paced wall time, which is 16.67 ms
+   whenever the game keeps up and so says nothing about what a frame costs. */
+static void frameskip_auto_frame(uint32_t cycles, bool drawn)
 {
-    if (frameskip_opt >= 0)
-        return;              /* pinned: nothing to decide, nothing to measure */
-    if (drawn) { fs_drawn_us += cpu_us; fs_drawn_n++; }
-    else { fs_skip_us += cpu_us; fs_skip_n++; }
+    if (frameskip_opt >= 0 || !fs_dynamic)
+        return;              /* pinned, or raise-only: nothing to decide */
+    if (drawn) { fs_drawn_cyc += cycles; fs_drawn_n++; }
+    else { fs_skip_cyc += cycles; fs_skip_n++; }
 }
 
 /* once a second, Auto only */
 static void frameskip_auto_second(void)
 {
-    const int64_t drawn = fs_drawn_n ? fs_drawn_us / fs_drawn_n : 0;
-    const int64_t skipped = fs_skip_n ? fs_skip_us / fs_skip_n : 0;
+    const uint32_t drawn = fs_drawn_n ? (uint32_t)(fs_drawn_cyc / fs_drawn_n / FS_CPU_MHZ) : 0;
+    const uint32_t skipped = fs_skip_n ? (uint32_t)(fs_skip_cyc / fs_skip_n / FS_CPU_MHZ) : 0;
     const int k = app->frameskip;
     const rg_stats_t st = rg_system_get_stats();
-    int64_t predicted = 0;
+    uint32_t predicted = 0;
 
-    fs_drawn_us = fs_skip_us = 0;
+    if (k >= 0 && k < 3)
+        fs_at[k]++;
+    fs_drawn_total += fs_drawn_n;
+    fs_seconds++;
+    fs_drawn_cyc = fs_skip_cyc = 0;
     fs_drawn_n = fs_skip_n = 0;
-    if (fs_cooldown > 0)
-        fs_cooldown--;
+    if (fs_since_drop < FS_CALM) fs_since_drop++;
+    if (fs_since_raise < FS_CALM) fs_since_raise++;
+    if (fs_since_raise >= FS_CALM)
+        fs_hold = FS_HOLD_MIN;   /* a calm stretch forgets the backoff */
 
-    /* what one frame would average at the next level down: every (k)th frame
-       drawn instead of every (k+1)th */
+    /* what a frame would average one level down: every kth frame drawn
+       instead of every (k+1)th. At k=1 that is just the drawn time. */
     if (k > 0)
-        predicted = (drawn + (int64_t)(k - 1) * skipped) / k;
+        predicted = (drawn + (uint32_t)(k - 1) * skipped) / (uint32_t)k;
 
     if (st.speedPercent < 96.f && st.busyPercent > 85.f && k < 2)
     {
-        if (fs_cooldown == 0)
-        {
-            app->frameskip = k + 1;
-            fs_good = 0;
-            fs_cooldown = FS_COOLDOWN;
-            RG_LOGI("frameskip %d -> %d: speed %d%%, drawn %d.%02d ms, skipped %d.%02d ms",
-                    k, k + 1, (int)st.speedPercent, (int)(drawn / 1000), (int)(drawn % 1000) / 10,
-                    (int)(skipped / 1000), (int)(skipped % 1000) / 10);
-        }
+        /* Raising is never delayed: losing speed is the one outcome that must
+           not happen. But a raise straight after a drop says the drop was
+           wrong, so the next one has to earn twice the patience. */
+        if (fs_since_drop <= FS_RAISE_SOON && fs_hold < FS_HOLD_MAX)
+            fs_hold = fs_hold * 2 > FS_HOLD_MAX ? FS_HOLD_MAX : fs_hold * 2;
+        app->frameskip = k + 1;
+        fs_since_raise = 0;
+        fs_good = 0;
+        RG_LOGI("frameskip %d -> %d: speed %d%%, drawn %u.%02u ms, skipped %u.%02u ms, hold now %ds",
+                k, k + 1, (int)st.speedPercent, (unsigned)(drawn / 1000), (unsigned)((drawn % 1000) / 10),
+                (unsigned)(skipped / 1000), (unsigned)((skipped % 1000) / 10), fs_hold);
     }
-    else if (k > 0 && predicted > 0 && predicted < FS_BUDGET_US)
+    else if (k > 0 && predicted && predicted < FS_BUDGET_US)
     {
-        if (++fs_good >= FS_HOLD && fs_cooldown == 0)
+        if (++fs_good >= fs_hold)
         {
             app->frameskip = k - 1;
+            fs_since_drop = 0;
             fs_good = 0;
-            fs_cooldown = FS_COOLDOWN;
-            RG_LOGI("frameskip %d -> %d: %d.%02d ms predicted a frame, drawn %d.%02d, skipped %d.%02d",
-                    k, k - 1, (int)(predicted / 1000), (int)(predicted % 1000) / 10,
-                    (int)(drawn / 1000), (int)(drawn % 1000) / 10,
-                    (int)(skipped / 1000), (int)(skipped % 1000) / 10);
+            RG_LOGI("frameskip %d -> %d: %u.%02u ms predicted, drawn %u.%02u, skipped %u.%02u, held %ds",
+                    k, k - 1, (unsigned)(predicted / 1000), (unsigned)((predicted % 1000) / 10),
+                    (unsigned)(drawn / 1000), (unsigned)((drawn % 1000) / 10),
+                    (unsigned)(skipped / 1000), (unsigned)((skipped % 1000) / 10), fs_hold);
         }
     }
     else
         fs_good = 0;
+
+    if (fs_seconds % 10 == 0)
+        RG_LOGI("frameskip residency: skip0 %us, skip1 %us, skip2 %us of %us, %u.%u drawn fps, hold %ds",
+                (unsigned)fs_at[0], (unsigned)fs_at[1], (unsigned)fs_at[2], (unsigned)fs_seconds,
+                (unsigned)(fs_drawn_total / fs_seconds),
+                (unsigned)((fs_drawn_total * 10 / fs_seconds) % 10), fs_hold);
 }
 
 /* the only place either frameskip variable is written during a game */
 static void frameskip_apply(void)
 {
-    fs_drawn_us = fs_skip_us = 0;
-    fs_drawn_n = fs_skip_n = fs_good = fs_cooldown = 0;
-    app->frameskipMax = 0;   /* gbsp owns it either way: rg_system must not adjust it */
+    fs_drawn_cyc = fs_skip_cyc = 0;
+    fs_drawn_n = fs_skip_n = 0;
+    fs_good = 0;
+    fs_hold = FS_HOLD_MIN;
+    fs_since_drop = fs_since_raise = FS_CALM;
     app->frameskip = frameskip_opt < 0 ? 0 : frameskip_opt;
+    /* Auto with the dynamic controller off is what it was before: rg_system
+       raises it and never brings it back. gbsp owns it in every other case. */
+    app->frameskipMax = (frameskip_opt < 0 && !fs_dynamic) ? 2 : 0;
 }
 
 void netpacket_poll_receive()
@@ -217,6 +248,7 @@ static uint32_t samp_up2, samp_all;
 static u32 idle_dump_pc;   /* opt_read(): guest memory to print */
 static u32 opt_perf;       /* opt_read(): the LX7 counters around the emulation */
 static u32 opt_skip = ~0u; /* opt_read(): frameskip pinned for an A/B, ~0 = the menu's */
+static u32 opt_autodyn = 1;/* opt_read(): 0 = Auto raises only, as before CPU7 */
 u32 gbsp_opt_core1_idle;   /* video.cpp: core 1 never woken (contention) */
 u32 gbsp_opt_rint;         /* video.cpp: the palette/OAM copies in internal RAM */
 uint32_t samp_jit_lo = 0x42400000, samp_jit_len = 0x1C00000;   /* the translated code */
@@ -455,6 +487,9 @@ static void samp_dump(void)
      skip=0|1|2    frameskip pinned, overriding the menu and rg_system's
                    auto-frameskip, so an A/B needs no menu navigation. Absent:
                    the Frameskip option decides
+     autodyn=0     Auto only raises, as it did before CPU7 (rg_system's rule,
+                   which never comes back down). 1, the default, is the
+                   predicting controller that lowers again
      branch=0x...  an idle loop's branch instruction  -> idle_loop_target_pc
      head=0x...    the PC the loop branches to        -> idle_loop_head_pc
      dump=0x...    32 guest halfwords from there, with the sampler dump
@@ -489,6 +524,7 @@ static void opt_read(void)
         {"core1_idle=", &gbsp_opt_core1_idle},
         {"nohash=", &rg_opt_no_partial},
         {"skip=", &opt_skip},
+        {"autodyn=", &opt_autodyn},
         {"rint=", &gbsp_opt_rint},
         {"l1=", &l1},
     };
@@ -506,6 +542,8 @@ static void opt_read(void)
         RG_LOGE("gbaopt l1=%u is not 512, 1024 or 2048: keeping %u", (unsigned)l1,
                 (unsigned)(xt_opt_l1_mask + 1));
 
+    fs_dynamic = opt_autodyn ? 1 : 0;
+    frameskip_apply();   /* autodyn decides who owns frameskipMax */
     if (opt_skip != ~0u)
     {
         if (opt_skip <= 2)
@@ -520,10 +558,11 @@ static void opt_read(void)
             opt_skip = ~0u;
         }
     }
-    RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, nohash %u, rint %u, l1 %u, skip %d, idle branch %08lx head %08lx dump %08lx",
+    RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, nohash %u, rint %u, l1 %u, skip %d, autodyn %u, idle branch %08lx head %08lx dump %08lx",
             path, (unsigned)opt_perf, (unsigned)gbsp_opt_core1_idle,
             (unsigned)rg_opt_no_partial, (unsigned)gbsp_opt_rint,
             (unsigned)(xt_opt_l1_mask + 1), opt_skip == ~0u ? -1 : (int)opt_skip,
+            (unsigned)opt_autodyn,
             (unsigned long)idle_loop_target_pc, (unsigned long)idle_loop_head_pc,
             (unsigned long)idle_dump_pc);
 }
@@ -1137,8 +1176,9 @@ void app_main(void)
         rumble_frame_reset();
         clear_gamepak_stickybits();
         const bool drawn = !skip_next_frame;
-        const int64_t t_exec = rg_system_timer();   /* Auto needs this in a play build */
+        const uint32_t fs_c0 = esp_cpu_get_cycle_count();   /* one rsr CCOUNT */
 #ifdef GBAPROF
+        const int64_t t_exec = rg_system_timer();
         gbaprof_render_us = 0;
 #endif
 #ifdef GBABENCH
@@ -1190,8 +1230,10 @@ void app_main(void)
         int64_t tb_display = tb_render;
 #endif
         // RG_TIMER_LAP("execute_arm");
+        frameskip_auto_frame(esp_cpu_get_cycle_count() - fs_c0, drawn);
+#ifdef GBAPROF
         const int64_t t_disp = rg_system_timer();
-        frameskip_auto_frame(t_disp - t_exec, drawn);
+#endif
 
         if (!skip_next_frame)
         {
