@@ -90,19 +90,101 @@ static const char *SETTING_FRAMESKIP = "frameskip";
    board, 2026-10-10). */
 static int frameskip_opt = -1;
 
+/* ---- Auto frameskip, both ways -------------------------------------------
+   rg_system's auto only ever climbs, so Auto used to stick at 1 for the rest
+   of a session once a race had raised it. gbsp owns the whole decision now
+   (frameskipMax stays 0, so rg_system does not adjust it at all) and lowers it
+   again when the game can draw everything.
+
+   The lowering cannot be read from SPEED or BUSY. At skip 1 Mario Kart reports
+   SPEED 100% and BUSY 96% while a frame at skip 0 would cost 18.3 ms, so a
+   rule built on those would drop to 0, come back slow, climb again, and do it
+   once a second for ever. It predicts the cost instead, from the frames it is
+   already timing: core 0's time in a DRAWN frame is a frame spent with core 1
+   drawing, which is what every frame is at skip 0, and a SKIPPED frame is one
+   with core 1 idle.
+
+   Measured on the board (2026-10-10) across skip 0/1/2, solving for the two:
+   a drawn frame is 19.10 ms and a skipped one 12.53 ms, and the model
+   (drawn + k*skipped)/(k+1) reproduces the measured averages at skip 1 and 2
+   to 0.05 ms, so the two costs barely depend on the level. The one bias worth
+   knowing: a drawn frame at skip >= 1 costs 0.81 ms MORE than a frame at skip 0
+   (19.10 against 18.29), because at skip 0 core 1 lags by up to ~77 lines and
+   its work spills across every frame, while a drawn frame ends in
+   gbsp_render_wait and so absorbs a whole frame of core-1 work on its own.
+   That bias is in the safe direction -- it makes the prediction pessimistic,
+   so Auto holds a skip slightly longer than it strictly must, and never drops
+   to 0 on a scene that cannot carry it. */
+#define FS_BUDGET_US   15800   /* 16667 minus a margin that also covers the bias */
+#define FS_HOLD        2       /* seconds the prediction must stay under it */
+#define FS_COOLDOWN    2       /* seconds after a change before another one */
+
+static int64_t fs_drawn_us, fs_skip_us;
+static int fs_drawn_n, fs_skip_n, fs_good, fs_cooldown;
+
+static void frameskip_auto_frame(int64_t cpu_us, bool drawn)
+{
+    if (frameskip_opt >= 0)
+        return;              /* pinned: nothing to decide, nothing to measure */
+    if (drawn) { fs_drawn_us += cpu_us; fs_drawn_n++; }
+    else { fs_skip_us += cpu_us; fs_skip_n++; }
+}
+
+/* once a second, Auto only */
+static void frameskip_auto_second(void)
+{
+    const int64_t drawn = fs_drawn_n ? fs_drawn_us / fs_drawn_n : 0;
+    const int64_t skipped = fs_skip_n ? fs_skip_us / fs_skip_n : 0;
+    const int k = app->frameskip;
+    const rg_stats_t st = rg_system_get_stats();
+    int64_t predicted = 0;
+
+    fs_drawn_us = fs_skip_us = 0;
+    fs_drawn_n = fs_skip_n = 0;
+    if (fs_cooldown > 0)
+        fs_cooldown--;
+
+    /* what one frame would average at the next level down: every (k)th frame
+       drawn instead of every (k+1)th */
+    if (k > 0)
+        predicted = (drawn + (int64_t)(k - 1) * skipped) / k;
+
+    if (st.speedPercent < 96.f && st.busyPercent > 85.f && k < 2)
+    {
+        if (fs_cooldown == 0)
+        {
+            app->frameskip = k + 1;
+            fs_good = 0;
+            fs_cooldown = FS_COOLDOWN;
+            RG_LOGI("frameskip %d -> %d: speed %d%%, drawn %d.%02d ms, skipped %d.%02d ms",
+                    k, k + 1, (int)st.speedPercent, (int)(drawn / 1000), (int)(drawn % 1000) / 10,
+                    (int)(skipped / 1000), (int)(skipped % 1000) / 10);
+        }
+    }
+    else if (k > 0 && predicted > 0 && predicted < FS_BUDGET_US)
+    {
+        if (++fs_good >= FS_HOLD && fs_cooldown == 0)
+        {
+            app->frameskip = k - 1;
+            fs_good = 0;
+            fs_cooldown = FS_COOLDOWN;
+            RG_LOGI("frameskip %d -> %d: %d.%02d ms predicted a frame, drawn %d.%02d, skipped %d.%02d",
+                    k, k - 1, (int)(predicted / 1000), (int)(predicted % 1000) / 10,
+                    (int)(drawn / 1000), (int)(drawn % 1000) / 10,
+                    (int)(skipped / 1000), (int)(skipped % 1000) / 10);
+        }
+    }
+    else
+        fs_good = 0;
+}
+
 /* the only place either frameskip variable is written during a game */
 static void frameskip_apply(void)
 {
-    if (frameskip_opt < 0)
-    {
-        app->frameskip = 0;        /* Auto starts from "draw everything" */
-        app->frameskipMax = 2;     /* and never passes the menu's maximum */
-    }
-    else
-    {
-        app->frameskip = frameskip_opt;
-        app->frameskipMax = 0;     /* pinned: auto must not adjust it at all */
-    }
+    fs_drawn_us = fs_skip_us = 0;
+    fs_drawn_n = fs_skip_n = fs_good = fs_cooldown = 0;
+    app->frameskipMax = 0;   /* gbsp owns it either way: rg_system must not adjust it */
+    app->frameskip = frameskip_opt < 0 ? 0 : frameskip_opt;
 }
 
 void netpacket_poll_receive()
@@ -1054,9 +1136,9 @@ void app_main(void)
         update_input();
         rumble_frame_reset();
         clear_gamepak_stickybits();
-#ifdef GBAPROF
         const bool drawn = !skip_next_frame;
-        const int64_t t_exec = rg_system_timer();
+        const int64_t t_exec = rg_system_timer();   /* Auto needs this in a play build */
+#ifdef GBAPROF
         gbaprof_render_us = 0;
 #endif
 #ifdef GBABENCH
@@ -1108,9 +1190,8 @@ void app_main(void)
         int64_t tb_display = tb_render;
 #endif
         // RG_TIMER_LAP("execute_arm");
-#ifdef GBAPROF
         const int64_t t_disp = rg_system_timer();
-#endif
+        frameskip_auto_frame(t_disp - t_exec, drawn);
 
         if (!skip_next_frame)
         {
@@ -1337,6 +1418,16 @@ void app_main(void)
            but never to 0: with the default a game already running 60/60 would
            have drawn every other frame for ever. Slow games get there by
            themselves -- rg_system raises it when the speed sits under 96%. */
+        if (frameskip_opt < 0)   /* Auto: gbsp raises and lowers it itself */
+        {
+            static int64_t fs_t_last;
+            const int64_t now = rg_system_timer();
+            if (now - fs_t_last >= 1000000)
+            {
+                frameskip_auto_second();
+                fs_t_last = now;
+            }
+        }
         if (skip_next_frame == 0)
             skip_next_frame = app->frameskip;
         else if (skip_next_frame > 0)
