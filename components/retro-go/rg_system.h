@@ -208,6 +208,13 @@ typedef struct
     int freeBlockInt;
     int freeBlockExt;
     int freeStackMain;
+    // System monitor (rg_gui_sysmon_menu): sampled once per second by rg_sysmon
+    int minFreeMemoryInt;   // lowest free internal heap since boot
+    int minFreeMemoryExt;   // lowest free PSRAM heap since boot
+    int freeMemoryDma;      // free DMA-capable internal RAM (display, SD, audio)
+    float temperature;      // die temperature in C, NAN if no sensor
+    float maxTemperature;   // highest die temperature since boot
+    float cpuLoad[2];       // percent of each core NOT spent in its idle task, -1 if unknown
 } rg_stats_t;
 
 rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_unused);

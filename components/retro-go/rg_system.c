@@ -21,6 +21,11 @@
 #include <esp_timer.h>
 #include <esp_sleep.h>
 #include <driver/gpio.h>
+#include <soc/soc_caps.h>
+#if SOC_TEMP_SENSOR_SUPPORTED
+#include <driver/temperature_sensor.h>
+static temperature_sensor_handle_t temp_sensor;
+#endif
 #else
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_mutex.h>
@@ -176,9 +181,44 @@ static void update_memory_statistics(void)
     statistics.totalMemoryExt = heap_info.total_free_bytes + heap_info.total_allocated_bytes;
 
     statistics.freeStackMain = uxTaskGetStackHighWaterMark(tasks[0].handle);
+
+    statistics.minFreeMemoryInt = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    statistics.minFreeMemoryExt = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    statistics.freeMemoryDma = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
 #else
     statistics.freeMemoryInt = statistics.freeBlockInt = statistics.totalMemoryInt = (1 << 28);
     statistics.freeMemoryExt = statistics.freeBlockExt = statistics.totalMemoryExt = (1 << 28);
+#endif
+}
+
+static void update_sensor_statistics(void)
+{
+    statistics.temperature = NAN;
+#if defined(ESP_PLATFORM) && SOC_TEMP_SENSOR_SUPPORTED
+    float celsius;
+    if (temp_sensor && temperature_sensor_get_celsius(temp_sensor, &celsius) == ESP_OK)
+    {
+        statistics.temperature = celsius;
+        if (celsius > statistics.maxTemperature)
+            statistics.maxTemperature = celsius;
+    }
+#endif
+
+    statistics.cpuLoad[0] = statistics.cpuLoad[1] = -1.f;
+#if defined(ESP_PLATFORM) && configGENERATE_RUN_TIME_STATS
+    // The run-time counter is esp_timer microseconds (32 bits, wraps every ~71 min):
+    // unsigned deltas stay correct across one wrap, and we sample every second.
+    static uint32_t prev_idle[2], prev_time;
+    uint32_t now = (uint32_t)esp_timer_get_time();
+    uint32_t elapsed = now - prev_time;
+    for (int core = 0; core < RG_MIN(portNUM_PROCESSORS, 2); core++)
+    {
+        uint32_t idle = ulTaskGetIdleRunTimeCounterForCore(core);
+        if (prev_time && elapsed > 0)
+            statistics.cpuLoad[core] = RG_MAX(0.f, 100.f - (float)(idle - prev_idle[core]) * 100.f / elapsed);
+        prev_idle[core] = idle;
+    }
+    prev_time = now;
 #endif
 }
 
@@ -226,6 +266,7 @@ static void update_statistics(void)
     statistics.uptime = rg_system_timer() / 1000000;
 
     update_memory_statistics();
+    update_sensor_statistics();
 }
 
 static void update_indicators(bool reset_animation)
@@ -254,6 +295,16 @@ static void system_monitor_task(void *arg)
 {
     int64_t nextLoopTime = 0;
     time_t prevTime = time(NULL);
+
+#if defined(ESP_PLATFORM) && SOC_TEMP_SENSOR_SUPPORTED
+    temperature_sensor_config_t temp_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+    if (temperature_sensor_install(&temp_config, &temp_sensor) != ESP_OK
+        || temperature_sensor_enable(temp_sensor) != ESP_OK)
+    {
+        RG_LOGW("Die temperature sensor unavailable");
+        temp_sensor = NULL;
+    }
+#endif
 
     rg_task_delay(2000);
 

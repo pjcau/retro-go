@@ -8,6 +8,10 @@
 #include <sys/time.h>
 #include <time.h>
 
+#ifdef ESP_PLATFORM
+#include <esp_system.h>
+#endif
+
 #include "rg_logo.h"
 #include "fonts/fonts.h"
 
@@ -2117,6 +2121,7 @@ void rg_gui_about_menu(void)
         RG_DIALOG_SEPARATOR,
         {4, _("Options"), NULL, have_option_btn ? RG_DIALOG_FLAG_HIDDEN : RG_DIALOG_FLAG_NORMAL , NULL},
         // {1, _("View credits", NULL, RG_DIALOG_FLAG_NORMAL, NULL},
+        {5, _("System monitor"), NULL, RG_DIALOG_FLAG_NORMAL, NULL},
         {2, _("Debug menu"), NULL, RG_DIALOG_FLAG_NORMAL, NULL},
         {3, _("Reset settings"), NULL, RG_DIALOG_FLAG_NORMAL, NULL},
         RG_DIALOG_END,
@@ -2146,6 +2151,9 @@ void rg_gui_about_menu(void)
                 break;
             case 4:
                 rg_gui_options_menu();
+                break;
+            case 5:
+                rg_gui_sysmon_menu();
                 break;
             default:
                 return;
@@ -2256,6 +2264,143 @@ void rg_gui_debug_menu(void)
     }
 }
 
+static const char *reset_reason_str(void)
+{
+#ifdef ESP_PLATFORM
+    switch (esp_reset_reason())
+    {
+    case ESP_RST_POWERON:   return "Power on";
+    case ESP_RST_SW:        return "Software";
+    case ESP_RST_PANIC:     return "Crash";
+    case ESP_RST_INT_WDT:   return "Int watchdog";
+    case ESP_RST_TASK_WDT:  return "Task watchdog";
+    case ESP_RST_WDT:       return "Watchdog";
+    case ESP_RST_BROWNOUT:  return "Brownout";
+    case ESP_RST_DEEPSLEEP: return "Deep sleep";
+    case ESP_RST_USB:       return "USB";
+    case ESP_RST_EXT:       return "Reset pin";
+    default:                return "Other";
+    }
+#else
+    return "N/A";
+#endif
+}
+
+void rg_gui_sysmon_menu(void)
+{
+    // The emulator is stopped while a menu is open, so its figures are those of the
+    // last second of play before the menu: taken once here, never refreshed.
+    // Everything under "Live" comes from rg_sysmon, which samples once per second.
+    const rg_stats_t game = rg_system_get_stats();
+    const rg_app_t *app = rg_system_get_app();
+    char game_speed[48], game_busy[48], game_load[48];
+    char temp[48], clock[48], ram[48], ram_block[48], psram[48], psram_block[48];
+    char stack[48], battery[48], uptime[48], reset[48];
+
+    snprintf(game_speed, 48, "%d fps (%d%%)", (int)roundf(game.totalFPS), (int)roundf(game.speedPercent));
+    snprintf(game_busy, 48, "%d%%, skip %d", (int)roundf(game.busyPercent), app->frameskip);
+    if (game.cpuLoad[0] >= 0.f)
+        snprintf(game_load, 48, "%d%% / %d%%", (int)roundf(game.cpuLoad[0]), (int)roundf(game.cpuLoad[1]));
+    else
+        snprintf(game_load, 48, "N/A");
+    snprintf(reset, 48, "%s", reset_reason_str());
+
+    rg_gui_option_t options[] = {
+        {0, "In game (before menu)", NULL, RG_DIALOG_FLAG_SKIP, NULL},
+        {0, "Speed      ", game_speed,  RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "Emu busy   ", game_busy,   RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "Core 0 / 1 ", game_load,   RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "Live",                NULL, RG_DIALOG_FLAG_SKIP, NULL},
+        {0, "Die temp   ", temp,        RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "CPU clock  ", clock,       RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "RAM free   ", ram,         RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "RAM block  ", ram_block,   RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "PSRAM free ", psram,       RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "PSRAM block", psram_block, RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "Main stack ", stack,       RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "Battery    ", battery,     RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "Uptime     ", uptime,      RG_DIALOG_FLAG_NORMAL, NULL},
+        {0, "Last reset ", reset,       RG_DIALOG_FLAG_NORMAL, NULL},
+        RG_DIALOG_END
+    };
+    const int count = get_dialog_items_count(options);
+    int sel = 1, prev_width = 0;
+    uint32_t joystick = 0, joystick_old;
+    int64_t next_refresh = 0;
+    bool redraw = false;
+
+    rg_gui_draw_status_bars();
+    rg_input_wait_for_key(RG_KEY_ALL, false, 1000);
+
+    while (true)
+    {
+        joystick_old = joystick;
+        joystick = rg_input_read_gamepad();
+        uint32_t pressed = joystick & ~joystick_old;
+
+        if (pressed & (RG_KEY_A | RG_KEY_B | RG_KEY_MENU | RG_KEY_OPTION))
+            break;
+        if (pressed & (RG_KEY_UP | RG_KEY_DOWN))
+        {
+            int step = (pressed & RG_KEY_UP) ? -1 : 1;
+            do
+                sel = (sel + step + count) % count;
+            while (options[sel].flags != RG_DIALOG_FLAG_NORMAL);
+            redraw = true;
+        }
+
+        if (rg_system_timer() >= next_refresh)
+        {
+            rg_stats_t stats = rg_system_get_stats();
+            rg_battery_t batt = rg_input_read_battery();
+            int up = stats.uptime;
+
+            if (isnan(stats.temperature))
+                snprintf(temp, 48, "N/A");
+            else
+                snprintf(temp, 48, "%.1f C (max %.1f)", stats.temperature, stats.maxTemperature);
+            snprintf(clock, 48, "%d MHz", rg_system_get_cpu_speed());
+            snprintf(ram, 48, "%dK, low %dK", stats.freeMemoryInt / 1024, stats.minFreeMemoryInt / 1024);
+            snprintf(ram_block, 48, "%dK, DMA %dK", stats.freeBlockInt / 1024, stats.freeMemoryDma / 1024);
+            snprintf(psram, 48, "%dK/%dK, low %dK", stats.freeMemoryExt / 1024, stats.totalMemoryExt / 1024,
+                     stats.minFreeMemoryExt / 1024);
+            snprintf(psram_block, 48, "%dK", stats.freeBlockExt / 1024);
+            snprintf(stack, 48, "%d bytes left", stats.freeStackMain);
+            if (batt.present)
+                snprintf(battery, 48, "%.2fV, %d%%", batt.volts, (int)roundf(batt.level));
+            else
+                snprintf(battery, 48, "N/A");
+            snprintf(uptime, 48, "%dh %02dm %02ds", up / 3600, (up / 60) % 60, up % 60);
+
+            RG_LOGI("sysmon: temp=%.1f max=%.1f int=%d low=%d dma=%d ext=%d low=%d stack=%d game=%dfps load=%d/%d",
+                    stats.temperature, stats.maxTemperature, stats.freeMemoryInt, stats.minFreeMemoryInt,
+                    stats.freeMemoryDma, stats.freeMemoryExt, stats.minFreeMemoryExt, stats.freeStackMain,
+                    (int)roundf(game.totalFPS), (int)roundf(game.cpuLoad[0]), (int)roundf(game.cpuLoad[1]));
+
+            next_refresh = rg_system_timer() + 1000000;
+            redraw = true;
+        }
+
+        if (redraw)
+        {
+            rg_rect_t rect = rg_gui_draw_dialog("System monitor", options, count, sel);
+            if (rect.width < prev_width) // A narrower box leaves the old edges on screen
+            {
+                rg_display_force_redraw();
+                rg_gui_draw_status_bars();
+                rect = rg_gui_draw_dialog("System monitor", options, count, sel);
+            }
+            prev_width = rect.width;
+            redraw = false;
+        }
+
+        rg_task_delay(20);
+    }
+
+    rg_input_wait_for_key(joystick, false, 1000);
+    rg_display_force_redraw();
+}
+
 static rg_gui_event_t slot_select_cb(rg_gui_option_t *option, rg_gui_event_t event)
 {
     rg_emu_slot_t *slot = (rg_emu_slot_t *)option->arg;
@@ -2323,6 +2468,7 @@ void rg_gui_game_menu(void)
         {5000, _("Netplay"),         NULL, RG_DIALOG_FLAG_NORMAL, NULL},
         #endif
         {5500, _("Options"),         NULL, have_option_btn ? RG_DIALOG_FLAG_HIDDEN : RG_DIALOG_FLAG_NORMAL, NULL},
+        {5800, _("System monitor"),  NULL, RG_DIALOG_FLAG_NORMAL, NULL},
         {6000, _("About"),           NULL, RG_DIALOG_FLAG_NORMAL, NULL},
         {7000, _("Quit"),            NULL, RG_DIALOG_FLAG_NORMAL, NULL},
         RG_DIALOG_END
@@ -2354,6 +2500,7 @@ void rg_gui_game_menu(void)
         case 5000: rg_netplay_quick_start(); break;
     #endif
         case 5500: rg_gui_options_menu(); break;
+        case 5800: rg_gui_sysmon_menu(); break;
         case 6000: rg_gui_about_menu(); break;
         case 7000: rg_system_exit(); break;
     }
