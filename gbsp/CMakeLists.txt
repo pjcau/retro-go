@@ -3,8 +3,9 @@ set(COMPONENTS "main retro-go gbsp-libretro app_trace bootloader esptool_py")
 if(NOT "$ENV{GBAJIT}" STREQUAL "0")   # dynarec by default, GBAJIT=0: interpreter only
     list(APPEND COMPONENTS xjit esp_mm)
 endif()
-if(DEFINED ENV{GBABENCH} AND NOT "$ENV{GBABENCH}" STREQUAL "0")
-    list(APPEND COMPONENTS perfmon)   # LX7 performance counters in the GBABENCH lines
+if((DEFINED ENV{GBABENCH} AND NOT "$ENV{GBABENCH}" STREQUAL "0") OR
+   (DEFINED ENV{GBAPROF} AND NOT "$ENV{GBAPROF}" STREQUAL "0"))
+    list(APPEND COMPONENTS perfmon)   # LX7 performance counters: GBABENCH and GBAPROF lines
 endif()
 set(RG_ENABLE_NETWORKING 0)
 include(../base.cmake)

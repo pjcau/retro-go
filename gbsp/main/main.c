@@ -110,7 +110,9 @@ static bool screenshot_handler(const char *filename, int width, int height)
 static struct samp_s { uint32_t pc, n, a0, ps; } *samp;   /* PSRAM: internal RAM is full */
 static volatile bool samp_on;
 static uint32_t samp_up2, samp_all;
-static u32 idle_dump_pc;   /* idle_loop_override(): guest memory to print */
+static u32 idle_dump_pc;   /* opt_read(): guest memory to print */
+static u32 opt_perf;       /* opt_read(): the LX7 counters around the emulation */
+u32 gbsp_opt_core1_idle;   /* video.cpp: core 1 never woken (contention) */
 uint32_t samp_jit_lo = 0x42400000, samp_jit_len = 0x1C00000;   /* the translated code */
 static void IRAM_ATTR samp_tick(void)
 {
@@ -303,18 +305,32 @@ static void samp_dump(void)
     }
 }
 
-/* GBAPROF: a candidate idle loop, from /sd/retro-go/config/gbaidle.txt, so
-   that the board can try one (and read it) without a rebuild per candidate.
-   Keys, anywhere in the file, "#" to the end of a line ignored:
-     branch=0x...  the loop's branch instruction  -> idle_loop_target_pc
-     head=0x...    the PC the loop branches to    -> idle_loop_head_pc
-     dump=0x...    print 32 guest halfwords there with the sampler dump
-   The two conventions are explained in cpu.h. Absent or empty file: nothing
-   changes, so the build profiles the game exactly as gba_over.h leaves it. */
-static void idle_loop_override(void)
+/* GBAPROF: the levers, from /sd/retro-go/config/gbaopt.txt, so that one flash
+   A/Bs each one and every combination without a rebuild. Keys anywhere in the
+   file, "#" to the end of a line ignored, every default the play build's
+   behaviour:
+
+     perf=1        the LX7 counters around the emulation (GBAPERF line)
+     core1_idle=1  core 1 is never woken: core 0 runs the same emulation with
+                   the shared 32 KB instruction cache to itself. The picture
+                   freezes -- a measurement, not a way to play
+     l1=512        the block-lookup L1's live size: 512 (the play build), 1024
+                   or 2048. 512 slots held ~480 live keys on 2026-10-10
+     isync=1       translate_icache_sync's two compares at the call site
+                   instead of behind a call on every block lookup
+     branch=0x...  an idle loop's branch instruction  -> idle_loop_target_pc
+     head=0x...    the PC the loop branches to        -> idle_loop_head_pc
+     dump=0x...    32 guest halfwords from there, with the sampler dump
+
+   Absent or empty file: nothing changes. The two idle-loop conventions are
+   explained in cpu.h; run A of 2026-10-10 found no idle loop in Mario Kart,
+   so those three keys are kept for another game rather than for this one. */
+static void opt_read(void)
 {
-    const char *path = RG_BASE_PATH_CONFIG "/gbaidle.txt";
-    char buf[256];
+    extern u32 xt_opt_l1_mask, xt_opt_isync;
+    const char *path = RG_BASE_PATH_CONFIG "/gbaopt.txt";
+    char buf[512];
+    u32 l1 = 0;
     FILE *fp = fopen(path, "r");
     size_t n;
 
@@ -331,16 +347,29 @@ static void idle_loop_override(void)
         {"branch=", &idle_loop_target_pc},
         {"head=", &idle_loop_head_pc},
         {"dump=", &idle_dump_pc},
+        {"perf=", &opt_perf},
+        {"core1_idle=", &gbsp_opt_core1_idle},
+        {"isync=", &xt_opt_isync},
+        {"l1=", &l1},
     };
-    for (int i = 0; i < 3; i++)
+    for (unsigned i = 0; i < sizeof(keys) / sizeof(*keys); i++)
     {
         const char *at = strstr(buf, keys[i].key);
         if (at)
             *keys[i].dst = (u32)strtoul(at + strlen(keys[i].key), NULL, 0);
     }
-    RG_LOGI("idle loop from %s: branch %08lx, head %08lx, dump %08lx", path,
-            (unsigned long)idle_loop_target_pc, (unsigned long)idle_loop_head_pc,
-            (unsigned long)idle_dump_pc);
+    /* a power of two in range, or the play build's size: a mistyped l1 must
+       not quietly profile a table size that does not exist */
+    if (l1 == 512 || l1 == 1024 || l1 == 2048)
+        xt_opt_l1_mask = l1 - 1;
+    else if (l1)
+        RG_LOGE("gbaopt l1=%u is not 512, 1024 or 2048: keeping %u", (unsigned)l1,
+                (unsigned)(xt_opt_l1_mask + 1));
+
+    RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, l1 %u, isync %u, idle branch %08lx head %08lx dump %08lx",
+            path, (unsigned)opt_perf, (unsigned)gbsp_opt_core1_idle, (unsigned)(xt_opt_l1_mask + 1),
+            (unsigned)xt_opt_isync, (unsigned long)idle_loop_target_pc,
+            (unsigned long)idle_loop_head_pc, (unsigned long)idle_dump_pc);
 }
 #endif
 
@@ -570,10 +599,13 @@ static void event_handler(int event, void *arg)
     }
 }
 
-#ifdef GBABENCH
+#if defined(GBABENCH) || defined(GBAPROF)
 #include "xtensa_perfmon_access.h"
 #include "xtensa/xt_perf_consts.h"
+#ifdef GBABENCH
 static int bench_frame;
+#endif
+static int perf_frame;
 /* core-0 LX7 counters around the CPU emulation; 2 counters, 3 pairs taken in
    turn frame by frame (each total is scaled by 3 when printed) */
 static const uint16_t perf_sel[3][2][2] = {
@@ -599,6 +631,9 @@ static void perf_end(int f)
     for (int i = 0; i < 2; i++)
         perf_sum[f % 3][i] += xtensa_perfmon_value(i);
 }
+#endif   /* GBABENCH || GBAPROF */
+
+#ifdef GBABENCH
 /* right held, B 4 frames in 16, A 10 frames in 120 (libretro bits) */
 static int16_t bench_keys(int f)
 {
@@ -814,7 +849,7 @@ void app_main(void)
     }
 
 #ifdef GBAPROF
-    idle_loop_override();   /* after load_gamepak: that is where gba_over.h applies */
+    opt_read();   /* after load_gamepak: that is where gba_over.h applies */
 #endif
 
     gbsp_render_start();
@@ -926,6 +961,11 @@ void app_main(void)
 #ifdef GBABENCH
         const int64_t tb_exec = rg_system_timer();
         perf_begin(bench_frame);
+#elif defined(GBAPROF)
+        /* the LX7 counters around the emulation itself, which is where the
+           19.4 ms is. Off by default: perf=1 in gbaopt.txt turns them on. */
+        if (opt_perf)
+            perf_begin(perf_frame);
 #endif
 #ifdef HAVE_DYNAREC
         {
@@ -957,6 +997,10 @@ void app_main(void)
 #endif
 #ifdef GBABENCH
         perf_end(bench_frame);
+#elif defined(GBAPROF)
+        if (opt_perf)
+            perf_end(perf_frame);
+        perf_frame++;
 #endif
 #ifdef GBABENCH
         const int64_t tb_render = rg_system_timer();
@@ -1124,6 +1168,30 @@ void app_main(void)
                     last_flush = flush_ram_count;
                 }
 #endif
+                if (opt_perf)
+                {
+                    /* per frame; each pair of counters ran one frame in three.
+                       "I-cache miss" is the cycles core 0 stood still waiting
+                       for an instruction fetch: against cpu x 240 kcycles it
+                       says how much of the frame is code locality rather than
+                       work, which is the question a flat profile cannot
+                       answer. */
+                    const double k = 3.0 / frames / 1000;
+                    printf("GBAPERF per frame: kcycles %.0f kinstr %.0f (%.2f cyc/instr) | I-stall %.0f (cache-miss %.0f = %.2f ms, busy/PIF %.0f) D-stall %.0f\n",
+                           perf_sum[0][0] * k, perf_sum[0][1] * k,
+                           perf_sum[0][1] ? (double)perf_sum[0][0] / perf_sum[0][1] : 0.0,
+                           perf_sum[1][0] * k, perf_sum[2][0] * k, perf_sum[2][0] * k / 240.0,
+                           perf_sum[2][1] * k, perf_sum[1][1] * k);
+                    memset(perf_sum, 0, sizeof(perf_sum));
+                }
+                {
+                    extern u32 xt_prof_l1_hit, xt_prof_l1_miss;
+                    const u32 h = xt_prof_l1_hit, m = xt_prof_l1_miss;
+                    printf("GBAL1 per frame: %u hits, %u misses (%.1f%% miss) in the block lookup\n",
+                           (unsigned)(h / frames), (unsigned)(m / frames),
+                           (h + m) ? 100.0 * m / (h + m) : 0.0);
+                    xt_prof_l1_hit = xt_prof_l1_miss = 0;
+                }
                 printf("GBAPROF %d frames (%d drawn): ms/frame cpu %.2f sound %.2f display %.2f | render %.2f per drawn frame | %d instr/frame, %.0f cycles/instr | %u ROM pages loaded\n",
                        frames, drawn_n, cpu_us / 1000.f / frames, snd_us / 1000.f / frames, disp_us / 1000.f / frames,
                        drawn_n ? render_us / 1000.f / drawn_n : 0.f, (int)(instr / frames), instr ? cpu_us * 240.0 / instr : 0.0, (unsigned)gbaprof_pageloads);
