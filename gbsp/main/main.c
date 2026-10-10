@@ -110,6 +110,7 @@ static bool screenshot_handler(const char *filename, int width, int height)
 static struct samp_s { uint32_t pc, n, a0, ps; } *samp;   /* PSRAM: internal RAM is full */
 static volatile bool samp_on;
 static uint32_t samp_up2, samp_all;
+static u32 idle_dump_pc;   /* idle_loop_override(): guest memory to print */
 uint32_t samp_jit_lo = 0x42400000, samp_jit_len = 0x1C00000;   /* the translated code */
 static void IRAM_ATTR samp_tick(void)
 {
@@ -257,6 +258,11 @@ static void samp_dump(void)
             samp[best].n = 0;
         }
         xt_name_host_blocks(off, gpc, blk, nj);
+        /* the hottest block's guest code is printed below unless the card
+           named another address: the candidate and its instructions then come
+           out of one run rather than two */
+        if (!idle_dump_pc && nj && gpc[0] != ~0u)
+            idle_dump_pc = gpc[0] & ~1u;
         for (int i = 0; i < nj; i++)
             if (gpc[i] == ~0u)
                 printf("GBASAMPLE2 +%06x %u %.2f RAM cache (EWRAM/IWRAM code)\n", (unsigned)off[i],
@@ -282,6 +288,59 @@ static void samp_dump(void)
     {
         printf("GBASAMPLE translated code %.1f%% (RAM cache code %.1f%%)\n", 100.0 * jit / (total ? total : 1), 100.0 * jit_ram / (total ? total : 1));
     }
+    if (idle_dump_pc)
+    {
+        /* The guest instructions of a candidate loop, so that it can be read
+           before an idle_loop_target_pc is believed: an entry is only safe if
+           the loop really does nothing but wait -- it may read I/O or a flag
+           an interrupt sets, and nothing else. 32 halfwords covers a Thumb or
+           an ARM loop and is small enough to paste into a log; the ROM itself
+           stays on the card. */
+        printf("GBAIDLE dump %08x:", (unsigned)idle_dump_pc);
+        for (int i = 0; i < 32; i++)
+            printf(" %04x", (unsigned)read_memory16(idle_dump_pc + i * 2));
+        printf("\n");
+    }
+}
+
+/* GBAPROF: a candidate idle loop, from /sd/retro-go/config/gbaidle.txt, so
+   that the board can try one (and read it) without a rebuild per candidate.
+   Keys, anywhere in the file, "#" to the end of a line ignored:
+     branch=0x...  the loop's branch instruction  -> idle_loop_target_pc
+     head=0x...    the PC the loop branches to    -> idle_loop_head_pc
+     dump=0x...    print 32 guest halfwords there with the sampler dump
+   The two conventions are explained in cpu.h. Absent or empty file: nothing
+   changes, so the build profiles the game exactly as gba_over.h leaves it. */
+static void idle_loop_override(void)
+{
+    const char *path = RG_BASE_PATH_CONFIG "/gbaidle.txt";
+    char buf[256];
+    FILE *fp = fopen(path, "r");
+    size_t n;
+
+    if (!fp)
+        return;
+    n = fread(buf, 1, sizeof(buf) - 1, fp);
+    fclose(fp);
+    buf[n] = 0;
+    for (char *p = buf; (p = strchr(p, '#')); )
+        for (; *p && *p != '\n'; p++)
+            *p = ' ';
+
+    struct { const char *key; u32 *dst; } keys[] = {
+        {"branch=", &idle_loop_target_pc},
+        {"head=", &idle_loop_head_pc},
+        {"dump=", &idle_dump_pc},
+    };
+    for (int i = 0; i < 3; i++)
+    {
+        const char *at = strstr(buf, keys[i].key);
+        if (at)
+            *keys[i].dst = (u32)strtoul(at + strlen(keys[i].key), NULL, 0);
+    }
+    RG_LOGI("idle loop from %s: branch %08lx, head %08lx, dump %08lx", path,
+            (unsigned long)idle_loop_target_pc, (unsigned long)idle_loop_head_pc,
+            (unsigned long)idle_dump_pc);
 }
 #endif
 
@@ -753,6 +812,10 @@ void app_main(void)
         extern void (*gamepak_load_progress)(int percent);
         gamepak_load_progress = NULL;
     }
+
+#ifdef GBAPROF
+    idle_loop_override();   /* after load_gamepak: that is where gba_over.h applies */
+#endif
 
     gbsp_render_start();
     RG_LOGI("line renderer on core 1: %s", gbsp_render_core1 ? "yes" : "no");
