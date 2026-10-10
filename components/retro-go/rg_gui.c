@@ -8,7 +8,7 @@
 #include <sys/time.h>
 #include <time.h>
 
-#include "bitmaps/image_hourglass.h"
+#include "rg_logo.h"
 #include "fonts/fonts.h"
 
 static struct
@@ -618,24 +618,43 @@ void rg_gui_draw_icons(void)
     }
 }
 
+// The loading logo (rg_logo.h) where the hourglass was: a frame picked by the
+// clock, so it moves each time the loading percentage is drawn again. Drawn in
+// bands of 12 rows to keep the caller's stack small (a game task reading a ROM).
+static int logo_frame = -1;
+
 void rg_gui_draw_hourglass(void)
 {
-    rg_display_write_rect(
-        get_horizontal_position(RG_GUI_CENTER, image_hourglass.width),
-        get_vertical_position(RG_GUI_CENTER, image_hourglass.height),
-        image_hourglass.width,
-        image_hourglass.height,
-        image_hourglass.width * 2,
-        (uint16_t*)image_hourglass.pixel_data, 0);
+    int frame = (int)(rg_system_timer() / 70000) % RG_LOGO_FRAMES;
+    logo_frame = frame;
+    int left = get_horizontal_position(RG_GUI_CENTER, RG_LOGO_SIZE);
+    int top = get_vertical_position(RG_GUI_CENTER, RG_LOGO_SIZE);
+    uint16_t band[RG_LOGO_SIZE * 12];
+    uint16_t colours[16];
+
+    for (int i = 0; i < 16; i++)
+    {
+        uint32_t c = rg_logo_palette[i];
+        colours[i] = ((c >> 19) & 0x1F) << 11 | ((c >> 10) & 0x3F) << 5 | ((c >> 3) & 0x1F); // RGB565
+    }
+    for (int y0 = 0; y0 < RG_LOGO_SIZE; y0 += 12)
+    {
+        for (int y = 0; y < 12; y++)
+            for (int x = 0; x < RG_LOGO_SIZE; x++)
+                band[y * RG_LOGO_SIZE + x] = colours[rg_logo_pixel(x, y0 + y, frame)];
+        rg_display_write_rect(left, top + y0, RG_LOGO_SIZE, 12, RG_LOGO_SIZE * 2, band, 0);
+    }
 }
 
-// The loading percentage, under the hourglass (rg_storage.c for the games read
-// through it, mame-go for its ROM sets)
+// The loading percentage, under the logo (rg_storage.c for the games read
+// through it, mame-go for its ROM sets); the logo takes its next frame with it
 void rg_gui_draw_loading(int percent)
 {
     char text[12];
+    if ((int)(rg_system_timer() / 70000) % RG_LOGO_FRAMES != logo_frame) // ~3 ms a frame, not each percent
+        rg_gui_draw_hourglass();
     snprintf(text, sizeof(text), " %2d%% ", RG_MIN(RG_MAX(percent, 0), 100));
-    rg_gui_draw_text(RG_GUI_CENTER, get_vertical_position(RG_GUI_CENTER, image_hourglass.height) + image_hourglass.height + 4,
+    rg_gui_draw_text(RG_GUI_CENTER, get_vertical_position(RG_GUI_CENTER, RG_LOGO_SIZE) + RG_LOGO_SIZE + 4,
                      0, text, C_WHITE, C_BLACK, RG_TEXT_BIGGER);
 }
 
