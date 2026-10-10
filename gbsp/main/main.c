@@ -83,10 +83,27 @@ static rg_app_t *app;
 
 static const char *SETTING_SOUND_EMULATION = "sound";
 static const char *SETTING_FRAMESKIP = "frameskip";
-/* -1 = Auto: rg_system's auto-frameskip moves app->frameskip from 0 upwards
-   when the game cannot keep up. 0..2 = pinned, written back every frame
-   because auto would otherwise walk away from the user's choice. */
+/* -1 = Auto: rg_system's auto-frameskip moves app->frameskip from 0 up to
+   app->frameskipMax. 0..2 = pinned, and then auto is switched off rather than
+   fought: writing the pin back every frame left auto raising it once a second
+   and logging a raise the pin immediately undid (52 lines in 50 s on the
+   board, 2026-10-10). */
 static int frameskip_opt = -1;
+
+/* the only place either frameskip variable is written during a game */
+static void frameskip_apply(void)
+{
+    if (frameskip_opt < 0)
+    {
+        app->frameskip = 0;        /* Auto starts from "draw everything" */
+        app->frameskipMax = 2;     /* and never passes the menu's maximum */
+    }
+    else
+    {
+        app->frameskip = frameskip_opt;
+        app->frameskipMax = 0;     /* pinned: auto must not adjust it at all */
+    }
+}
 
 void netpacket_poll_receive()
 {
@@ -407,6 +424,20 @@ static void opt_read(void)
         RG_LOGE("gbaopt l1=%u is not 512, 1024 or 2048: keeping %u", (unsigned)l1,
                 (unsigned)(xt_opt_l1_mask + 1));
 
+    if (opt_skip != ~0u)
+    {
+        if (opt_skip <= 2)
+        {
+            frameskip_opt = (int)opt_skip;   /* the card pins it like the menu would */
+            frameskip_apply();
+        }
+        else
+        {
+            RG_LOGE("gbaopt skip=%u is not 0, 1 or 2: leaving the menu's choice",
+                    (unsigned)opt_skip);
+            opt_skip = ~0u;
+        }
+    }
     RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, nohash %u, rint %u, l1 %u, skip %d, idle branch %08lx head %08lx dump %08lx",
             path, (unsigned)opt_perf, (unsigned)gbsp_opt_core1_idle,
             (unsigned)rg_opt_no_partial, (unsigned)gbsp_opt_rint,
@@ -765,7 +796,7 @@ static rg_gui_event_t frameskip_cb(rg_gui_option_t *option, rg_gui_event_t event
     if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
     {
         rg_settings_set_number(NS_APP, SETTING_FRAMESKIP, frameskip_opt);
-        app->frameskip = frameskip_opt < 0 ? 0 : frameskip_opt;
+        frameskip_apply();
     }
     if (frameskip_opt < 0)
         strcpy(option->value, _("Auto"));
@@ -812,16 +843,14 @@ void app_main(void)
         .options = &options_handler,
     };
     app = rg_system_init(AUDIO_SAMPLE_RATE, &handlers, NULL);
-    /* 0, not retro-go's 1: auto-frameskip raises it for a game that cannot
-       keep up and can never bring it back below 1 (see the frame loop) */
-    app->frameskip = 0;
     rg_system_set_tick_rate(60);
     // rg_system_set_overclock(2);
 
     sound_master_enable = rg_settings_get_number(NS_APP, SETTING_SOUND_EMULATION, true);
     frameskip_opt = (int)rg_settings_get_number(NS_APP, SETTING_FRAMESKIP, -1);
-    if (frameskip_opt >= 0)
-        app->frameskip = frameskip_opt;   /* pinned from the first frame, not the second */
+    if (frameskip_opt < -1 || frameskip_opt > 2)
+        frameskip_opt = -1;   /* a stored value from another build is not trusted */
+    frameskip_apply();
 
 #ifdef HAVE_DYNAREC
     /* the dynarec's IWRAM (64 KB with its SMC tags) takes the internal RAM */
@@ -1308,15 +1337,6 @@ void app_main(void)
            but never to 0: with the default a game already running 60/60 would
            have drawn every other frame for ever. Slow games get there by
            themselves -- rg_system raises it when the speed sits under 96%. */
-        {
-            int pin = frameskip_opt;
-#ifdef GBAPROF
-            if (opt_skip != ~0u)
-                pin = (int)opt_skip;   /* the card wins: an A/B with no menu navigation */
-#endif
-            if (pin >= 0)
-                app->frameskip = pin;
-        }
         if (skip_next_frame == 0)
             skip_next_frame = app->frameskip;
         else if (skip_next_frame > 0)

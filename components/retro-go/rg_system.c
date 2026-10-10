@@ -283,7 +283,7 @@ static void system_monitor_task(void *arg)
             (int)roundf((battery.volts * 1000) ?: battery.level));
 
         // Auto frameskip
-        if (statistics.ticks > app.tickRate * 2)
+        if (app.frameskipMax > 0 && statistics.ticks > app.tickRate * 2)
         {
             float speed = ((float)statistics.totalFPS / app.tickRate) * 100.f / app.speed;
             // We don't fully go back to 0 frameskip because if we dip below 95% once, we're clearly
@@ -293,7 +293,7 @@ static void system_monitor_task(void *arg)
                 app.frameskip--;
                 RG_LOGI("Reduced frameskip to %d", app.frameskip);
             }
-            else if (speed < 96.f && statistics.busyPercent > 85.f && app.frameskip < 5)
+            else if (speed < 96.f && statistics.busyPercent > 85.f && app.frameskip < app.frameskipMax)
             {
                 app.frameskip++;
                 RG_LOGI("Raised frameskip to %d", app.frameskip);
@@ -427,6 +427,7 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
         .tickRate = 60,
         .frameTime = 1000000 / 60,
         .frameskip = 1, // This can be overriden on a per-app basis if needed, do not set 0 here!
+        .frameskipMax = 5, // 0 stops auto-frameskip adjusting it at all
         .overclock = 0,
         .tickTimeout = 3000000,
         .lowMemoryMode = false,

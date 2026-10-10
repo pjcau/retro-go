@@ -174,6 +174,11 @@ typedef struct
     int tickRate;
     int frameTime;
     int frameskip;
+    /* the ceiling auto-frameskip may raise `frameskip` to, and 0 to stop it
+       adjusting at all. 5 by default, so an app that ignores it behaves as
+       before; an app that pins frameskip itself sets 0, because two writers
+       fighting over one variable is what made it log a raise every second */
+    int frameskipMax;
     int overclock;
     int tickTimeout;
     bool lowMemoryMode;
