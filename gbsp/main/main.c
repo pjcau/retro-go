@@ -276,6 +276,23 @@ static void samp_dump(void)
                        (unsigned)(off[i] - blk[i]));
     }
 #endif
+    /* Core 1's code, by where it is fetched from, summed BEFORE the loop below
+       prints it: that loop zeroes each entry it prints, so summing after it
+       counted only the tail past the 150th -- the board had to recompute this
+       by hand on 2026-10-10. Flash code is what costs core 0: it goes through
+       the same SPI0 cache controller as core 0's PSRAM-resident translated
+       code. It was 54% before the renderer's hot functions moved to IRAM and
+       19% after, which is how a run says the move took effect. */
+    uint32_t c1_iram = 0, c1_flash = 0, c1_other = 0;
+    for (int i = 0; samp1 && i < SAMP1_N; i++)
+    {
+        const uint32_t pc = samp1[i].pc, n = samp1[i].n;
+        if (!n)
+            continue;
+        if (pc - 0x40370000u < 0x70000u) c1_iram += n;
+        else if (pc - 0x42000000u < 0x8C0000u) c1_flash += n;
+        else c1_other += n;
+    }
     for (int k = 0; samp1 && k < 150; k++)
     {
         int best = -1;
@@ -289,28 +306,10 @@ static void samp_dump(void)
     }
     if (samp1)
     {
-        /* Core 1's code, by where it is fetched from. Flash code is what costs
-           core 0: it goes through the same SPI0 cache controller as core 0's
-           PSRAM-resident translated code, and with core 1 idle core 0's frame
-           fell 19.30 -> 13.72 ms on 2026-10-10, when this share was 54%.
-           Moving a function to IRAM is a link-time decision, so this line is
-           how a run says whether the move took effect. */
-        uint32_t iram = 0, flash = 0, other = 0;
-        for (int i = 0; i < SAMP1_N; i++)
-        {
-            const uint32_t pc = samp1[i].pc, n = samp1[i].n;
-            if (!n)
-                continue;
-            if (pc - 0x40370000u < 0x70000u) iram += n;
-            else if (pc - 0x42000000u < 0x8C0000u) flash += n;
-            else other += n;
-        }
-        {
-            const uint32_t t = iram + flash + other;
-            printf("GBASAMPLE1 core 1 code: IRAM %.1f%%, flash %.1f%%, other %.1f%% of %u ticks\n",
-                   100.0 * iram / (t ? t : 1), 100.0 * flash / (t ? t : 1),
-                   100.0 * other / (t ? t : 1), (unsigned)t);
-        }
+        const uint32_t t = c1_iram + c1_flash + c1_other;
+        printf("GBASAMPLE1 core 1 code: IRAM %.1f%%, flash %.1f%%, other %.1f%% of %u ticks\n",
+               100.0 * c1_iram / (t ? t : 1), 100.0 * c1_flash / (t ? t : 1),
+               100.0 * c1_other / (t ? t : 1), (unsigned)t);
     }
     printf("GBASAMPLE total %u of %u ticks (last depth-4 caller %08x)\n", (unsigned)total, (unsigned)samp_all, (unsigned)samp_up2);
     {
