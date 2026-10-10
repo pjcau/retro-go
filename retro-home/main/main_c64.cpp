@@ -340,13 +340,18 @@ static rg_gui_event_t video_cb(rg_gui_option_t *option, rg_gui_event_t event)
         region_change_pending = true;
     }
 
-    /* Every value padded to the width of the longest, "Auto (NTSC)": the
-     * dialog sizes its box from the values, and a box that changed width
-     * while open was drawn shifted over the old one (board, 2026-10-10). */
-    const char *text = video == VIDEO_PAL ? "PAL" : video == VIDEO_NTSC ? "NTSC"
-                     : chosen_region() == C64_REGION_NTSC ? "Auto (NTSC)" : "Auto (PAL)";
-    sprintf(option->value, "%-11s", text);
-    return RG_DIALOG_VOID;
+    const bool changed = event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT || event == RG_DIALOG_ENTER;
+    if (video == VIDEO_PAL)
+        strcpy(option->value, "PAL");
+    else if (video == VIDEO_NTSC)
+        strcpy(option->value, "NTSC");
+    else
+        sprintf(option->value, "Auto (%s)", chosen_region() == C64_REGION_NTSC ? "NTSC" : "PAL");
+    /* The dialog sizes its box from the values: a new value of another
+     * width left the old box's border on screen (board, 2026-10-10).
+     * RG_DIALOG_REDRAW repaints the picture under the box first, as
+     * retro-go's own display options do when they change the layout. */
+    return changed ? RG_DIALOG_REDRAW : RG_DIALOG_VOID;
 }
 
 static void options_handler(rg_gui_option_t *dest)
