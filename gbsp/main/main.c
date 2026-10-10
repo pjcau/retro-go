@@ -341,8 +341,6 @@ static void samp_dump(void)
                    freezes -- a measurement, not a way to play
      l1=512        the block-lookup L1's live size: 512 (the play build), 1024
                    or 2048. 512 slots held ~480 live keys on 2026-10-10
-     isync=1       translate_icache_sync's two compares at the call site
-                   instead of behind a call on every block lookup
      nohash=1      the display stops hashing every source line to find the
                    ones that changed, and sends them all: 12.9% of core 1 and
                    77 KB of PSRAM read a frame. Strictly more conservative, so
@@ -358,7 +356,7 @@ static void samp_dump(void)
    so those three keys are kept for another game rather than for this one. */
 static void opt_read(void)
 {
-    extern u32 xt_opt_l1_mask, xt_opt_isync;
+    extern u32 xt_opt_l1_mask;
     extern u32 rg_opt_no_partial;
     const char *path = RG_BASE_PATH_CONFIG "/gbaopt.txt";
     char buf[512];
@@ -381,7 +379,6 @@ static void opt_read(void)
         {"dump=", &idle_dump_pc},
         {"perf=", &opt_perf},
         {"core1_idle=", &gbsp_opt_core1_idle},
-        {"isync=", &xt_opt_isync},
         {"nohash=", &rg_opt_no_partial},
         {"rint=", &gbsp_opt_rint},
         {"l1=", &l1},
@@ -400,10 +397,10 @@ static void opt_read(void)
         RG_LOGE("gbaopt l1=%u is not 512, 1024 or 2048: keeping %u", (unsigned)l1,
                 (unsigned)(xt_opt_l1_mask + 1));
 
-    RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, nohash %u, rint %u, l1 %u, isync %u, idle branch %08lx head %08lx dump %08lx",
+    RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, nohash %u, rint %u, l1 %u, idle branch %08lx head %08lx dump %08lx",
             path, (unsigned)opt_perf, (unsigned)gbsp_opt_core1_idle,
             (unsigned)rg_opt_no_partial, (unsigned)gbsp_opt_rint,
-            (unsigned)(xt_opt_l1_mask + 1), (unsigned)xt_opt_isync,
+            (unsigned)(xt_opt_l1_mask + 1),
             (unsigned long)idle_loop_target_pc, (unsigned long)idle_loop_head_pc,
             (unsigned long)idle_dump_pc);
 }
