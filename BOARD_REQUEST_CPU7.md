@@ -44,11 +44,20 @@ So the predictor is **pessimistic by ~0.8 ms** — the safe direction. With the
 - **Lower** `k → k−1` when `(drawn + (k−1)·skipped)/k` is under **15.8 ms** and
   has held for the current hold time. At k=1 that is the drawn time; at k=2 it
   is the average skip 1 would give. **Every level, not just 1→0.**
+
+  **The 2→1 decision is the delicate one.** On the CPU5 grass numbers the
+  prediction at k=2 is (19.10 + 12.53)/2 = **15.815 ms against the 15.800
+  threshold** -- 15 us from dropping. It therefore stays at 2, which is right,
+  but only just; on the road `drawn` is higher than 19.10, so it stays at 2 more
+  firmly. The backoff below is what stops that margin becoming a 1<->2 flap, and
+  the drawn/skipped figures in every log line are what let me move the threshold
+  with data if it does.
 - **Raise** on `SPEED < 96 %` and `BUSY > 85 %`, capped at **2**, and **never
   delayed** — losing speed is the one outcome that must not happen.
-- **Anti-flapping backoff**: a raise within **3 s** of a drop means the drop was
-  wrong, so the next must hold twice as long — **3 → 6 → 12 → 24 → 30 s** — and
-  **30 s with no raise** forgets it. A borderline scene therefore settles at the
+- **Anti-flapping backoff**, replacing the fixed 2 s cooldown: a raise within
+  **3 s** of a drop means the drop was wrong, so the next must hold twice as
+  long — **3 → 6 → 12 → 24 → 30 s** (one doubling step more than 3→6→12→30, same
+  cap) — and **30 s with no raise** forgets it. A borderline scene therefore settles at the
   higher skip rather than flipping, and the worst case is one drop attempt per
   30 s.
 - `frameskipMax` is **0**, so `rg_system` never joins in.
@@ -121,11 +130,17 @@ All of these, together:
 
 1. **dynamic Auto's average SPEED is never more than 1 % below the best fixed
    setting** for that game;
-2. **drawn fps ≥ fixed skip=1** on Mario Kart, and **= 60** on Sonic and Metal
-   Slug;
+2. **drawn fps ≥ 20 on the road**, and **≥ fixed skip=1 only where skip=1
+   actually holds full speed**. Not unconditionally: CPU6 showed skip=1 does not
+   hold on the road (55-58 fps), so fixed skip=1 there draws ~56 frames while
+   running *slow*, and Auto correctly sitting at 2 with 20 drawn at full speed
+   must not be scored against it. Where skip=1 does hold — the grass, the
+   lighter stretches — Auto must match its 30. On Sonic and Metal Slug: **60**;
 3. **drawn fps on Auto ≥ what today's Auto gives** (run 4 — about 20 on the
    road);
-4. **at most one transition per 10 s during the race** (so ≤ 6 in a 60 s run);
+4. **at most one transition per 10 s during the race** (so ≤ 6 in a 60 s run),
+   and **exactly 0 transitions on Sonic and Metal Slug** (runs 5 and 7). One
+   line in either is a fail even if the fps looks right;
 5. **no visible stutter at a transition on the webcam.** Watch runs 1, 5 and 7
    at the moments the log shows a change: a change of smoothness is expected and
    fine, a hitch, a jump in game speed or a torn frame is **a fail**. This is the
