@@ -232,6 +232,41 @@ static void samp_dump(void)
                (unsigned)samp[best].a0, (unsigned)samp[best].ps);
         samp[best].n = 0;
     }
+#ifdef HAVE_DYNAREC
+    /* The listing above skips the translated code, which is most of core 0:
+       on its own it is one opaque percentage. Here are its hottest 256-byte
+       buckets, each named by the guest PC of the block it belongs to, so a
+       share of core 0 can be attributed to a part of the game. An idle loop
+       (gba_over.h's idle_loop_target_pc) is a single bucket holding a large
+       share, whose guest PC is a short loop in ROM. */
+    {
+        extern void xt_name_host_blocks(const u32 *host_off, u32 *guest_pc, u32 *block_off, int n);
+        enum { JIT_TOP = 24 };
+        u32 off[JIT_TOP], gpc[JIT_TOP], blk[JIT_TOP], hits[JIT_TOP];
+        int nj = 0;
+        while (nj < JIT_TOP)
+        {
+            int best = -1;
+            for (int i = 0; i < SAMP_N; i++)
+                if (samp[i].n && samp[i].pc - samp_jit_lo < samp_jit_len && (best < 0 || samp[i].n > samp[best].n))
+                    best = i;
+            if (best < 0)
+                break;
+            off[nj] = samp[best].pc - samp_jit_lo;   /* samp_jit_lo is the cache's exec base */
+            hits[nj++] = samp[best].n;
+            samp[best].n = 0;
+        }
+        xt_name_host_blocks(off, gpc, blk, nj);
+        for (int i = 0; i < nj; i++)
+            if (gpc[i] == ~0u)
+                printf("GBASAMPLE2 +%06x %u %.2f RAM cache (EWRAM/IWRAM code)\n", (unsigned)off[i],
+                       (unsigned)hits[i], 100.0 * hits[i] / total);
+            else
+                printf("GBASAMPLE2 +%06x %u %.2f guest %08x block +%06x (%u into it)\n", (unsigned)off[i],
+                       (unsigned)hits[i], 100.0 * hits[i] / total, (unsigned)gpc[i], (unsigned)blk[i],
+                       (unsigned)(off[i] - blk[i]));
+    }
+#endif
     for (int k = 0; samp1 && k < 150; k++)
     {
         int best = -1;
