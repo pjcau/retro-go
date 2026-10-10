@@ -340,12 +340,12 @@ static rg_gui_event_t video_cb(rg_gui_option_t *option, rg_gui_event_t event)
         region_change_pending = true;
     }
 
-    if (video == VIDEO_PAL)
-        strcpy(option->value, "PAL");
-    else if (video == VIDEO_NTSC)
-        strcpy(option->value, "NTSC");
-    else
-        sprintf(option->value, "Auto (%s)", chosen_region() == C64_REGION_NTSC ? "NTSC" : "PAL");
+    /* Every value padded to the width of the longest, "Auto (NTSC)": the
+     * dialog sizes its box from the values, and a box that changed width
+     * while open was drawn shifted over the old one (board, 2026-10-10). */
+    const char *text = video == VIDEO_PAL ? "PAL" : video == VIDEO_NTSC ? "NTSC"
+                     : chosen_region() == C64_REGION_NTSC ? "Auto (NTSC)" : "Auto (PAL)";
+    sprintf(option->value, "%-11s", text);
     return RG_DIALOG_VOID;
 }
 
@@ -694,8 +694,8 @@ extern "C" void c64_main(void)
             apply_region(chosen_region());
             sample_frac = 0;
             reset_handler(true);
-            RG_LOGI("C64 now %s: %d raster lines, %d cycles/frame, %d fps", c64_region_name(),
-                    c64_lines_per_frame(), c64_cycles_per_frame(), fps);
+            RG_LOGI("C64 now %s: %d raster lines, %d cycles/frame, %d fps, audio %d Hz", c64_region_name(),
+                    c64_lines_per_frame(), c64_cycles_per_frame(), fps, C64_RATE);
         }
 
         joystick = rg_input_read_gamepad();
