@@ -1,5 +1,11 @@
 #include "rg_system.h"
 #include "rg_line_hash.h"
+
+#ifdef GBAPROF
+uint32_t rg_opt_no_partial;   /* set from the app's card file */
+#else
+#define rg_opt_no_partial 0
+#endif
 #include "rg_scale_line.h"
 #include "rg_display.h"
 
@@ -171,8 +177,20 @@ static inline const void *source_row(const void *rows, int row_base, int stride,
     return rows + (r - row_base) * stride;
 }
 
+/* RG_DISPLAY_WRITE_LINES_IRAM (gbsp only): on the 2026-10-10 board profile
+   this function was 20.2% of core 1, all of it fetched from flash through the
+   same SPI0 cache controller core 0 fetches its PSRAM-resident translated code
+   through -- and with core 1 idle core 0's frame fell 19.30 -> 13.72 ms. The
+   attribute moves 7.4 KB of code and changes none of it. Other apps keep it in
+   flash: their IRAM budgets are not this one's. */
+#ifdef RG_DISPLAY_WRITE_LINES_IRAM
+#define RG_WRITE_LINES_ATTR IRAM_ATTR
+#else
+#define RG_WRITE_LINES_ATTR
+#endif
+
 // Writes blocks [block_from, block_to) of `update`.
-static inline void write_lines(const rg_surface_t *update, const void *rows, int row_base, int block_from, int block_to)
+static inline RG_WRITE_LINES_ATTR void write_lines(const rg_surface_t *update, const void *rows, int row_base, int block_from, int block_to)
 {
     bool filter_x = display.viewport.filter_x;
     bool filter_y = display.viewport.filter_y;
@@ -198,7 +216,13 @@ static inline void write_lines(const rg_surface_t *update, const void *rows, int
     const uint16_t *palette = update->palette;
     const size_t crop_bytes = crop_left * RG_PIXEL_GET_SIZE(format);
 
-    const bool partial_update = RG_SCREEN_PARTIAL_UPDATES;
+    /* rg_line_hash over every source line decides whether a line still has to
+       be sent, and it was 12.9% of core 1 on 2026-10-10 -- 77 KB of PSRAM read
+       a frame. Mario Kart's road changes on nearly every line, so the hash
+       pays for itself in menus and not at all in a race. rg_opt_no_partial
+       (GBAPROF builds, from the card) sends every line instead: strictly more
+       conservative, so the picture cannot differ. */
+    const bool partial_update = RG_SCREEN_PARTIAL_UPDATES && !rg_opt_no_partial;
 
     // esp32-emu-turbo: exact 2x horizontal (e.g. 240 -> 480), unfiltered RGB565:
     // each source pixel becomes two with one 32-bit store instead of a

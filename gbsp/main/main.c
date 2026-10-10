@@ -113,6 +113,7 @@ static uint32_t samp_up2, samp_all;
 static u32 idle_dump_pc;   /* opt_read(): guest memory to print */
 static u32 opt_perf;       /* opt_read(): the LX7 counters around the emulation */
 u32 gbsp_opt_core1_idle;   /* video.cpp: core 1 never woken (contention) */
+u32 gbsp_opt_rint;         /* video.cpp: the palette/OAM copies in internal RAM */
 uint32_t samp_jit_lo = 0x42400000, samp_jit_len = 0x1C00000;   /* the translated code */
 static void IRAM_ATTR samp_tick(void)
 {
@@ -286,6 +287,31 @@ static void samp_dump(void)
         printf("GBASAMPLE1 %08x %u\n", (unsigned)samp1[best].pc, (unsigned)samp1[best].n);
         samp1[best].n = 0;
     }
+    if (samp1)
+    {
+        /* Core 1's code, by where it is fetched from. Flash code is what costs
+           core 0: it goes through the same SPI0 cache controller as core 0's
+           PSRAM-resident translated code, and with core 1 idle core 0's frame
+           fell 19.30 -> 13.72 ms on 2026-10-10, when this share was 54%.
+           Moving a function to IRAM is a link-time decision, so this line is
+           how a run says whether the move took effect. */
+        uint32_t iram = 0, flash = 0, other = 0;
+        for (int i = 0; i < SAMP1_N; i++)
+        {
+            const uint32_t pc = samp1[i].pc, n = samp1[i].n;
+            if (!n)
+                continue;
+            if (pc - 0x40370000u < 0x70000u) iram += n;
+            else if (pc - 0x42000000u < 0x8C0000u) flash += n;
+            else other += n;
+        }
+        {
+            const uint32_t t = iram + flash + other;
+            printf("GBASAMPLE1 core 1 code: IRAM %.1f%%, flash %.1f%%, other %.1f%% of %u ticks\n",
+                   100.0 * iram / (t ? t : 1), 100.0 * flash / (t ? t : 1),
+                   100.0 * other / (t ? t : 1), (unsigned)t);
+        }
+    }
     printf("GBASAMPLE total %u of %u ticks (last depth-4 caller %08x)\n", (unsigned)total, (unsigned)samp_all, (unsigned)samp_up2);
     {
         printf("GBASAMPLE translated code %.1f%% (RAM cache code %.1f%%)\n", 100.0 * jit / (total ? total : 1), 100.0 * jit_ram / (total ? total : 1));
@@ -318,6 +344,12 @@ static void samp_dump(void)
                    or 2048. 512 slots held ~480 live keys on 2026-10-10
      isync=1       translate_icache_sync's two compares at the call site
                    instead of behind a call on every block lookup
+     nohash=1      the display stops hashing every source line to find the
+                   ones that changed, and sends them all: 12.9% of core 1 and
+                   77 KB of PSRAM read a frame. Strictly more conservative, so
+                   the picture cannot differ
+     rint=1        the renderer's palette and OAM copies (6 KB) in internal
+                   RAM rather than PSRAM
      branch=0x...  an idle loop's branch instruction  -> idle_loop_target_pc
      head=0x...    the PC the loop branches to        -> idle_loop_head_pc
      dump=0x...    32 guest halfwords from there, with the sampler dump
@@ -328,6 +360,7 @@ static void samp_dump(void)
 static void opt_read(void)
 {
     extern u32 xt_opt_l1_mask, xt_opt_isync;
+    extern u32 rg_opt_no_partial;
     const char *path = RG_BASE_PATH_CONFIG "/gbaopt.txt";
     char buf[512];
     u32 l1 = 0;
@@ -350,6 +383,8 @@ static void opt_read(void)
         {"perf=", &opt_perf},
         {"core1_idle=", &gbsp_opt_core1_idle},
         {"isync=", &xt_opt_isync},
+        {"nohash=", &rg_opt_no_partial},
+        {"rint=", &gbsp_opt_rint},
         {"l1=", &l1},
     };
     for (unsigned i = 0; i < sizeof(keys) / sizeof(*keys); i++)
@@ -366,10 +401,12 @@ static void opt_read(void)
         RG_LOGE("gbaopt l1=%u is not 512, 1024 or 2048: keeping %u", (unsigned)l1,
                 (unsigned)(xt_opt_l1_mask + 1));
 
-    RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, l1 %u, isync %u, idle branch %08lx head %08lx dump %08lx",
-            path, (unsigned)opt_perf, (unsigned)gbsp_opt_core1_idle, (unsigned)(xt_opt_l1_mask + 1),
-            (unsigned)xt_opt_isync, (unsigned long)idle_loop_target_pc,
-            (unsigned long)idle_loop_head_pc, (unsigned long)idle_dump_pc);
+    RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, nohash %u, rint %u, l1 %u, isync %u, idle branch %08lx head %08lx dump %08lx",
+            path, (unsigned)opt_perf, (unsigned)gbsp_opt_core1_idle,
+            (unsigned)rg_opt_no_partial, (unsigned)gbsp_opt_rint,
+            (unsigned)(xt_opt_l1_mask + 1), (unsigned)xt_opt_isync,
+            (unsigned long)idle_loop_target_pc, (unsigned long)idle_loop_head_pc,
+            (unsigned long)idle_dump_pc);
 }
 #endif
 

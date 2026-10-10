@@ -17,6 +17,9 @@ project(gbsp)
 # printed once a second as a "GBAPROF" console line
 if(DEFINED ENV{GBAPROF} AND NOT "$ENV{GBAPROF}" STREQUAL "0")
     idf_build_set_property(COMPILE_DEFINITIONS "-DGBAPROF=1" APPEND)
+    # retro-go's write_lines was 20.2% of core 1, fetched from flash: in IRAM
+    # for this app only (other apps' IRAM budgets are not this one's)
+    idf_build_set_property(COMPILE_DEFINITIONS "-DRG_DISPLAY_WRITE_LINES_IRAM=1" APPEND)
 endif()
 # `GBABENCH=1`: deterministic benchmark: after the resume the input comes from
 # a frame-numbered script (right held, B and A tapped), and every 300 frames a
