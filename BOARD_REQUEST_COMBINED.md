@@ -2,10 +2,17 @@
 
 Fork `gba-cpu` **`317f097d`**, rebased onto `gba-robust`, submodule
 **`2b87220`**, all on master `6ecc9d9b`.
-Play build **779408 B**, GBAPROF build **789632 B**. **One flash, everything.**
+**The play build, 779408 B, is enough for every check below — one flash, and no
+GBAPROF.** I checked rather than assumed: every line the runs ask for
+(`frameskip N -> M`, `frameskip residency`, `battery save written`,
+`ROM cache: N blocks`, `CPU core:`, `the last start did not finish but did not
+crash`) is a plain RG_LOGI outside any `#ifdef GBAPROF`, and the Auto controller
+itself is unconditional. The GBAPROF build (789632 B) is only wanted if you
+later need `cpu` ms medians or a `skip=`/`autodyn=` A/B.
 
 This replaces BOARD_REQUEST_ROBUST1 and CPU7 — both are superseded, don't run
-them. Four things are in this build:
+them; they stay in the branch as the record of what was asked when. Four things
+are in this build:
 
 | | |
 |---|---|
@@ -63,12 +70,12 @@ frameskip 1 -> 0: skip0 last cost 10.04 ms, drawn 10.90 (ref 10.90), ...
 ## 2. Runs
 
 ```bash
-python rg_tool.py --target esp32-emu-turbo build gbsp              # 779408 B, play
-GBAPROF=1 python rg_tool.py --target esp32-emu-turbo build gbsp    # 789632 B
+python rg_tool.py --target esp32-emu-turbo build gbsp   # 779408 B, play -- this is the one
 ```
 
-No card file is needed for any run below; `gbaopt.txt` keys still exist for an
-A/B if you want one (`skip=`, `autodyn=0`, `perf=1`).
+No card file is needed for any run below, and no GBAPROF. (`gbaopt.txt`'s
+`skip=`, `autodyn=0` and `perf=1` still exist in a GBAPROF build if you want an
+A/B afterwards, but nothing here needs them.)
 
 ### A. Mario Kart on the road, Auto — the headline
 
