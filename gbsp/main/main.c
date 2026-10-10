@@ -782,6 +782,9 @@ void app_main(void)
         .options = &options_handler,
     };
     app = rg_system_init(AUDIO_SAMPLE_RATE, &handlers, NULL);
+    /* 0, not retro-go's 1: auto-frameskip raises it for a game that cannot
+       keep up and can never bring it back below 1 (see the frame loop) */
+    app->frameskip = 0;
     rg_system_set_tick_rate(60);
     // rg_system_set_overclock(2);
 
@@ -1255,12 +1258,24 @@ void app_main(void)
         rg_audio_submit(mixbuffer, frames_count);
         // RG_TIMER_LAP("rg_audio_submit");
 
-        /* with the lines drawn on core 1 a skipped frame saves core 0
-           nothing: draw them all (retro-go's auto frameskip still raises
-           app->frameskip when the game runs below full speed) */
-        if (gbsp_render_core1)
-            skip_next_frame = 0;
-        else if (skip_next_frame == 0)
+        /* A skipped frame saves core 0 a great deal, and the comment that used
+           to stand here said it saved nothing. Measured on the board,
+           2026-10-10, Mario Kart Super Circuit: core 0's frame is 18.44 ms
+           with core 1 drawing and 13.64 ms with core 1 idle, because core 1
+           reads its renderer out of flash through the same SPI0 cache
+           controller core 0 reads its translated code through. update_scanline
+           returns before the line snapshot and before line_ready(), so a
+           skipped frame queues nothing, never wakes core 1, and skips the
+           hash, write_lines and the LCD submit as well -- the saving is real
+           and it is most of the 4.8 ms. Drawing every other frame should
+           average about 16 ms, which is full game speed.
+
+           So frameskip is honoured again. app->frameskip is 0 below, not
+           retro-go's default of 1, because auto-frameskip can lower it to 1
+           but never to 0: with the default a game already running 60/60 would
+           have drawn every other frame for ever. Slow games get there by
+           themselves -- rg_system raises it when the speed sits under 96%. */
+        if (skip_next_frame == 0)
             skip_next_frame = app->frameskip;
         else if (skip_next_frame > 0)
             skip_next_frame--;
