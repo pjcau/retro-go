@@ -82,6 +82,11 @@ static rg_surface_t *currentUpdate;
 static rg_app_t *app;
 
 static const char *SETTING_SOUND_EMULATION = "sound";
+static const char *SETTING_FRAMESKIP = "frameskip";
+/* -1 = Auto: rg_system's auto-frameskip moves app->frameskip from 0 upwards
+   when the game cannot keep up. 0..2 = pinned, written back every frame
+   because auto would otherwise walk away from the user's choice. */
+static int frameskip_opt = -1;
 
 void netpacket_poll_receive()
 {
@@ -112,6 +117,7 @@ static volatile bool samp_on;
 static uint32_t samp_up2, samp_all;
 static u32 idle_dump_pc;   /* opt_read(): guest memory to print */
 static u32 opt_perf;       /* opt_read(): the LX7 counters around the emulation */
+static u32 opt_skip = ~0u; /* opt_read(): frameskip pinned for an A/B, ~0 = the menu's */
 u32 gbsp_opt_core1_idle;   /* video.cpp: core 1 never woken (contention) */
 u32 gbsp_opt_rint;         /* video.cpp: the palette/OAM copies in internal RAM */
 uint32_t samp_jit_lo = 0x42400000, samp_jit_len = 0x1C00000;   /* the translated code */
@@ -347,6 +353,9 @@ static void samp_dump(void)
                    the picture cannot differ
      rint=1        the renderer's palette and OAM copies (6 KB) in internal
                    RAM rather than PSRAM
+     skip=0|1|2    frameskip pinned, overriding the menu and rg_system's
+                   auto-frameskip, so an A/B needs no menu navigation. Absent:
+                   the Frameskip option decides
      branch=0x...  an idle loop's branch instruction  -> idle_loop_target_pc
      head=0x...    the PC the loop branches to        -> idle_loop_head_pc
      dump=0x...    32 guest halfwords from there, with the sampler dump
@@ -380,6 +389,7 @@ static void opt_read(void)
         {"perf=", &opt_perf},
         {"core1_idle=", &gbsp_opt_core1_idle},
         {"nohash=", &rg_opt_no_partial},
+        {"skip=", &opt_skip},
         {"rint=", &gbsp_opt_rint},
         {"l1=", &l1},
     };
@@ -397,10 +407,10 @@ static void opt_read(void)
         RG_LOGE("gbaopt l1=%u is not 512, 1024 or 2048: keeping %u", (unsigned)l1,
                 (unsigned)(xt_opt_l1_mask + 1));
 
-    RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, nohash %u, rint %u, l1 %u, idle branch %08lx head %08lx dump %08lx",
+    RG_LOGI("gbaopt from %s: perf %u, core1_idle %u, nohash %u, rint %u, l1 %u, skip %d, idle branch %08lx head %08lx dump %08lx",
             path, (unsigned)opt_perf, (unsigned)gbsp_opt_core1_idle,
             (unsigned)rg_opt_no_partial, (unsigned)gbsp_opt_rint,
-            (unsigned)(xt_opt_l1_mask + 1),
+            (unsigned)(xt_opt_l1_mask + 1), opt_skip == ~0u ? -1 : (int)opt_skip,
             (unsigned long)idle_loop_target_pc, (unsigned long)idle_loop_head_pc,
             (unsigned long)idle_dump_pc);
 }
@@ -742,9 +752,32 @@ static rg_gui_event_t dynarec_toggle_cb(rg_gui_option_t *option, rg_gui_event_t 
 }
 #endif
 
+/* Frameskip: a skipped frame costs core 1 nothing to draw, and core 1 not
+   drawing is worth 4.8 ms a frame to core 0 (board, 2026-10-10) -- so on a
+   game that cannot hold 60 this trades drawn frames for full speed. Auto does
+   it only when needed; a number pins it. */
+static rg_gui_event_t frameskip_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_PREV && frameskip_opt > -1)
+        frameskip_opt--;
+    else if (event == RG_DIALOG_NEXT && frameskip_opt < 2)
+        frameskip_opt++;
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
+    {
+        rg_settings_set_number(NS_APP, SETTING_FRAMESKIP, frameskip_opt);
+        app->frameskip = frameskip_opt < 0 ? 0 : frameskip_opt;
+    }
+    if (frameskip_opt < 0)
+        strcpy(option->value, _("Auto"));
+    else
+        strcpy(option->value, frameskip_opt == 0 ? "0" : frameskip_opt == 1 ? "1" : "2");
+    return RG_DIALOG_VOID;
+}
+
 static void options_handler(rg_gui_option_t *dest)
 {
     *dest++ = (rg_gui_option_t){0, _("Audio enable"), "-", RG_DIALOG_FLAG_NORMAL, &sound_toggle_cb};
+    *dest++ = (rg_gui_option_t){0, _("Frameskip"), "-", RG_DIALOG_FLAG_NORMAL, &frameskip_cb};
 #ifdef HAVE_DYNAREC
     *dest++ = (rg_gui_option_t){0, _("Fast CPU (dynarec)"), "-", RG_DIALOG_FLAG_NORMAL, &dynarec_toggle_cb};
 #endif
@@ -786,6 +819,9 @@ void app_main(void)
     // rg_system_set_overclock(2);
 
     sound_master_enable = rg_settings_get_number(NS_APP, SETTING_SOUND_EMULATION, true);
+    frameskip_opt = (int)rg_settings_get_number(NS_APP, SETTING_FRAMESKIP, -1);
+    if (frameskip_opt >= 0)
+        app->frameskip = frameskip_opt;   /* pinned from the first frame, not the second */
 
 #ifdef HAVE_DYNAREC
     /* the dynarec's IWRAM (64 KB with its SMC tags) takes the internal RAM */
@@ -1272,6 +1308,15 @@ void app_main(void)
            but never to 0: with the default a game already running 60/60 would
            have drawn every other frame for ever. Slow games get there by
            themselves -- rg_system raises it when the speed sits under 96%. */
+        {
+            int pin = frameskip_opt;
+#ifdef GBAPROF
+            if (opt_skip != ~0u)
+                pin = (int)opt_skip;   /* the card wins: an A/B with no menu navigation */
+#endif
+            if (pin >= 0)
+                app->frameskip = pin;
+        }
         if (skip_next_frame == 0)
             skip_next_frame = app->frameskip;
         else if (skip_next_frame > 0)
