@@ -1,4 +1,5 @@
 #include <rg_system.h>
+#include <esp_system.h>   /* esp_reset_reason: a crash is not a power cut */
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -304,14 +305,45 @@ static void sram_save(void)
    means the last one crashed or hung on the dynarec, and the game uses the
    interpreter from then on (OFF), as it does after a self-modifying-code
    storm (xt_give_up). Save states and .sram files are the same for both. */
-#define JIT_KEY "DynarecState"
-enum { JIT_OK = 0, JIT_TRYING = 1, JIT_OFF = 2 };
+#define JIT_KEY   "DynarecState"
+#define JIT_FAILS_KEY "DynarecFails"
+#define JIT_FAILS_MAX 3   /* observed, repeated crashes before giving up */
+/* JIT_OFF is what the guard (or an older build) wrote, and is retried on the
+   next start; JIT_OFF_USER is the user's own choice and is never second-guessed.
+   JIT_OK stays 0 so an existing card and a hand-written {"DynarecState":0}
+   still mean "fine". */
+enum { JIT_OK = 0, JIT_TRYING = 1, JIT_OFF = 2, JIT_OFF_USER = 3 };
 static int jit_state = JIT_OK;
+static int jit_fails;
 static void jit_state_set(int v)
 {
     jit_state = v;
     rg_settings_set_number(NS_FILE, JIT_KEY, v);
     rg_settings_commit();
+}
+static void jit_fails_set(int v)
+{
+    jit_fails = v;
+    rg_settings_set_number(NS_FILE, JIT_FAILS_KEY, v);
+    rg_settings_commit();
+}
+/* Did the machine come back from a crash, or just from being switched off?
+   This is the whole fix: a TRYING left behind says only "the last start did
+   not finish", and before this it was read as a crash -- so a power cut or a
+   reset inside two minutes disabled the dynarec for the game for ever. Only
+   the resets below are the dynarec's fault. retro-go switches apps with a
+   software reset, so ESP_RST_SW is the normal way a game starts and must not
+   count. A hang is caught, because a watchdog is what ends it. */
+static bool jit_reset_was_a_crash(void)
+{
+    switch (esp_reset_reason())
+    {
+    case ESP_RST_PANIC:    return true;   /* abort(), Guru Meditation */
+    case ESP_RST_INT_WDT:  return true;
+    case ESP_RST_TASK_WDT: return true;
+    case ESP_RST_WDT:      return true;
+    default:               return false;  /* POWERON, SW, EXT, BROWNOUT, ... */
+    }
 }
 #endif
 
@@ -322,7 +354,7 @@ static void event_handler(int event, void *arg)
         sram_save();
 #ifdef HAVE_DYNAREC
         if (jit_state == JIT_TRYING)
-            jit_state_set(JIT_OK);
+            jit_state_set(JIT_OK);   /* a clean exit proves it as well as two minutes */
 #endif
     }
     if (event == RG_EVENT_REDRAW)
@@ -409,27 +441,28 @@ static rg_gui_event_t sound_toggle_cb(rg_gui_option_t *option, rg_gui_event_t ev
 }
 
 #ifdef HAVE_DYNAREC
-/* the per-game engine switch: Off = interpreter at once; On = dynarec from the
-   next start (after a false alarm, e.g. the console lost power) */
+/* The per-game engine switch, and it takes effect at once in both directions.
+   On used to mean "from the next start": it set the stored state but left
+   xt_give_up at 1, so the frame loop below wrote OFF straight back and the
+   choice was undone before the user left the menu. */
 static rg_gui_event_t dynarec_toggle_cb(rg_gui_option_t *option, rg_gui_event_t event)
 {
     extern int xt_give_up;
-    static bool on_next_start;
     if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
     {
-        if (jit_state == JIT_OFF)
+        if (xt_give_up)
         {
-            jit_state_set(JIT_OK);
-            on_next_start = true;
+            jit_fails_set(0);          /* the user overrules the guard's count */
+            jit_state_set(JIT_TRYING); /* unproven again, and proven by playing */
+            xt_give_up = 0;            /* the translation caches are already there */
         }
         else
         {
-            jit_state_set(JIT_OFF);
+            jit_state_set(JIT_OFF_USER);
             xt_give_up = 1;
-            on_next_start = false;
         }
     }
-    strcpy(option->value, jit_state == JIT_OFF ? _("Off") : on_next_start ? _("On (next start)") : _("On"));
+    strcpy(option->value, xt_give_up ? _("Off") : _("On"));
     return RG_DIALOG_VOID;
 }
 #endif
@@ -581,18 +614,57 @@ void app_main(void)
 #ifdef HAVE_DYNAREC
     {
         extern int xt_give_up;
+        const bool crashed = jit_reset_was_a_crash();
         jit_state = (int)rg_settings_get_number(NS_FILE, JIT_KEY, JIT_OK);
-        if (jit_state == JIT_TRYING)
+        jit_fails = (int)rg_settings_get_number(NS_FILE, JIT_FAILS_KEY, 0);
+
+        if (jit_state == JIT_OFF_USER)
         {
-            RG_LOGW("the dynarec crashed or hung on this game last time: interpreter from now on");
-            jit_state_set(JIT_OFF);
-            rg_gui_alert("GBA", "This game stopped last time with the fast CPU core (dynarec): it now runs with the interpreter.");
+            xt_give_up = 1;   /* the user's own choice: left alone */
         }
-        if (jit_state == JIT_OFF)
-            xt_give_up = 1;
         else
-            jit_state_set(JIT_TRYING);
-        RG_LOGI("CPU core: %s", jit_state == JIT_OFF ? "interpreter (DynarecState)" : "dynarec");
+        {
+            if (jit_state == JIT_TRYING && crashed)
+            {
+                jit_fails_set(jit_fails + 1);
+                RG_LOGW("the dynarec crashed on this game (reset reason %d), %d of %d",
+                        (int)esp_reset_reason(), jit_fails, JIT_FAILS_MAX);
+            }
+            else if (jit_state == JIT_TRYING)
+            {
+                /* the last start did not finish, but nothing crashed: a power
+                   cut, a reset or a switch of app. Not the dynarec's fault. */
+                RG_LOGI("the last start did not finish but did not crash (reset reason %d): "
+                        "keeping the dynarec", (int)esp_reset_reason());
+            }
+            else if (jit_state == JIT_OFF)
+            {
+                /* switched off automatically, here or by an older build that
+                   could not tell a crash from a power cut: give it a clean
+                   chance rather than leaving the game on the interpreter. */
+                RG_LOGW("the dynarec was switched off automatically before: trying it again");
+                jit_fails_set(0);
+            }
+
+            if (jit_fails >= JIT_FAILS_MAX)
+            {
+                jit_state_set(JIT_OFF);
+                xt_give_up = 1;
+                /* An alert a held button dismisses is an alert nobody reads,
+                   and this one changes how the game runs: wait for every key
+                   to come up first, so it takes a fresh press. */
+                rg_input_wait_for_key(RG_KEY_ALL, false, 2000);
+                rg_gui_alert("GBA", "This game crashed repeatedly with the fast CPU core (dynarec): "
+                                    "it now runs with the interpreter. Options > Fast CPU turns it back on.");
+            }
+            else
+            {
+                xt_give_up = 0;
+                jit_state_set(JIT_TRYING);
+            }
+        }
+        RG_LOGI("CPU core: %s (DynarecState %d, fails %d)",
+                xt_give_up ? "interpreter" : "dynarec", jit_state, jit_fails);
     }
 #endif
 
@@ -642,14 +714,22 @@ void app_main(void)
             if (xt_give_up)
             {
                 execute_arm(execute_cycles);
-                if (jit_state != JIT_OFF)
-                    jit_state_set(JIT_OFF);   /* remembered: the next launch starts on the interpreter */
+                /* Only a give-up the emulator decided (a self-modifying-code
+                   storm) is worth remembering. JIT_OFF_USER is already the
+                   user's choice, and overwriting JIT_TRYING here is what used
+                   to undo the menu's On a frame after it was chosen. */
+                if (jit_state == JIT_OK)
+                    jit_state_set(JIT_OFF);
             }
             else
             {
                 execute_arm_translate(execute_cycles);
                 if (jit_state == JIT_TRYING && ++jit_frames == 60 * 120)
+                {
                     jit_state_set(JIT_OK);   /* two minutes without trouble */
+                    if (jit_fails)
+                        jit_fails_set(0);    /* and the crash count is spent */
+                }
             }
         }
 #else
