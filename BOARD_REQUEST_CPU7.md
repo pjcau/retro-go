@@ -3,10 +3,19 @@
 Fork `gba-cpu` **`ffb457bb`**, submodule **`2b87220`**, on master `6ecc9d9b`.
 Play build **777120 B**, GBAPROF build **787408 B**. One flash.
 
-Auto now raises *and* lowers, at every level. CPU6 showed why that matters: on
-the real road skip 1 is not enough (FPS 55-58, BUSY 98-100), Auto reaches 2, and
-`rg_system` never brings it back because its reducer wants BUSY under 85 — so a
-player got 20 drawn for most of a race.
+Auto now raises *and* lowers, at every level. CPU6 showed why that matters,
+twice over:
+
+- on the **real road** skip 1 is not enough (FPS 55-58, BUSY 98-100), Auto
+  reaches 2, and `rg_system` never brings it back because its reducer wants BUSY
+  under 85 — so a player got 20 drawn for most of a race;
+- on **Sonic**, a one-second stall at `load 0` raised Auto to 1 at 281.4 s and it
+  **stayed there for the rest of the session** — 30 drawn instead of 60, at BUSY
+  57-61 %. Half the frames thrown away with 40 % of the core idle, because
+  `rg_system` only ever reduces from above 1.
+
+The second one is the cleanest demonstration of the bug and the cleanest test of
+the fix, on a game that is not Mario Kart.
 
 **This run is a three-way A/B, and the rule is that dynamic Auto must not be
 worse than the best fixed setting.** Section 5 says what happens if it is.
@@ -103,10 +112,34 @@ can — if the route differs the comparison is worth little, so say so if it did
 | 2 | Mario Kart | `perf=1 skip=0` | fixed 0 |
 | 3 | Mario Kart | `perf=1 skip=1` | fixed 1 |
 | 4 | Mario Kart | `perf=1 autodyn=0` | **today's Auto**, for the "never worse" comparison — expect it to reach 2 and stay |
-| 5 | Sonic Advance | `perf=1` (dynamic Auto) | must stay at 0 |
+| 5 | Sonic Advance | `perf=1` (dynamic Auto) | must stay at 0, or recover to it — see below |
 | 6 | Sonic Advance | `perf=1 skip=0` | fixed 0 |
 | 7 | Metal Slug Advance | `perf=1` (dynamic Auto) | must stay at 0 |
 | 8 | Metal Slug Advance | `perf=1 skip=0` | fixed 0 |
+
+### Run 5 in particular: the CPU6 Sonic bug, cured
+
+Start Sonic with **`load 0`**, the same way that produced the stall, and let it
+play at least 30 s. If the stall raises Auto to 1, the controller should bring it
+straight back:
+
+- Sonic's drawn frame is ~10.0 ms at skip 0, so at skip 1 the prediction for 0
+  is ~10.9 ms at worst against the 15.8 ms threshold — **4.95 ms of margin**, not
+  a close call;
+- the hold at that moment is **3 s** (no prior drop within 3 s, so the backoff
+  has not armed);
+- so expect **one raise, then one drop about 3 s later**, and 60/60 for the rest
+  of the run.
+
+If it raises and does *not* come back, that is the headline failure of this
+build and worth reporting before anything else in the table.
+
+**One thing I deliberately did not change**: the raise is still immediate rather
+than requiring two seconds of slow speed, which would have suppressed the
+spurious raise altogether. Delaying it would break the guard that matters more —
+never lose speed when a game genuinely cannot keep up — and the drop recovers on
+its own in 3 s. If the round trip turns out to be visible on the webcam, that is
+the evidence that would change my mind.
 
 ### The table I need
 
@@ -138,9 +171,13 @@ All of these, together:
    lighter stretches — Auto must match its 30. On Sonic and Metal Slug: **60**;
 3. **drawn fps on Auto ≥ what today's Auto gives** (run 4 — about 20 on the
    road);
-4. **at most one transition per 10 s during the race** (so ≤ 6 in a 60 s run),
-   and **exactly 0 transitions on Sonic and Metal Slug** (runs 5 and 7). One
-   line in either is a fail even if the fps looks right;
+4. **at most one transition per 10 s during the race** (so ≤ 6 in a 60 s run).
+   On Sonic and Metal Slug: **no transitions during steady play, and at most one
+   round trip — one raise then one drop — after a loading stall.** I had written
+   "exactly 0" here, and that was wrong: a `load` can stall a second, which
+   legitimately raises frameskip, and the drop back is the controller doing its
+   job. What would be a fail is a *second* round trip once play is steady, or a
+   raise that never comes back;
 5. **no visible stutter at a transition on the webcam.** Watch runs 1, 5 and 7
    at the moments the log shows a change: a change of smoothness is expected and
    fine, a hitch, a jump in game speed or a torn frame is **a fail**. This is the
