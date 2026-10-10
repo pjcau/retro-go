@@ -122,12 +122,29 @@ static int frameskip_opt = -1;
 #define FS_RAISE_SOON  3       /* a raise this soon after a drop means it was wrong */
 #define FS_CALM        30      /* seconds with no raise that clear the backoff */
 #define FS_CPU_MHZ     240
+/* CPU7 on the board, 2026-10-10: at skip 1 a drawn frame reads 15.2-15.5 ms
+   while a real skip-0 frame costs 17.5-18.3, so the drawn time underestimates
+   the level below by about 2.5-3 ms -- core 1 lags, and at skip 1 its work for
+   a drawn frame spills into the following skipped frame, so the drawn frame
+   never carries a full frame of contention. (My earlier reading of this, from
+   aggregate figures, had the sign the other way round and was wrong.) Dropping
+   on a 15.8 ms prediction therefore dropped into an 18 ms frame every time,
+   and every drop was followed a second later by "0 -> 1: speed 91-94%".
+   So the prediction is now only a fallback, with the measured 13.0 ms gate,
+   and the decision is made from what each level actually cost in this game. */
+#define FS_DROP_US     13000  /* the fallback gate, when a level is unmeasured */
+#define FS_PROVEN_US   16200  /* a level that cost more than this could not hold */
+#define FS_LIGHTER_US   2000  /* ... so only retry it once the scene is this much lighter */
+#define FS_STALL_US   100000  /* a frame this long is a stall, not a cost */
 
 static int fs_dynamic = 1;     /* 0: raise only, as before -- the opt-out */
 static uint64_t fs_drawn_cyc, fs_skip_cyc;
 static uint32_t fs_drawn_n, fs_skip_n;
 static int fs_good, fs_hold = FS_HOLD_MIN, fs_since_drop = FS_CALM, fs_since_raise = FS_CALM;
 static uint32_t fs_at[3], fs_drawn_total, fs_seconds;   /* what the board reports */
+static uint32_t fs_max_cyc;        /* the worst frame this second: a stall shows here */
+static uint32_t fs_meas[3];        /* what a frame really cost while at that level */
+static uint32_t fs_drawn_ref[3];   /* the drawn time just after arriving at it */
 
 /* In the frame path: one add and one increment, no divide, no float, no log.
    The two reads around it are rsr CCOUNT, one instruction each -- about four
@@ -138,8 +155,31 @@ static void frameskip_auto_frame(uint32_t cycles, bool drawn)
 {
     if (frameskip_opt >= 0 || !fs_dynamic)
         return;              /* pinned, or raise-only: nothing to decide */
+    if (cycles > fs_max_cyc) fs_max_cyc = cycles;
     if (drawn) { fs_drawn_cyc += cycles; fs_drawn_n++; }
     else { fs_skip_cyc += cycles; fs_skip_n++; }
+}
+
+/* May we go down a level? The prediction alone said yes on the road and was
+   wrong every time, so the first question is what the level below actually
+   cost when this game was last on it:
+
+   - never measured (only possible before it has ever been tried): fall back to
+     the prediction, with the 13.0 ms gate the board's figures give;
+   - it cost 16.2 ms a frame or less: it held, so go;
+   - it cost more: it could not hold, and nothing about the prediction will
+     change that. Only go once this scene is measurably lighter than it was on
+     arriving here -- 2 ms off the drawn time. That is what stops the menus
+     being treated like the road and the road like the menus. */
+static bool fs_may_drop(int k, uint32_t drawn, uint32_t predicted)
+{
+    const uint32_t below = fs_meas[k - 1];
+
+    if (!below)
+        return predicted && predicted < FS_DROP_US;
+    if (below <= FS_PROVEN_US)
+        return true;
+    return fs_drawn_ref[k] && drawn && drawn + FS_LIGHTER_US <= fs_drawn_ref[k];
 }
 
 /* once a second, Auto only */
@@ -147,6 +187,8 @@ static void frameskip_auto_second(void)
 {
     const uint32_t drawn = fs_drawn_n ? (uint32_t)(fs_drawn_cyc / fs_drawn_n / FS_CPU_MHZ) : 0;
     const uint32_t skipped = fs_skip_n ? (uint32_t)(fs_skip_cyc / fs_skip_n / FS_CPU_MHZ) : 0;
+    const uint64_t fs_drawn_cyc_s = fs_drawn_cyc, fs_skip_cyc_s = fs_skip_cyc;
+    const uint32_t n_frames = fs_drawn_n + fs_skip_n;
     const int k = app->frameskip;
     const rg_stats_t st = rg_system_get_stats();
     uint32_t predicted = 0;
@@ -167,6 +209,20 @@ static void frameskip_auto_second(void)
     if (k > 0)
         predicted = (drawn + (uint32_t)(k - 1) * skipped) / (uint32_t)k;
 
+    /* What this level really costs a frame, averaged over the second -- but not
+       from a second that contains a stall. A state load or a sampler dump is
+       one 138 ms frame, and letting that be remembered as "skip 0 costs 140 ms"
+       would block the way back down for the rest of the session. It is also
+       why Sonic must still return to 0 after a load: the stall raises it, but
+       the stall is not allowed to describe the level. */
+    if (n_frames && fs_max_cyc / FS_CPU_MHZ < FS_STALL_US)
+    {
+        fs_meas[k] = (uint32_t)((fs_drawn_cyc_s + fs_skip_cyc_s) / n_frames / FS_CPU_MHZ);
+        if (!fs_drawn_ref[k] && drawn)
+            fs_drawn_ref[k] = drawn;
+    }
+    fs_max_cyc = 0;
+
     if (st.speedPercent < 96.f && st.busyPercent > 85.f && k < 2)
     {
         /* Raising is never delayed: losing speed is the one outcome that must
@@ -175,33 +231,43 @@ static void frameskip_auto_second(void)
         if (fs_since_drop <= FS_RAISE_SOON && fs_hold < FS_HOLD_MAX)
             fs_hold = fs_hold * 2 > FS_HOLD_MAX ? FS_HOLD_MAX : fs_hold * 2;
         app->frameskip = k + 1;
+        fs_drawn_ref[k + 1] = 0;   /* measured afresh at the new level */
         fs_since_raise = 0;
         fs_good = 0;
         RG_LOGI("frameskip %d -> %d: speed %d%%, drawn %u.%02u ms, skipped %u.%02u ms, hold now %ds",
                 k, k + 1, (int)st.speedPercent, (unsigned)(drawn / 1000), (unsigned)((drawn % 1000) / 10),
                 (unsigned)(skipped / 1000), (unsigned)((skipped % 1000) / 10), fs_hold);
     }
-    else if (k > 0 && predicted && predicted < FS_BUDGET_US)
+    else if (k > 0 && fs_may_drop(k, drawn, predicted))
     {
         if (++fs_good >= fs_hold)
         {
             app->frameskip = k - 1;
+            fs_drawn_ref[k - 1] = 0;
             fs_since_drop = 0;
             fs_good = 0;
-            RG_LOGI("frameskip %d -> %d: %u.%02u ms predicted, drawn %u.%02u, skipped %u.%02u, held %ds",
-                    k, k - 1, (unsigned)(predicted / 1000), (unsigned)((predicted % 1000) / 10),
+            RG_LOGI("frameskip %d -> %d: skip%d last cost %u.%02u ms, drawn %u.%02u "
+                    "(ref %u.%02u), skipped %u.%02u, predicted %u.%02u, held %ds",
+                    k, k - 1, k - 1,
+                    (unsigned)(fs_meas[k - 1] / 1000), (unsigned)((fs_meas[k - 1] % 1000) / 10),
                     (unsigned)(drawn / 1000), (unsigned)((drawn % 1000) / 10),
-                    (unsigned)(skipped / 1000), (unsigned)((skipped % 1000) / 10), fs_hold);
+                    (unsigned)(fs_drawn_ref[k] / 1000), (unsigned)((fs_drawn_ref[k] % 1000) / 10),
+                    (unsigned)(skipped / 1000), (unsigned)((skipped % 1000) / 10),
+                    (unsigned)(predicted / 1000), (unsigned)((predicted % 1000) / 10), fs_hold);
         }
     }
     else
         fs_good = 0;
 
     if (fs_seconds % 10 == 0)
-        RG_LOGI("frameskip residency: skip0 %us, skip1 %us, skip2 %us of %us, %u.%u drawn fps, hold %ds",
+        RG_LOGI("frameskip residency: skip0 %us, skip1 %us, skip2 %us of %us, %u.%u drawn fps, "
+                "measured %u.%02u / %u.%02u / %u.%02u ms, hold %ds",
                 (unsigned)fs_at[0], (unsigned)fs_at[1], (unsigned)fs_at[2], (unsigned)fs_seconds,
                 (unsigned)(fs_drawn_total / fs_seconds),
-                (unsigned)((fs_drawn_total * 10 / fs_seconds) % 10), fs_hold);
+                (unsigned)((fs_drawn_total * 10 / fs_seconds) % 10),
+                (unsigned)(fs_meas[0] / 1000), (unsigned)((fs_meas[0] % 1000) / 10),
+                (unsigned)(fs_meas[1] / 1000), (unsigned)((fs_meas[1] % 1000) / 10),
+                (unsigned)(fs_meas[2] / 1000), (unsigned)((fs_meas[2] % 1000) / 10), fs_hold);
 }
 
 /* the only place either frameskip variable is written during a game */
@@ -212,6 +278,9 @@ static void frameskip_apply(void)
     fs_good = 0;
     fs_hold = FS_HOLD_MIN;
     fs_since_drop = fs_since_raise = FS_CALM;
+    fs_max_cyc = 0;
+    memset(fs_meas, 0, sizeof(fs_meas));
+    memset(fs_drawn_ref, 0, sizeof(fs_drawn_ref));
     app->frameskip = frameskip_opt < 0 ? 0 : frameskip_opt;
     /* Auto with the dynamic controller off is what it was before: rg_system
        raises it and never brings it back. gbsp owns it in every other case. */
