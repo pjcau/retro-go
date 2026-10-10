@@ -1,5 +1,9 @@
 #include <rg_system.h>
 #include <esp_system.h>   /* esp_reset_reason: a crash is not a power cut */
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -8,6 +12,14 @@
 #include "../../xtensa-68000-dynarec/components/gbsp-libretro/sound.h"
 #include "../../xtensa-68000-dynarec/components/gbsp-libretro/gba_memory.h"
 #include "../../xtensa-68000-dynarec/components/gbsp-libretro/gba_cc_lut.h"
+
+/* the atomic battery-save file (gbsp/test/sram_file_test.c tests this header
+   on the host): yield between chunks so the card is never held for a whole
+   save while the ROM is paged from it */
+#define SRAM_FILE_LOGE(...) RG_LOGE(__VA_ARGS__)
+#define SRAM_FILE_LOGI(...) RG_LOGI(__VA_ARGS__)
+#define SRAM_FILE_YIELD() vTaskDelay(1)
+#include "sram_file.h"
 
 #define AUDIO_SAMPLE_RATE (GBA_SOUND_FREQUENCY)
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
@@ -275,28 +287,111 @@ static bool reset_handler(bool hard)
 
 extern u8 gamepak_backup_dirty;
 static char *sram_path;
+static void sram_save_sync(void);
+
+/* the table itself is in sram_file.h, where the host test can reach it.
+   gba_memory.h declares sram_bankcount but nothing defines it, so GBA SRAM is
+   the fixed 32 KB it is on the hardware. */
+static size_t sram_real_size(void)
+{
+    return sram_backup_size(backup_type, flash_bank_cnt, eeprom_size, sizeof(gamepak_backup));
+}
+
+/* The write used to happen in the frame loop: 128 KB to FAT over SPI, one
+   second after the game touched its save, which is hundreds of milliseconds in
+   a single frame -- the stall the user saw during a race. Now the frame loop
+   only copies the save into a snapshot (microseconds) and a low-priority task
+   does the file work. The snapshot is claimed before the ROM cache takes the
+   rest of PSRAM, the way the renderer's VRAM copy and the sampler's tables
+   are; if it cannot be had, the write stays synchronous rather than silently
+   not happening. */
+static u8 *sram_snap;
+static size_t sram_snap_len;
+static volatile bool sram_snap_pending;
+static TaskHandle_t sram_task_h;
+static SemaphoreHandle_t sram_file_lock;   /* the task and a synchronous save */
+
+static void sram_alloc(void)
+{
+    sram_snap = heap_caps_malloc(sizeof(gamepak_backup), MALLOC_CAP_SPIRAM);
+    sram_file_lock = xSemaphoreCreateMutex();
+    if (sram_snap && sram_file_lock)
+        RG_LOGI("battery save: %u KB of PSRAM claimed before the ROM cache",
+                (unsigned)(sizeof(gamepak_backup) / 1024));
+    else
+        RG_LOGE("battery save: no snapshot buffer, writes stay in the frame loop");
+}
+
+static void sram_write_locked(const void *data, size_t len)
+{
+    if (sram_file_lock)
+        xSemaphoreTake(sram_file_lock, portMAX_DELAY);
+    rg_storage_mkdir(rg_dirname(sram_path));
+    sram_file_write(sram_path, data, len);
+    if (sram_file_lock)
+        xSemaphoreGive(sram_file_lock);
+}
+
+static void sram_task(void *arg)
+{
+    for (;;)
+    {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (sram_snap_pending)
+        {
+            sram_write_locked(sram_snap, sram_snap_len);
+            sram_snap_pending = false;
+        }
+    }
+}
+
 static void sram_load(void)
 {
-    FILE *fp = sram_path ? fopen(sram_path, "rb") : NULL;
-    if (!fp)
+    if (!sram_path)
         return;
-    size_t n = fread(gamepak_backup, 1, sizeof(gamepak_backup), fp);
-    fclose(fp);
-    RG_LOGI("battery save loaded: %s (%u bytes)", sram_path, (unsigned)n);
+    /* up to the whole buffer, so the 128 KB files older builds wrote still
+       load in full whatever the cartridge turns out to be */
+    size_t n = sram_file_read(sram_path, gamepak_backup, sizeof(gamepak_backup));
+    if (n)
+        RG_LOGI("battery save loaded: %s (%u bytes)", sram_path, (unsigned)n);
 }
-static void sram_save(void)
+
+/* the frame loop: copy and go */
+static void sram_schedule(void)
 {
     if (!sram_path || !gamepak_backup_dirty)
         return;
+    if (!sram_snap || !sram_task_h)
+    {
+        sram_save_sync();   /* no buffer and no task: as it was before */
+        return;
+    }
+    if (sram_snap_pending)
+        return;   /* a write is in flight; the dirty flag stays set for the next one */
+    sram_snap_len = sram_real_size();
+    memcpy(sram_snap, gamepak_backup, sram_snap_len);
+    /* only now: a write landing during the copy above leaves the flag set and
+       earns another snapshot, with the newer data */
     gamepak_backup_dirty = 0;
-    rg_storage_mkdir(rg_dirname(sram_path));
-    FILE *fp = fopen(sram_path, "wb");
-    if (!fp || fwrite(gamepak_backup, sizeof(gamepak_backup), 1, fp) != 1)
-        RG_LOGE("battery save failed: %s", sram_path);
-    else
-        RG_LOGI("battery save written: %s", sram_path);
-    if (fp)
-        fclose(fp);
+    sram_snap_pending = true;
+    xTaskNotifyGive(sram_task_h);
+}
+
+/* the menu, a quit and a shutdown: nothing may be left unwritten */
+static void sram_save_sync(void)
+{
+    if (!sram_path)
+        return;
+    if (sram_snap_pending)
+    {
+        sram_snap_pending = false;
+        sram_write_locked(sram_snap, sram_snap_len);
+    }
+    if (gamepak_backup_dirty)
+    {
+        gamepak_backup_dirty = 0;
+        sram_write_locked(gamepak_backup, sram_real_size());
+    }
 }
 
 #ifdef HAVE_DYNAREC
@@ -351,7 +446,7 @@ static void event_handler(int event, void *arg)
 {
     if (event == RG_EVENT_SHUTDOWN)
     {
-        sram_save();
+        sram_save_sync();
 #ifdef HAVE_DYNAREC
         if (jit_state == JIT_TRYING)
             jit_state_set(JIT_OK);   /* a clean exit proves it as well as two minutes */
@@ -580,6 +675,7 @@ void app_main(void)
         gbsp_rvram_alloc();
     }
 #endif
+    sram_alloc();   /* before the ROM cache: during a game PSRAM is full */
     init_gamepak_buffer();
     RG_LOGI("ROM cache: %u blocks of 1 MB", (unsigned)gamepak_buffer_count);
     init_sound();
@@ -609,6 +705,11 @@ void app_main(void)
 
     sram_path = rg_emu_get_path(RG_PATH_SAVE_SRAM, app->romPath);
     sram_load();
+    if (sram_snap && xTaskCreatePinnedToCore(sram_task, "gba_sram", 3072, NULL, 1, &sram_task_h, 0) != pdPASS)
+    {
+        sram_task_h = NULL;   /* no task: sram_schedule falls back to writing here */
+        RG_LOGE("battery save: no task, writes stay in the frame loop");
+    }
     gamepak_backup_dirty = 0;
 
 #ifdef HAVE_DYNAREC
@@ -686,7 +787,7 @@ void app_main(void)
 
         if (joystick & (RG_KEY_MENU | RG_KEY_OPTION))
         {
-            sram_save();   /* the menu can quit the game */
+            sram_save_sync();   /* the menu can quit the game */
             if (joystick & RG_KEY_MENU)
                 rg_gui_game_menu();
             else
@@ -917,14 +1018,15 @@ void app_main(void)
         }
 #endif
 
-        /* battery save: to the card one second after the game started writing
-           it (a flash save takes several frames); written again if it goes on */
+        /* battery save: one second after the game started writing it (a flash
+           save takes several frames), and again if it goes on. Only the
+           snapshot happens here; the card work is on sram_task. */
         {
             static int sram_timer;
             if (gamepak_backup_dirty && !sram_timer)
                 sram_timer = 60;
             else if (sram_timer && --sram_timer == 0)
-                sram_save();
+                sram_schedule();
         }
 
         rg_system_tick(rg_system_timer() - startTime);
